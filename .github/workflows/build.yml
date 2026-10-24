@@ -20,10 +20,10 @@ jobs:
             os: macos-15-intel   # GitHub keeps Intel Mac machines until fall 2027
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 1. Turn the Python backend into one program file.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build backend program
@@ -51,7 +51,7 @@ jobs:
           ls -l frontend/src-tauri/binaries
 
       # 3. Build the desktop app around the screen and the backend.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - name: Build desktop app
@@ -62,7 +62,7 @@ jobs:
           npx tauri icon src-tauri/app-icon.png
           npx tauri build
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.name }}
           path: |

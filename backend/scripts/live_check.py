@@ -49,7 +49,10 @@ async def main() -> int:
             await check(market_type)
         except Exception as error:  # report every market type, then fail
             failed = True
-            print(f"FAILED {market_type}: {type(error).__name__}: {error}")
+            message = f"{market_type}: {type(error).__name__}: {error}".replace("\n", " ")[:900]
+            print(f"FAILED {message}")
+            # A line in this form shows up as an error note on GitHub's run page.
+            print(f"::error title=Live Toobit check::{message}")
     return 1 if failed else 0
 
 
