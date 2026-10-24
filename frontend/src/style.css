@@ -1,0 +1,149 @@
+/* Dark theme close to TradingView. Layout uses "inline-start/end" so the
+   whole page mirrors automatically between Persian (RTL) and English (LTR). */
+
+:root {
+  --bg: #131722;
+  --panel: #1e222d;
+  --border: #2a2e39;
+  --text: #d1d4dc;
+  --muted: #787b86;
+  --accent: #2962ff;
+  --up: #089981;
+  --down: #f23645;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Vazirmatn, Tahoma, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+#app, .app { height: 100%; }
+.app { display: flex; flex-direction: column; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+button:hover { background: var(--border); }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border-block-end: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.segmented, .timeframes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--panel);
+  border-radius: 6px;
+}
+.segmented button.active, .timeframes button.active { background: var(--accent); color: #fff; }
+.timeframes button { direction: ltr; }
+
+.symbol-info { display: flex; align-items: baseline; gap: 8px; }
+.symbol { font-weight: 700; font-size: 15px; direction: ltr; }
+.price { font-variant-numeric: tabular-nums; font-weight: 600; }
+.price.up { color: var(--up); }
+.price.down { color: var(--down); }
+
+.spacer { flex: 1; }
+
+.live-status { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+.live-status::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.live-status.live { color: var(--up); }
+.live-status.live::before { background: var(--up); }
+.live-status.connecting::before { background: #f7a600; }
+
+.lang-button { border: 1px solid var(--border); font-weight: 600; }
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(242, 54, 69, 0.15);
+  border-block-end: 1px solid var(--down);
+}
+.error-banner[hidden] { display: none; }
+.error-banner button { border: 1px solid var(--down); }
+
+.body { flex: 1; display: flex; min-height: 0; }
+
+.watchlist {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-inline-end: 1px solid var(--border);
+  background: var(--bg);
+}
+.watchlist[hidden] { display: none; }
+
+.search {
+  margin: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.watchlist-title { padding: 2px 10px 6px; color: var(--muted); font-size: 12px; }
+
+.coin-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+.coin-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 10px;
+  cursor: pointer;
+  direction: ltr;
+}
+:root[dir="rtl"] .coin-list li { flex-direction: row-reverse; }
+.coin-list li:hover { background: var(--panel); }
+.coin-list li.active { background: rgba(41, 98, 255, 0.2); }
+.coin-list li.empty { color: var(--muted); cursor: default; justify-content: center; }
+.coin { font-weight: 600; }
+.volume { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.chart-area { position: relative; flex: 1; min-width: 0; }
+.chart { position: absolute; inset: 0; }
+.chart-message {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  pointer-events: none;
+  z-index: 5;
+}
+.chart-message[hidden] { display: none; }
+
+@media (max-width: 700px) {
+  .watchlist { width: 150px; }
+}

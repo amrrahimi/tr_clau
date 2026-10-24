@@ -1,0 +1,399 @@
+// The phase 1 screen: choices at the top, coin list on the side, chart in the middle.
+// It only asks the backend and shows answers; no analysis happens here.
+
+import { BackendError, type Backend, type LiveConnection } from "./api.ts";
+import { applyLiveCandle, prependOlder } from "./candles.ts";
+import { ChartView } from "./chart.ts";
+import { displaySymbol, formatPrice, formatVolume } from "./format.ts";
+import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
+import type { MessageKey } from "./locales/en.ts";
+import type { Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
+
+type LiveStatus = "connecting" | "live" | "stopped";
+
+const DEFAULT_TIMEFRAME: Record<Mode, string> = { scalping: "5m", daily: "1h" };
+const SEARCH_DELAY_MS = 300;
+
+export class App {
+  private language: Language = loadLanguage();
+  private options: Options | null = null;
+  private marketType: MarketType = "spot";
+  private mode: Mode = "scalping";
+  private timeframe = DEFAULT_TIMEFRAME.scalping;
+  private symbol: string | null = null;
+  private markets: MarketInfo[] = [];
+  private searchQuery = "";
+  private candles: Candle[] = [];
+  private liveStatus: LiveStatus = "stopped";
+  private live: LiveConnection | null = null;
+  private loadingOlder = false;
+  private noMoreHistory = false;
+  private errorKey: { key: MessageKey; detail?: string } | null = null;
+  private chartMessage: MessageKey | null = null;
+  private watchlistOpen = true;
+  // Every new chart request gets a number; answers to older requests are ignored.
+  // Without this, quickly clicking BTC then ETH could show BTC's candles under ETH's name.
+  private requestId = 0;
+  private searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  private readonly root: HTMLElement;
+  private chart!: ChartView;
+  private els!: Record<string, HTMLElement>;
+
+  constructor(root: HTMLElement, private readonly backend: Backend) {
+    this.root = root;
+  }
+
+  async start(): Promise<void> {
+    this.buildLayout();
+    this.applyLanguage();
+    await this.loadOptions();
+  }
+
+  private async loadOptions(): Promise<void> {
+    try {
+      this.options = await this.backend.getOptions();
+      this.renderControls();
+      await this.loadMarkets();
+    } catch (error) {
+      this.showError(error);
+    }
+  }
+
+  // ---------- user actions ----------
+
+  async setMarketType(marketType: MarketType): Promise<void> {
+    if (marketType === this.marketType) return;
+    this.marketType = marketType;
+    this.symbol = null;
+    this.renderControls();
+    await this.loadMarkets();
+  }
+
+  async setMode(mode: Mode): Promise<void> {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    const choices = this.options?.timeframes[mode] ?? [];
+    this.timeframe = choices.includes(DEFAULT_TIMEFRAME[mode]) ? DEFAULT_TIMEFRAME[mode] : choices[0];
+    this.renderControls();
+    await this.openChart();
+  }
+
+  async setTimeframe(timeframe: string): Promise<void> {
+    if (timeframe === this.timeframe) return;
+    this.timeframe = timeframe;
+    this.renderControls();
+    await this.openChart();
+  }
+
+  async selectSymbol(symbol: string): Promise<void> {
+    if (symbol === this.symbol) return;
+    this.symbol = symbol;
+    this.renderWatchlist();
+    await this.openChart();
+  }
+
+  setLanguage(language: Language): void {
+    this.language = language;
+    saveLanguage(language);
+    this.applyLanguage();
+  }
+
+  // ---------- loading data ----------
+
+  private async loadMarkets(): Promise<void> {
+    const requestedType = this.marketType;
+    try {
+      const markets = await this.backend.getMarkets(requestedType, this.searchQuery);
+      if (requestedType !== this.marketType) return; // user switched market meanwhile
+      this.markets = markets;
+      this.renderWatchlist();
+      if (!this.symbol && markets.length) await this.selectSymbol(markets[0].symbol);
+    } catch (error) {
+      this.showError(error);
+    }
+  }
+
+  private async openChart(): Promise<void> {
+    if (!this.symbol) return;
+    const id = ++this.requestId;
+    this.stopLive();
+    this.candles = [];
+    this.noMoreHistory = false;
+    this.loadingOlder = false;
+    this.clearError();
+    this.setChartMessage("chart.loading");
+    this.renderHeader();
+
+    const request = { marketType: this.marketType, symbol: this.symbol, timeframe: this.timeframe };
+    try {
+      const candles = await this.backend.getCandles(request);
+      if (id !== this.requestId) return;
+      this.candles = candles;
+      this.chart.setCandles(candles);
+      this.setChartMessage(null);
+      this.renderHeader();
+      this.startLive(id);
+    } catch (error) {
+      if (id !== this.requestId) return;
+      this.setChartMessage(null);
+      this.showError(error);
+    }
+  }
+
+  private startLive(id: number): void {
+    if (!this.symbol) return;
+    this.setLiveStatus("connecting");
+    this.live = this.backend.openLive(
+      { marketType: this.marketType, symbol: this.symbol, timeframe: this.timeframe },
+      {
+        onCandle: (candle) => {
+          if (id !== this.requestId) return;
+          if (this.liveStatus !== "live") this.setLiveStatus("live");
+          const action = applyLiveCandle(this.candles, candle);
+          if (action !== "ignore") this.chart.updateCandle(candle);
+          this.renderPrice();
+        },
+        onError: (message) => {
+          if (id !== this.requestId) return;
+          this.live = null;
+          this.setLiveStatus("stopped");
+          this.errorKey = { key: "error.liveStopped", detail: message };
+          this.renderError();
+        },
+      },
+    );
+  }
+
+  private stopLive(): void {
+    this.live?.close();
+    this.live = null;
+    this.setLiveStatus("stopped");
+  }
+
+  /** Called by the chart when the user scrolls near the oldest loaded candle. */
+  private async loadOlder(): Promise<void> {
+    if (this.loadingOlder || this.noMoreHistory || !this.symbol || !this.candles.length) return;
+    const id = this.requestId;
+    this.loadingOlder = true;
+    this.setChartMessage("chart.loadingOlder");
+    try {
+      const older = await this.backend.getCandles({
+        marketType: this.marketType,
+        symbol: this.symbol,
+        timeframe: this.timeframe,
+        before: this.candles[0].time,
+      });
+      if (id !== this.requestId) return;
+      const { candles, added } = prependOlder(older, this.candles);
+      if (added === 0) {
+        this.noMoreHistory = true;
+        this.setChartMessage("chart.noMoreHistory");
+        setTimeout(() => this.chartMessage === "chart.noMoreHistory" && this.setChartMessage(null), 2000);
+        return;
+      }
+      this.candles = candles;
+      this.chart.prependCandles(candles, added);
+      this.setChartMessage(null);
+    } catch (error) {
+      if (id === this.requestId) {
+        this.setChartMessage(null);
+        this.showError(error);
+      }
+    } finally {
+      if (id === this.requestId) this.loadingOlder = false;
+    }
+  }
+
+  private onSearchInput(value: string): void {
+    clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      this.searchQuery = value.trim();
+      void this.loadMarkets();
+    }, SEARCH_DELAY_MS);
+  }
+
+  private retry(): void {
+    this.clearError();
+    if (!this.options) void this.loadOptions();
+    else if (!this.markets.length) void this.loadMarkets();
+    else {
+      this.requestId++; // force a fresh chart even for the same coin
+      void this.openChart();
+    }
+  }
+
+  // ---------- screen ----------
+
+  private t(key: MessageKey, params?: Record<string, string>): string {
+    return translate(this.language, key, params);
+  }
+
+  private buildLayout(): void {
+    this.root.innerHTML = `
+      <div class="app">
+        <header class="topbar">
+          <div class="segmented" data-el="marketTypes"></div>
+          <div class="symbol-info">
+            <span class="symbol" data-el="symbol">—</span>
+            <span class="price" data-el="price">—</span>
+          </div>
+          <div class="segmented" data-el="modes"></div>
+          <div class="timeframes" data-el="timeframes"></div>
+          <div class="spacer"></div>
+          <span class="live-status" data-el="liveStatus"></span>
+          <button class="icon-button" data-el="watchlistToggle"></button>
+          <button class="lang-button" data-el="language"></button>
+        </header>
+        <div class="error-banner" data-el="error" hidden>
+          <span data-el="errorText"></span>
+          <button data-el="retry"></button>
+        </div>
+        <main class="body">
+          <aside class="watchlist" data-el="watchlist">
+            <input class="search" data-el="search" type="search" autocomplete="off" />
+            <div class="watchlist-title" data-el="watchlistTitle"></div>
+            <ul class="coin-list" data-el="coinList"></ul>
+          </aside>
+          <section class="chart-area" dir="ltr">
+            <div class="chart" data-el="chart"></div>
+            <div class="chart-message" data-el="chartMessage" hidden></div>
+          </section>
+        </main>
+      </div>`;
+    this.els = {};
+    this.root.querySelectorAll<HTMLElement>("[data-el]").forEach((el) => {
+      this.els[el.dataset.el!] = el;
+    });
+
+    this.chart = new ChartView(this.els.chart, () => void this.loadOlder());
+    this.els.language.addEventListener("click", () => this.setLanguage(this.language === "fa" ? "en" : "fa"));
+    this.els.retry.addEventListener("click", () => this.retry());
+    this.els.search.addEventListener("input", (e) => this.onSearchInput((e.target as HTMLInputElement).value));
+    this.els.watchlistToggle.addEventListener("click", () => {
+      this.watchlistOpen = !this.watchlistOpen;
+      this.els.watchlist.hidden = !this.watchlistOpen;
+    });
+  }
+
+  /** Re-draw every text in the current language and flip the page direction. */
+  private applyLanguage(): void {
+    document.documentElement.lang = this.language;
+    document.documentElement.dir = direction(this.language);
+    document.title = this.t("app.title");
+    this.els.language.textContent = this.t("language.switch");
+    this.els.language.title = this.t("language.switchLabel");
+    this.els.watchlistToggle.textContent = "☰";
+    this.els.watchlistToggle.title = this.t("watchlist.toggle");
+    (this.els.search as HTMLInputElement).placeholder = this.t("watchlist.searchPlaceholder");
+    this.els.retry.textContent = this.t("action.retry");
+    this.renderControls();
+    this.renderWatchlist();
+    this.renderLiveStatus();
+    this.renderError();
+    this.renderChartMessage();
+  }
+
+  private renderControls(): void {
+    const types: MarketType[] = this.options?.marketTypes ?? ["spot", "futures"];
+    this.renderSegmented(this.els.marketTypes, types.map((type) => ({
+      label: this.t(type === "spot" ? "market.spot" : "market.futures"),
+      active: type === this.marketType,
+      onClick: () => void this.setMarketType(type),
+    })));
+    const modes: Mode[] = ["scalping", "daily"];
+    this.renderSegmented(this.els.modes, modes.map((mode) => ({
+      label: this.t(mode === "scalping" ? "mode.scalping" : "mode.daily"),
+      active: mode === this.mode,
+      onClick: () => void this.setMode(mode),
+    })));
+    const timeframes = this.options?.timeframes[this.mode] ?? [];
+    this.renderSegmented(this.els.timeframes, timeframes.map((tf) => ({
+      label: tf,
+      active: tf === this.timeframe,
+      onClick: () => void this.setTimeframe(tf),
+    })));
+  }
+
+  private renderSegmented(container: HTMLElement, items: { label: string; active: boolean; onClick: () => void }[]): void {
+    container.replaceChildren(...items.map((item) => {
+      const button = document.createElement("button");
+      button.textContent = item.label;
+      button.className = item.active ? "active" : "";
+      button.addEventListener("click", item.onClick);
+      return button;
+    }));
+  }
+
+  private renderWatchlist(): void {
+    this.els.watchlistTitle.textContent = this.t(this.searchQuery ? "watchlist.searchResults" : "watchlist.title");
+    if (!this.markets.length) {
+      const empty = document.createElement("li");
+      empty.className = "empty";
+      empty.textContent = this.options ? this.t("watchlist.empty") : "";
+      this.els.coinList.replaceChildren(empty);
+      return;
+    }
+    this.els.coinList.replaceChildren(...this.markets.map((market) => {
+      const item = document.createElement("li");
+      item.className = market.symbol === this.symbol ? "active" : "";
+      item.innerHTML = `<span class="coin"></span><span class="volume" dir="ltr"></span>`;
+      item.querySelector(".coin")!.textContent = market.base;
+      item.querySelector(".volume")!.textContent = formatVolume(market.volume24h);
+      item.title = `${this.t("watchlist.volume")}: ${formatVolume(market.volume24h)} ${market.quote}`;
+      item.addEventListener("click", () => void this.selectSymbol(market.symbol));
+      return item;
+    }));
+  }
+
+  private renderHeader(): void {
+    this.els.symbol.textContent = this.symbol ? displaySymbol(this.symbol) : "—";
+    this.renderPrice();
+  }
+
+  private renderPrice(): void {
+    const last = this.candles[this.candles.length - 1];
+    const previous = this.candles[this.candles.length - 2];
+    this.els.price.textContent = formatPrice(last?.close, this.chart.pricePrecision);
+    this.els.price.dir = "ltr";
+    this.els.price.className = "price" + (last && previous ? (last.close >= previous.close ? " up" : " down") : "");
+  }
+
+  private setLiveStatus(status: LiveStatus): void {
+    this.liveStatus = status;
+    this.renderLiveStatus();
+  }
+
+  private renderLiveStatus(): void {
+    const key: MessageKey = this.liveStatus === "live" ? "status.live"
+      : this.liveStatus === "connecting" ? "status.connecting" : "status.stopped";
+    this.els.liveStatus.textContent = this.t(key);
+    this.els.liveStatus.className = `live-status ${this.liveStatus}`;
+  }
+
+  private showError(error: unknown): void {
+    if (error instanceof BackendError && error.unreachable) this.errorKey = { key: "error.backendUnreachable" };
+    else this.errorKey = { key: "error.generic", detail: error instanceof Error ? error.message : String(error) };
+    this.renderError();
+  }
+
+  private clearError(): void {
+    this.errorKey = null;
+    this.renderError();
+  }
+
+  private renderError(): void {
+    this.els.error.hidden = !this.errorKey;
+    if (this.errorKey) this.els.errorText.textContent = this.t(this.errorKey.key, { detail: this.errorKey.detail ?? "" });
+  }
+
+  private setChartMessage(key: MessageKey | null): void {
+    this.chartMessage = key;
+    this.renderChartMessage();
+  }
+
+  private renderChartMessage(): void {
+    this.els.chartMessage.hidden = !this.chartMessage;
+    if (this.chartMessage) this.els.chartMessage.textContent = this.t(this.chartMessage);
+  }
+}

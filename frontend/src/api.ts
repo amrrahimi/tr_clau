@@ -1,0 +1,158 @@
+// Everything the screen needs from the backend, behind one interface.
+// The real app uses HttpBackend; the preview uses a fake one with sample data.
+
+import type { Candle, MarketInfo, MarketType, Options } from "./types.ts";
+
+export interface CandleRequest {
+  marketType: MarketType;
+  symbol: string;
+  timeframe: string;
+  before?: number; // seconds; ask for candles older than this time
+}
+
+export interface LiveHandlers {
+  onCandle(candle: Candle): void;
+  onError(message: string): void; // live updates stopped
+}
+
+export interface LiveConnection {
+  close(): void;
+}
+
+export interface Backend {
+  getOptions(): Promise<Options>;
+  getMarkets(marketType: MarketType, query?: string): Promise<MarketInfo[]>;
+  getCandles(request: CandleRequest): Promise<Candle[]>;
+  openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
+}
+
+/** Error carrying the backend's message, so the screen can show it. */
+export class BackendError extends Error {
+  constructor(message: string, readonly unreachable = false) {
+    super(message);
+  }
+}
+
+export const DEFAULT_BACKEND_URL = "http://127.0.0.1:8765";
+
+export class HttpBackend implements Backend {
+  constructor(private readonly baseUrl: string = DEFAULT_BACKEND_URL) {}
+
+  private async getJson<T>(path: string, params: Record<string, string | number | undefined>): Promise<T> {
+    const url = new URL(path, this.baseUrl);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
+    }
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch {
+      // fetch only throws when there is no answer at all: the backend is not running.
+      throw new BackendError("Backend is not reachable", true);
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new BackendError(typeof body.detail === "string" ? body.detail : `HTTP ${response.status}`);
+    }
+    return body as T;
+  }
+
+  async getOptions(): Promise<Options> {
+    return this.getJson<Options>("/api/options", {});
+  }
+
+  async getMarkets(marketType: MarketType, query = ""): Promise<MarketInfo[]> {
+    const body = await this.getJson<{ markets: MarketInfo[] }>("/api/markets", { market_type: marketType, query });
+    return body.markets;
+  }
+
+  async getCandles(request: CandleRequest): Promise<Candle[]> {
+    const body = await this.getJson<{ candles: Candle[] }>("/api/candles", {
+      market_type: request.marketType,
+      symbol: request.symbol,
+      timeframe: request.timeframe,
+      before: request.before,
+    });
+    return body.candles;
+  }
+
+  openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection {
+    const url = new URL("/ws/candles", this.baseUrl.replace(/^http/, "ws"));
+    url.searchParams.set("market_type", request.marketType);
+    url.searchParams.set("symbol", request.symbol);
+    url.searchParams.set("timeframe", request.timeframe);
+
+    const socket = new WebSocket(url);
+    let closedByUs = false;
+    let reportedError = false;
+
+    socket.onmessage = (event) => {
+      const message = parseLiveMessage(String(event.data));
+      if (message.type === "candle") handlers.onCandle(message.candle);
+      else if (message.type === "error") {
+        reportedError = true;
+        handlers.onError(message.message);
+      }
+    };
+    socket.onclose = () => {
+      if (!closedByUs && !reportedError) handlers.onError("Live connection closed");
+    };
+
+    return {
+      close() {
+        closedByUs = true;
+        socket.close();
+      },
+    };
+  }
+}
+
+/**
+ * Wait until the backend answers. The desktop app starts the backend at the
+ * same moment as the window, and the backend needs a few seconds to start.
+ * Returns true when it answered, false after `timeoutMs`.
+ */
+export async function waitForBackend(
+  baseUrl: string = DEFAULT_BACKEND_URL,
+  timeoutMs = 30_000,
+  intervalMs = 500,
+  fetchFn: typeof fetch = fetch,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchFn(new URL("/api/health", baseUrl));
+      if (response.ok) return true;
+    } catch {
+      // not running yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
+export type LiveMessage =
+  | { type: "candle"; candle: Candle }
+  | { type: "error"; message: string }
+  | { type: "unknown" };
+
+/** Read one WebSocket message from the backend. Anything unexpected is ignored. */
+export function parseLiveMessage(text: string): LiveMessage {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { type: "unknown" };
+  }
+  if (typeof data !== "object" || data === null) return { type: "unknown" };
+  const record = data as Record<string, unknown>;
+  if (record.type === "candle" && isCandle(record.candle)) return { type: "candle", candle: record.candle };
+  if (record.type === "error" && typeof record.message === "string") return { type: "error", message: record.message };
+  return { type: "unknown" };
+}
+
+function isCandle(value: unknown): value is Candle {
+  if (typeof value !== "object" || value === null) return false;
+  const c = value as Record<string, unknown>;
+  return ["time", "open", "high", "low", "close", "volume"].every((key) => typeof c[key] === "number");
+}

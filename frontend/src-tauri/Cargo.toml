@@ -1,0 +1,15 @@
+[package]
+name = "trading-bot"
+version = "0.1.0"
+description = "Personal crypto chart and trading bot"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+
+[profile.release]
+strip = true
