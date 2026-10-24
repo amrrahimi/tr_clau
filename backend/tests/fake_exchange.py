@@ -18,9 +18,10 @@ class FakeExchange:
         self.calls["fetch_tickers"] += 1
         return {s: t for s, t in self.tickers.items() if symbols is None or s in symbols}
 
-    async def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+    async def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):
         self.calls["fetch_ohlcv"] += 1
-        self.last_ohlcv_args = {"symbol": symbol, "timeframe": timeframe, "since": since, "limit": limit}
+        self.last_ohlcv_args = {"symbol": symbol, "timeframe": timeframe, "since": since,
+                                "limit": limit, "params": params or {}}
         answer = self.candle_answers.pop(0) if self.candle_answers else []
         if isinstance(answer, Exception):
             raise answer

@@ -182,10 +182,15 @@ class MarketService:
         if before is None:
             rows = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         else:
-            # Exchanges return candles starting *from* a time, so start
-            # `limit` candles earlier and keep only those before `before`.
+            # Ask for the window that ends just before `before`: a start time
+            # `limit` candles earlier and an end time ("until"). Some exchanges
+            # (Toobit, for example) ignore a start time on its own and return
+            # the latest candles, so both ends are sent.
             since_seconds = before - limit * config.TIMEFRAME_SECONDS[timeframe]
-            rows = await self.exchange.fetch_ohlcv(symbol, timeframe, since=since_seconds * 1000, limit=limit)
+            rows = await self.exchange.fetch_ohlcv(
+                symbol, timeframe, since=since_seconds * 1000, limit=limit,
+                params={"until": before * 1000 - 1},
+            )
 
         candles = [candle_to_dict(row) for row in rows]
         if before is not None:

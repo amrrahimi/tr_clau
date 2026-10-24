@@ -88,6 +88,8 @@ class CandlesTest(unittest.IsolatedAsyncioTestCase):
         service = MarketService(exchange, "spot")
         candles = await service.fetch_candles("BTC/USDT", "1m", limit=3, before=600)
         self.assertEqual(exchange.last_ohlcv_args["since"], 420 * 1000)
+        # The end of the window is sent too, just before t=600.
+        self.assertEqual(exchange.last_ohlcv_args["params"], {"until": 600 * 1000 - 1})
         # The candle at t=600 is not "before 600", so it is dropped.
         self.assertEqual([c["time"] for c in candles], [420, 480, 540])
 
