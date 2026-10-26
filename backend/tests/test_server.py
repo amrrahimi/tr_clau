@@ -41,6 +41,28 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(response.headers.get("access-control-allow-origin"), "tauri://localhost")
         self.assertIn("tauri://localhost", ALLOWED_ORIGINS)
 
+    def test_analysis_auto_and_manual(self):
+        rows = [[i * 60_000, 100 + i, 101 + i, 99 + i, 100 + i, 1] for i in range(300)]
+        exchange = FakeExchange(candles=[rows, rows])
+        client = self.client(lambda market_type: MarketService(exchange, market_type))
+        params = {"symbol": "BTC/USDT", "timeframe": "1m", "trading_mode": "daily"}
+        auto = client.get("/api/analysis", params=params)
+        self.assertEqual(auto.status_code, 200)
+        self.assertTrue(auto.json()["auto"])
+        self.assertEqual(exchange.last_ohlcv_args["limit"], 1000)
+        manual = client.get("/api/analysis", params={**params, "auto": "false", "rsi_on": "false"})
+        self.assertFalse(manual.json()["auto"])
+        self.assertNotIn("rsi", manual.json()["lines"])
+
+    def test_analysis_rejects_bad_settings(self):
+        client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
+        params = {"symbol": "BTC/USDT", "timeframe": "1m", "auto": "false", "rsi_period": 1}
+        response = client.get("/api/analysis", params=params)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("rsi_period", response.json()["detail"])
+        bad_mode = client.get("/api/analysis", params={"symbol": "BTC/USDT", "timeframe": "1m", "trading_mode": "x"})
+        self.assertEqual(bad_mode.status_code, 400)
+
     def test_candles_and_unknown_market_type(self):
         exchange = FakeExchange(candles=[[row(60, 10), row(120, 11)]])
         client = self.client(lambda market_type: MarketService(exchange, market_type))

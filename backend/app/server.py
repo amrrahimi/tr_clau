@@ -14,8 +14,10 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
+from .analysis import ANALYSIS_CANDLES, analyze
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
+from .presets import IndicatorSettings, MODE_EMAS, validate
 
 # Pages allowed to call this server: the desktop app (Windows and macOS
 # addresses) and the frontend while it is being developed.
@@ -107,6 +109,47 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, "candles": rows}
+
+    @app.get("/api/analysis")
+    async def analysis(
+        symbol: str,
+        timeframe: str,
+        market_type: str = "spot",
+        trading_mode: str = "scalping",
+        auto: bool = True,
+        # Manual settings; used only when auto is false.
+        ema_fast_on: bool = True,
+        ema_fast: int = 20,
+        ema_slow_on: bool = True,
+        ema_slow: int = 50,
+        bb_on: bool = True,
+        bb_period: int = 20,
+        bb_mult: float = 2.0,
+        rsi_on: bool = True,
+        rsi_period: int = 14,
+        atr_period: int = 14,
+    ):
+        if trading_mode not in MODE_EMAS:
+            raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
+        manual = None
+        if not auto:
+            manual = IndicatorSettings(
+                ema_fast_on=ema_fast_on, ema_fast=ema_fast, ema_slow_on=ema_slow_on, ema_slow=ema_slow,
+                bb_on=bb_on, bb_period=bb_period, bb_mult=bb_mult,
+                rsi_on=rsi_on, rsi_period=rsi_period, atr_period=atr_period,
+            )
+            problems = validate(manual)
+            if problems:
+                raise HTTPException(400, "; ".join(problems))
+        service = await get_service(market_type)
+        try:
+            rows = await service.fetch_candles(symbol, timeframe, ANALYSIS_CANDLES)
+        except MarketDataError as error:
+            raise HTTPException(400, str(error))
+        except Exception as error:
+            raise HTTPException(502, f"Exchange request failed: {error}")
+        result = analyze(rows, timeframe, trading_mode, manual)
+        return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.websocket("/ws/candles")
     async def live_candles(websocket: WebSocket, symbol: str, timeframe: str, market_type: str = "spot"):

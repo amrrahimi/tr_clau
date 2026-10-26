@@ -11,6 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.analysis import ANALYSIS_CANDLES, analyze  # noqa: E402
 from app.exchange import MarketService, create_exchange  # noqa: E402
 
 
@@ -38,6 +39,18 @@ async def check(market_type: str) -> None:
         older = await service.fetch_candles(symbol, "5m", limit=10, before=candles[0]["time"])
         assert older and older[-1]["time"] < candles[0]["time"], f"{market_type}: older candles not returned"
         print(f"  older history: {len(older)} candles before the first one")
+
+        # Phase 2: analysis needs 1000 candles in one request.
+        history = await service.fetch_candles(symbol, "15m", limit=ANALYSIS_CANDLES)
+        assert len(history) >= 900, f"{market_type}: only {len(history)} of {ANALYSIS_CANDLES} candles"
+        for trading_mode in ("scalping", "daily"):
+            result = analyze(history, "15m", trading_mode)
+            state = result["state"]
+            assert state["current"] != "unknown", f"{market_type}: market state still unknown after {len(history)} candles"
+            rsi = result["lines"].get("rsi", [])
+            assert rsi and 0 <= rsi[-1]["value"] <= 100, f"{market_type}: RSI missing or out of range"
+            print(f"  analysis 15m {trading_mode}: state {state['current']}, ADX {state['adx']:.1f}, "
+                  f"RSI {rsi[-1]['value']:.2f}, lines {sorted(result['lines'])}")
     finally:
         await service.close()
 
