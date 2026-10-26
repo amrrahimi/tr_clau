@@ -42,7 +42,7 @@ jobs:
           # OpenSSL. Built from source on macOS it links to a newer OpenSSL
           # that clashes with Python's own copy inside the packaged program.
           pip install --only-binary cryptography -r requirements.txt pyinstaller
-          pip show cryptography | head -2
+          python -c "import cryptography; print('cryptography', cryptography.__version__)"
           pyinstaller --onefile --name backend --noconfirm \
             --collect-submodules uvicorn \
             --collect-submodules ccxt \
