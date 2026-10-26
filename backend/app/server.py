@@ -7,6 +7,7 @@ The WebSocket endpoint stays open and pushes each changed candle.
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from typing import Callable
 
@@ -15,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
 from .analysis import ANALYSIS_CANDLES, analyze
+from .catalog import parse_instances, public_catalog
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
 from .presets import IndicatorSettings, MODE_EMAS, validate
@@ -79,6 +81,11 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             "timeframes": config.TIMEFRAME_GROUPS,
         }
 
+    @app.get("/api/indicators/catalog")
+    async def indicator_catalog():
+        """Every indicator the app can draw, with its settings and defaults."""
+        return {"indicators": public_catalog()}
+
     @app.get("/api/markets")
     async def markets(market_type: str = "spot", query: str = ""):
         service = await get_service(market_type)
@@ -128,6 +135,8 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         rsi_on: bool = True,
         rsi_period: int = 14,
         atr_period: int = 14,
+        # Phase 2b: a JSON list of indicators, e.g. [{"id":"a","type":"ema","params":{"length":21}}].
+        indicators: str | None = None,
     ):
         if trading_mode not in MODE_EMAS:
             raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
@@ -141,6 +150,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             problems = validate(manual)
             if problems:
                 raise HTTPException(400, "; ".join(problems))
+        instances = None
+        if not auto and indicators is not None:
+            try:
+                instances = parse_instances(json.loads(indicators))
+            except (ValueError, json.JSONDecodeError) as error:
+                raise HTTPException(400, f"indicators: {error}")
         service = await get_service(market_type)
         try:
             rows = await service.fetch_candles(symbol, timeframe, ANALYSIS_CANDLES)
@@ -148,7 +163,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = analyze(rows, timeframe, trading_mode, manual)
+        result = analyze(rows, timeframe, trading_mode, manual, instances=instances)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.websocket("/ws/candles")

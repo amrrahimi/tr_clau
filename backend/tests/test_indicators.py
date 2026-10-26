@@ -100,3 +100,66 @@ class AtrAdxTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewFormulasTest(unittest.TestCase):
+    def test_wma_weights_newest_most(self):
+        # (1*1 + 2*2 + 3*3) / (1 + 2 + 3) = 14 / 6
+        self.assertAlmostEqual(ind.wma([1, 2, 3], 3)[-1], 14 / 6)
+        self.assertEqual(ind.wma([1, 2], 3), [None, None])
+
+    def test_macd_parts_fit_together(self):
+        closes = [100 + 5 * math.sin(i / 7) + i * 0.1 for i in range(120)]
+        line, signal, hist = ind.macd(closes, 12, 26, 9)
+        fast, slow = ind.ema(closes, 12), ind.ema(closes, 26)
+        self.assertIsNone(line[24])
+        self.assertAlmostEqual(line[25], fast[25] - slow[25])
+        first_signal = 25 + 9 - 1  # signal needs 9 MACD values
+        self.assertIsNone(signal[first_signal - 1])
+        self.assertAlmostEqual(signal[first_signal], sum(line[25:34]) / 9)
+        self.assertAlmostEqual(hist[-1], line[-1] - signal[-1])
+
+    def test_stochastic_by_hand(self):
+        highs, lows = [10, 12, 11, 13], [8, 9, 9, 10]
+        closes = [9, 11, 10, 12]
+        k, d = ind.stochastic(highs, lows, closes, 3, 1, 2)
+        # Last 3 candles: highest 13, lowest 9, close 12 -> 75.
+        self.assertAlmostEqual(k[-1], 75.0)
+        # Previous: highest 12, lowest 8, close 10 -> 50; %D = average of 50 and 75.
+        self.assertAlmostEqual(k[-2], 50.0)
+        self.assertAlmostEqual(d[-1], 62.5)
+
+    def test_flat_range_gives_no_stochastic(self):
+        k, _ = ind.stochastic([5] * 5, [5] * 5, [5] * 5, 3, 1, 1)
+        self.assertEqual(k, [None] * 5)
+
+    def test_stoch_rsi_stays_between_0_and_100(self):
+        closes = [100 + 10 * math.sin(i / 4) + (i % 3) for i in range(200)]
+        k, d = ind.stoch_rsi(closes)
+        values = [v for v in k + d if v is not None]
+        self.assertTrue(values)
+        self.assertTrue(all(0 <= v <= 100 for v in values))
+
+    def test_dmi_rising_market(self):
+        highs = [100 + i + 1 for i in range(80)]
+        lows = [100 + i - 1 for i in range(80)]
+        closes = [100 + i + 0.5 for i in range(80)]
+        plus_di, minus_di, adx_line = ind.dmi(highs, lows, closes)
+        self.assertGreater(plus_di[-1], minus_di[-1])
+        self.assertEqual(adx_line, ind.adx(highs, lows, closes))
+
+    def test_supertrend_follows_the_trend(self):
+        up = [100 + i for i in range(60)]
+        down = [159 - i for i in range(60)]
+        closes = up + down
+        highs = [c + 1 for c in closes]
+        lows = [c - 1 for c in closes]
+        line, direction = ind.supertrend(highs, lows, closes, 10, 3.0)
+        self.assertIsNone(line[8])            # needs 10 candles of ATR
+        self.assertEqual(direction[55], -1)   # uptrend: line below price
+        self.assertLess(line[55], lows[55])
+        self.assertEqual(direction[-1], 1)    # downtrend: line above price
+        self.assertGreater(line[-1], highs[-1])
+        # In an uptrend the line never moves down.
+        ups = [line[i] for i in range(20, 60) if direction[i] == -1]
+        self.assertEqual(ups, sorted(ups))

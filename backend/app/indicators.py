@@ -137,12 +137,13 @@ def atr(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], 
     return rma(true_range(highs, lows, closes), length)
 
 
-def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-        length: int = 14, smoothing: int = 14) -> Series:
-    """Average Directional Index, 0 to 100 (TradingView's built-in DMI / ADX).
+def dmi(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+        length: int = 14, smoothing: int = 14) -> tuple[Series, Series, Series]:
+    """Directional Movement Index (TradingView's built-in DMI): (+DI, -DI, ADX).
 
-    Measures how strong a trend is, not its direction. Roughly: above 25 the
-    market is trending, below 20 it is moving sideways.
+    +DI and -DI show how strongly price is pushing up versus down; ADX (0 to
+    100) shows how strong the trend is, not its direction. Roughly: ADX above
+    25 means trending, below 20 means sideways.
     """
     n = len(highs)
     plus_dm: Series = [None] * n
@@ -157,15 +158,138 @@ def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
     plus_avg = rma(plus_dm, length)
     minus_avg = rma(minus_dm, length)
 
+    plus_di: Series = [None] * n
+    minus_di: Series = [None] * n
     dx: Series = [None] * n
     for i in range(n):
         if tr_avg[i] is None or plus_avg[i] is None or minus_avg[i] is None:
             continue
         if tr_avg[i] == 0:
-            plus_di = minus_di = 0.0
+            p_di = m_di = 0.0
         else:
-            plus_di = 100 * plus_avg[i] / tr_avg[i]
-            minus_di = 100 * minus_avg[i] / tr_avg[i]
-        total = plus_di + minus_di
-        dx[i] = abs(plus_di - minus_di) / (total if total != 0 else 1)
-    return [None if v is None else 100 * v for v in rma(dx, smoothing)]
+            p_di = 100 * plus_avg[i] / tr_avg[i]
+            m_di = 100 * minus_avg[i] / tr_avg[i]
+        plus_di[i], minus_di[i] = p_di, m_di
+        total = p_di + m_di
+        dx[i] = abs(p_di - m_di) / (total if total != 0 else 1)
+    adx_line = [None if v is None else 100 * v for v in rma(dx, smoothing)]
+    return plus_di, minus_di, adx_line
+
+
+def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+        length: int = 14, smoothing: int = 14) -> Series:
+    """Only the ADX line of the DMI."""
+    return dmi(highs, lows, closes, length, smoothing)[2]
+
+
+def wma(values: Sequence[Optional[float]], length: int) -> Series:
+    """Weighted moving average (TradingView ta.wma): the newest value counts most."""
+    out: Series = [None] * len(values)
+    weights = list(range(1, length + 1))  # oldest 1 ... newest `length`
+    total = sum(weights)
+    for i in range(length - 1, len(values)):
+        window = values[i - length + 1 : i + 1]
+        if all(v is not None for v in window):
+            out[i] = sum(w * v for w, v in zip(weights, window)) / total  # type: ignore[operator]
+    return out
+
+
+def macd(closes: Sequence[float], fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[Series, Series, Series]:
+    """MACD (TradingView defaults): (MACD line, signal line, histogram).
+
+    MACD = fast EMA - slow EMA; the signal line is an EMA of MACD; the
+    histogram is their difference.
+    """
+    fast_line = ema(closes, fast)
+    slow_line = ema(closes, slow)
+    macd_line: Series = [None if f is None or s is None else f - s for f, s in zip(fast_line, slow_line)]
+    signal_line = ema(macd_line, signal)
+    hist: Series = [None if m is None or g is None else m - g for m, g in zip(macd_line, signal_line)]
+    return macd_line, signal_line, hist
+
+
+def highest(values: Sequence[Optional[float]], length: int) -> Series:
+    out: Series = [None] * len(values)
+    for i in range(length - 1, len(values)):
+        window = values[i - length + 1 : i + 1]
+        if all(v is not None for v in window):
+            out[i] = max(window)  # type: ignore[type-var]
+    return out
+
+
+def lowest(values: Sequence[Optional[float]], length: int) -> Series:
+    out: Series = [None] * len(values)
+    for i in range(length - 1, len(values)):
+        window = values[i - length + 1 : i + 1]
+        if all(v is not None for v in window):
+            out[i] = min(window)  # type: ignore[type-var]
+    return out
+
+
+def stoch_raw(source: Sequence[Optional[float]], highs: Sequence[Optional[float]],
+              lows: Sequence[Optional[float]], length: int) -> Series:
+    """TradingView ta.stoch: where the source sits in the recent high-low range, 0 to 100.
+    A range of zero gives no value (TradingView also leaves it empty)."""
+    hh = highest(highs, length)
+    ll = lowest(lows, length)
+    out: Series = [None] * len(source)
+    for i, (x, h, l) in enumerate(zip(source, hh, ll)):
+        if x is None or h is None or l is None or h == l:
+            continue
+        out[i] = 100 * (x - l) / (h - l)
+    return out
+
+
+def stochastic(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+               k_length: int = 14, k_smoothing: int = 1, d_smoothing: int = 3) -> tuple[Series, Series]:
+    """Stochastic oscillator (TradingView defaults 14, 1, 3): (%K, %D).
+    Above 80 is usually called overbought, below 20 oversold."""
+    k = sma(stoch_raw(closes, highs, lows, k_length), k_smoothing)
+    d = sma(k, d_smoothing)
+    return k, d
+
+
+def stoch_rsi(closes: Sequence[float], k_smoothing: int = 3, d_smoothing: int = 3,
+              rsi_length: int = 14, stoch_length: int = 14) -> tuple[Series, Series]:
+    """Stochastic RSI (TradingView defaults 3, 3, 14, 14): the stochastic of RSI. (%K, %D)."""
+    r = rsi(closes, rsi_length)
+    k = sma(stoch_raw(r, r, r, stoch_length), k_smoothing)
+    d = sma(k, d_smoothing)
+    return k, d
+
+
+def supertrend(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+               atr_length: int = 10, factor: float = 3.0) -> tuple[Series, list[Optional[int]]]:
+    """SuperTrend (TradingView ta.supertrend): (line, direction).
+
+    Direction -1 = uptrend (line under the price), 1 = downtrend (line above).
+    The line only moves in the trend's favour, which makes it a trailing stop.
+    """
+    n = len(closes)
+    atr_line = atr(highs, lows, closes, atr_length)
+    line: Series = [None] * n
+    direction: list[Optional[int]] = [None] * n
+    prev_upper = prev_lower = 0.0  # TradingView: nz(band[1]) is 0 before the first value
+    prev_line: Optional[float] = None
+    for i in range(n):
+        a = atr_line[i]
+        if a is None:
+            continue
+        mid = (highs[i] + lows[i]) / 2
+        upper = mid + factor * a
+        lower = mid - factor * a
+        prev_close = closes[i - 1] if i > 0 else None
+        if not (lower > prev_lower or (prev_close is not None and prev_close < prev_lower)):
+            lower = prev_lower
+        if not (upper < prev_upper or (prev_close is not None and prev_close > prev_upper)):
+            upper = prev_upper
+        if i == 0 or atr_line[i - 1] is None:
+            d = 1
+        elif prev_line == prev_upper:
+            d = -1 if closes[i] > upper else 1
+        else:
+            d = 1 if closes[i] < lower else -1
+        line[i] = lower if d == -1 else upper
+        direction[i] = d
+        prev_upper, prev_lower, prev_line = upper, lower, line[i]
+    return line, direction

@@ -73,3 +73,44 @@ def validate(settings: IndicatorSettings) -> list[str]:
     if not MULT_MIN <= settings.bb_mult <= MULT_MAX:
         problems.append(f"bb_mult must be between {MULT_MIN} and {MULT_MAX}")
     return problems
+
+
+# ---------- lists of indicators (phase 2b) ----------
+# The automatic choice as a list of indicator instances (see catalog.py).
+# Market-state detection is unchanged; this only decides what is drawn.
+
+# The third, long EMA per trading mode (fast and slow come from MODE_EMAS).
+LONG_EMA = {"scalping": 50, "daily": 200}
+
+
+def auto_instances(state: str, trading_mode: str) -> list[dict]:
+    fast, slow = MODE_EMAS[trading_mode]
+    long_ = LONG_EMA[trading_mode]
+
+    def ema(n: int) -> dict:
+        return {"id": f"auto-ema-{n}", "type": "ema", "params": {"length": n}}
+
+    rsi = {"id": "auto-rsi", "type": "rsi", "params": {"length": 14}}
+    if state in ("trend_up", "trend_down"):
+        # Three EMAs: in a strong trend they line up in order (short, medium, long).
+        return [ema(fast), ema(slow), ema(long_), rsi]
+    if state == "range":
+        return [ema(slow), {"id": "auto-bb", "type": "bb", "params": {"length": 20, "mult": 2}}, rsi]
+    if state == "volatile":
+        return [ema(fast), ema(slow), {"id": "auto-bb", "type": "bb", "params": {"length": 20, "mult": 2.5}},
+                {"id": "auto-atr", "type": "atr", "params": {"length": 14}}]
+    return [ema(fast), ema(slow), {"id": "auto-bb", "type": "bb", "params": {"length": 20, "mult": 2}}, rsi]
+
+
+def settings_to_instances(s: IndicatorSettings) -> list[dict]:
+    """The older fixed manual settings as a list (kept until the new screen replaces them)."""
+    out = []
+    if s.ema_fast_on:
+        out.append({"id": "manual-ema-fast", "type": "ema", "params": {"length": s.ema_fast}})
+    if s.ema_slow_on:
+        out.append({"id": "manual-ema-slow", "type": "ema", "params": {"length": s.ema_slow}})
+    if s.bb_on:
+        out.append({"id": "manual-bb", "type": "bb", "params": {"length": s.bb_period, "mult": s.bb_mult}})
+    if s.rsi_on:
+        out.append({"id": "manual-rsi", "type": "rsi", "params": {"length": s.rsi_period}})
+    return out

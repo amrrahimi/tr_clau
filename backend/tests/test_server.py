@@ -1,6 +1,7 @@
 """Server tests. They need FastAPI and httpx (requirements-dev.txt);
 without them they are skipped instead of failing."""
 
+import json
 import unittest
 
 try:
@@ -53,6 +54,23 @@ class ServerTest(unittest.TestCase):
         manual = client.get("/api/analysis", params={**params, "auto": "false", "rsi_on": "false"})
         self.assertFalse(manual.json()["auto"])
         self.assertNotIn("rsi", manual.json()["lines"])
+
+    def test_catalog_endpoint(self):
+        client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
+        body = client.get("/api/indicators/catalog").json()
+        self.assertEqual(len(body["indicators"]), 12)
+
+    def test_analysis_with_indicator_list(self):
+        rows = [[i * 60_000, 100 + i, 101 + i, 99 + i, 100 + i, 1] for i in range(300)]
+        exchange = FakeExchange(candles=[rows])
+        client = self.client(lambda market_type: MarketService(exchange, market_type))
+        wanted = [{"id": "e1", "type": "ema", "params": {"length": 9}}, {"id": "s", "type": "stoch"}]
+        params = {"symbol": "BTC/USDT", "timeframe": "1m", "auto": "false", "indicators": json.dumps(wanted)}
+        body = client.get("/api/analysis", params=params).json()
+        self.assertEqual([i["id"] for i in body["indicators"]], ["e1", "s"])
+        bad = client.get("/api/analysis", params={**params, "indicators": '[{"type":"nope"}]'})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("unknown indicator", bad.json()["detail"])
 
     def test_analysis_rejects_bad_settings(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))

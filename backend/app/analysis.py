@@ -11,7 +11,8 @@ from typing import Optional, Sequence
 
 from . import config
 from . import indicators as ind
-from .presets import IndicatorSettings, auto_settings
+from .catalog import Instance, compute_instances, parse_instances
+from .presets import IndicatorSettings, auto_instances, auto_settings, settings_to_instances
 from .regime import detect
 
 # Candles fetched for the analysis. Indicators need earlier candles to "warm
@@ -37,11 +38,17 @@ def analyze(
     trading_mode: str,
     manual: Optional[IndicatorSettings] = None,
     now: Optional[float] = None,
+    instances: Optional[list[Instance]] = None,
     returned_points: int = RETURNED_POINTS,
 ) -> dict:
+    """`instances` (a list of indicators) wins over `manual`; with neither, the bot chooses (automatic)."""
     closed = closed_only(candles, timeframe, time.time() if now is None else now)
     states, reading = detect(closed, trading_mode)
     settings = manual if manual is not None else auto_settings(reading.state, trading_mode)
+    is_auto = manual is None and instances is None
+    if instances is None:
+        chosen = auto_instances(reading.state, trading_mode) if manual is None else settings_to_instances(manual)
+        instances = parse_instances(chosen)
 
     closes = [c["close"] for c in closed]
     highs = [c["high"] for c in closed]
@@ -71,7 +78,9 @@ def analyze(
             changes.append({"time": closed[i]["time"], "state": states[i]})
 
     return {
-        "auto": manual is None,
+        "auto": is_auto,
+        # Phase 2b: one entry per indicator on the chart (replaces "settings"/"lines" in the new screen).
+        "indicators": compute_instances(closed, instances, returned_points),
         "tradingMode": trading_mode,
         "settings": settings.to_dict(),
         "state": {

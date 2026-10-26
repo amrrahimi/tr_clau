@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.analysis import ANALYSIS_CANDLES, analyze  # noqa: E402
+from app.catalog import SPECS, parse_instances  # noqa: E402
 from app.exchange import MarketService, create_exchange  # noqa: E402
 
 
@@ -50,7 +51,16 @@ async def check(market_type: str) -> None:
             rsi = result["lines"].get("rsi", [])
             assert rsi and 0 <= rsi[-1]["value"] <= 100, f"{market_type}: RSI missing or out of range"
             print(f"  analysis 15m {trading_mode}: state {state['current']}, ADX {state['adx']:.1f}, "
-                  f"RSI {rsi[-1]['value']:.2f}, lines {sorted(result['lines'])}")
+                  f"RSI {rsi[-1]['value']:.2f}, indicators {[i['label'] for i in result['indicators']]}")
+
+        # Phase 2b: every indicator in the catalog on real data.
+        everything = parse_instances([{"type": t} for t in SPECS])
+        result = analyze(history, "15m", "daily", instances=everything)
+        for item in result["indicators"]:
+            for output in item["outputs"]:
+                assert output["points"], f"{market_type}: {item['label']} {output['key']} has no values"
+        latest = ", ".join(f"{i['label']} {i['outputs'][0]['points'][-1]['value']:.4g}" for i in result["indicators"])
+        print(f"  all {len(everything)} indicators: {latest}")
     finally:
         await service.close()
 
