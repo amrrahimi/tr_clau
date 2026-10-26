@@ -6,7 +6,7 @@ import {
   MAX_INDICATORS, addIndicator, cleanList, convertOldSettings, fromResults, instanceLabel, invalidParams,
   latestValues, loadManualState, removeIndicator, saveManualState, updateParams,
 } from "../src/indicatorList.ts";
-import type { CatalogSpec, IndicatorResult } from "../src/types.ts";
+import type { CatalogSpec, IndicatorInstance, IndicatorResult } from "../src/types.ts";
 
 const EMA: CatalogSpec = {
   type: "ema", name: "EMA", pane: "price",
@@ -49,7 +49,7 @@ test("edit and remove one instance without touching the others", () => {
 });
 
 test("at most 20 indicators", () => {
-  let list = [] as ReturnType<typeof addIndicator>;
+  let list: IndicatorInstance[] = [];
   for (let n = 0; n < 25; n++) list = addIndicator(list, EMA);
   assert.equal(list.length, MAX_INDICATORS);
 });
@@ -75,7 +75,7 @@ test("the bot's list becomes the starting point for the user's list", () => {
 });
 
 test("unknown or invalid instances are dropped", () => {
-  const list = [
+  const list: IndicatorInstance[] = [
     { id: "a", type: "ema", params: { length: 9 } },
     { id: "b", type: "removed-indicator", params: {} },
     { id: "c", type: "ema", params: { length: 0 } },
