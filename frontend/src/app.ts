@@ -5,13 +5,14 @@
 import { BackendError, type Backend, type LiveConnection } from "./api.ts";
 import { applyLiveCandle, prependOlder } from "./candles.ts";
 import { ChartView, LINE_COLORS } from "./chart.ts";
-import { displaySymbol, formatPrice, formatSince, formatVolume } from "./format.ts";
+import { displaySymbol, formatClock, formatPrice, formatSince, formatVolume } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import {
   DEFAULT_SETTINGS, MULT_MAX, MULT_MIN, PERIOD_MAX, PERIOD_MIN,
   clearManual, invalidFields, legendItems, loadManual, saveManual, type LegendItem,
 } from "./indicatorSettings.ts";
 import type { MessageKey } from "./locales/en.ts";
+import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
 import type { Analysis, Candle, IndicatorSettings, MarketInfo, MarketType, Mode, Options } from "./types.ts";
 
 type LiveStatus = "connecting" | "live" | "stopped";
@@ -54,6 +55,7 @@ export class App {
   private analysis: Analysis | null = null;
   private analysisId = 0;
   private analysisTimer: ReturnType<typeof setTimeout> | undefined;
+  private zone: ZoneId = loadZone();
 
   private readonly root: HTMLElement;
   private chart!: ChartView;
@@ -399,6 +401,12 @@ export class App {
               <div class="legend" data-el="legend"></div>
             </div>
             <form class="settings-popup" data-el="popup" hidden></form>
+            <div class="chart-footer">
+              <div class="tz-picker">
+                <button type="button" class="tz-button" data-el="tzButton"></button>
+                <ul class="tz-menu" data-el="tzMenu" hidden></ul>
+              </div>
+            </div>
             <div class="chart-message" data-el="chartMessage" hidden></div>
           </section>
         </main>
@@ -412,6 +420,12 @@ export class App {
     this.els.language.addEventListener("click", () => this.setLanguage(this.language === "fa" ? "en" : "fa"));
     this.els.retry.addEventListener("click", () => this.retry());
     this.els.search.addEventListener("input", (e) => this.onSearchInput((e.target as HTMLInputElement).value));
+    this.chart.setTimeZone(this.zone);
+    this.els.tzButton.addEventListener("click", () => this.toggleZoneMenu());
+    document.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement).closest(".tz-picker")) this.els.tzMenu.hidden = true;
+    });
+    setInterval(() => this.renderClock(), 1000);
     this.els.gear.addEventListener("click", () => this.openPopup());
     this.els.popup.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -438,6 +452,8 @@ export class App {
     (this.els.search as HTMLInputElement).placeholder = this.t("watchlist.searchPlaceholder");
     this.els.retry.textContent = this.t("action.retry");
     this.closePopup();
+    this.els.tzMenu.hidden = true;
+    this.renderClock();
     this.renderControls();
     this.renderSettingsMode();
     this.renderAnalysis();
@@ -490,7 +506,9 @@ export class App {
     }
     const state = a.state;
     let label = `${this.t("state.label")}: ${this.t(`state.${state.current}` as MessageKey)}`;
-    if (state.since !== null) label += ` · ${this.t("state.since", { time: formatSince(state.since) })}`;
+    if (state.since !== null) {
+      label += ` · ${this.t("state.since", { time: formatSince(state.since, Date.now(), this.zone) })}`;
+    }
     if (state.adx !== null) label += ` · ADX ${state.adx.toFixed(1)}`;
     this.els.marketState.textContent = label;
     this.els.marketState.className = `market-state ${state.current}`;
@@ -512,6 +530,54 @@ export class App {
       row.append(dot, name, values);
       return row;
     }));
+  }
+
+  // ---------- time zone ----------
+
+  private zoneLabel(zone: ZoneId): string {
+    const option = ZONES.find((z) => z.id === zone);
+    return option ? this.t(option.label) : zone;
+  }
+
+  /** Bottom-left clock: "14:06:32  UTC+3  Moscow". */
+  private renderClock(): void {
+    const now = Date.now();
+    this.els.tzButton.textContent =
+      `${formatClock(now, this.zone)}  ${formatOffset(offsetMinutes(now, this.zone))}  ${this.zoneLabel(this.zone)}`;
+    this.els.tzButton.title = this.t("tz.title");
+  }
+
+  private toggleZoneMenu(): void {
+    const menu = this.els.tzMenu;
+    if (!menu.hidden) {
+      menu.hidden = true;
+      return;
+    }
+    const now = Date.now();
+    menu.dir = direction(this.language);
+    menu.replaceChildren(...ZONES.map((z) => {
+      const item = document.createElement("li");
+      item.className = z.id === this.zone ? "active" : "";
+      const name = document.createElement("span");
+      name.textContent = this.t(z.label);
+      const offset = document.createElement("span");
+      offset.className = "tz-offset";
+      offset.dir = "ltr";
+      offset.textContent = formatOffset(offsetMinutes(now, z.id));
+      item.append(name, offset);
+      item.addEventListener("click", () => this.setZone(z.id));
+      return item;
+    }));
+    menu.hidden = false;
+  }
+
+  private setZone(zone: ZoneId): void {
+    this.zone = zone;
+    saveZone(zone);
+    this.els.tzMenu.hidden = true;
+    this.chart.setTimeZone(zone);
+    this.renderClock();
+    this.renderAnalysis();
   }
 
   private renderSegmented(container: HTMLElement, items: { label: string; active: boolean; onClick: () => void }[]): void {

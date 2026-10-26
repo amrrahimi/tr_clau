@@ -16,6 +16,7 @@ import {
 } from "lightweight-charts";
 import { pricePrecision } from "./candles.ts";
 import { formatLocalDateTime, formatLocalTick } from "./format.ts";
+import type { ZoneId } from "./timezone.ts";
 import type { Analysis, Candle, LineName, LinePoint } from "./types.ts";
 
 // Colors close to TradingView's dark theme.
@@ -54,6 +55,7 @@ export class ChartView {
   private readonly chart: IChartApi;
   private readonly series: ISeriesApi<"Candlestick">;
   private precision = 2;
+  private zone: ZoneId = "local";
   // Indicator lines are created when first needed and removed when switched off.
   private readonly lines = new Map<LineName, ISeriesApi<"Line">>();
 
@@ -68,14 +70,14 @@ export class ChartView {
       grid: { vertLines: { color: THEME.grid }, horzLines: { color: THEME.grid } },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: THEME.border },
-      // Times are shown in the computer's local time (the library shows UTC by default).
-      localization: { timeFormatter: (time: unknown) => formatLocalDateTime(time as number) },
+      // Times are shown in the chosen time zone (the library shows UTC by default).
+      localization: { timeFormatter: (time: unknown) => formatLocalDateTime(time as number, this.zone) },
       timeScale: {
         borderColor: THEME.border,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 5,
-        tickMarkFormatter: (time: unknown, markType: number) => formatLocalTick(time as number, markType),
+        tickMarkFormatter: (time: unknown, markType: number) => formatLocalTick(time as number, markType, this.zone),
       },
     });
     this.series = this.chart.addSeries(CandlestickSeries, {
@@ -87,6 +89,15 @@ export class ChartView {
     });
     this.chart.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
       if (range && range.from < LOAD_OLDER_MARGIN) this.onNeedOlder();
+    });
+  }
+
+  /** Show times in another zone. The formatters are set again so the chart redraws its labels. */
+  setTimeZone(zone: ZoneId): void {
+    this.zone = zone;
+    this.chart.applyOptions({
+      localization: { timeFormatter: (time: unknown) => formatLocalDateTime(time as number, this.zone) },
+      timeScale: { tickMarkFormatter: (time: unknown, markType: number) => formatLocalTick(time as number, markType, this.zone) },
     });
   }
 

@@ -1,6 +1,6 @@
-# Builds the desktop installers. Start it from the Actions tab ("Run workflow"),
-# by pushing a version tag such as v0.1.0, or automatically when files that
-# affect packaging change on main.
+# Builds the desktop installers after every upload to main (agreed with the
+# owner: a ready download after each update), on a version tag such as
+# v0.1.0, or by hand from the Actions tab ("Run workflow").
 name: Build desktop apps
 
 on:
@@ -8,12 +8,12 @@ on:
   push:
     tags: ["v*"]
     branches: [main]
-    paths:
-      - ".github/workflows/build.yml"
-      - "backend/requirements.txt"
-      - "backend/run.py"
-      - "backend/scripts/smoke_packaged.py"
-      - "frontend/src-tauri/**"
+
+# A newer upload replaces a build that is still running, so the newest
+# installers are ready as soon as possible.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
