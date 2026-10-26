@@ -176,52 +176,41 @@ button:hover { background: var(--border); }
   pointer-events: none;
   max-width: calc(100% - 90px);
 }
-.corner-controls { display: flex; gap: 4px; align-items: center; pointer-events: auto; }
+.corner-controls { display: flex; flex-direction: row; gap: 6px; align-items: center; pointer-events: auto; }
+.start-button { background: var(--up); color: #fff; font-weight: 700; padding: 3px 12px; font-size: 12px; }
+.start-button:hover { background: #0bb393; }
+.add-button { border: 1px solid var(--border); background: var(--panel); padding: 3px 9px; font-size: 12px; }
 .segmented.small button { padding: 3px 8px; font-size: 12px; }
 .icon-button.small { padding: 3px 7px; background: var(--panel); }
 .icon-button[hidden] { display: none; }
 
-.legend { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+/* Legends: one block per pane, placed by the code at that pane's top. */
+.pane-legends { position: absolute; inset: 0 0 26px 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.legend {
+  position: absolute;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+  max-width: calc(100% - 90px);
+}
+.legend-row button { pointer-events: auto; }
+.legend-row.stopped .legend-label { color: var(--muted); }
+.legend-empty { color: var(--muted); }
+.legend-button {
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+.legend-row:hover .legend-button, .legend-button:focus-visible { opacity: 1; }
+.legend-button:hover { color: var(--text); background: var(--panel); }
 .legend-row { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
 .legend-row .dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 .legend-label { color: var(--text); }
 .legend-value { color: var(--muted); font-variant-numeric: tabular-nums; }
-
-.settings-popup {
-  position: absolute;
-  top: 44px;
-  left: 8px;
-  z-index: 6;
-  width: min(340px, calc(100% - 16px));
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-.settings-popup[hidden] { display: none; }
-.popup-title { font-weight: 700; }
-.popup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.popup-row .check { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 6px; }
-.popup-row .num { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
-.popup-row input[type="number"] {
-  width: 62px;
-  padding: 4px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-}
-.popup-row input.invalid { border-color: var(--down); }
-.popup-error { color: var(--down); font-size: 12px; }
-.popup-error[hidden] { display: none; }
-.popup-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.popup-actions button { border: 1px solid var(--border); }
-.popup-actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ---------- time zone picker (bottom-left, under the chart) ---------- */
 
@@ -262,3 +251,57 @@ button:hover { background: var(--border); }
 .tz-menu li:hover { background: var(--border); }
 .tz-menu li.active { color: #fff; background: rgba(41, 98, 255, 0.35); }
 .tz-offset { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- windows and dialogs ---------- */
+
+.modal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 60px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.modal-layer[hidden] { display: none; }
+.dialog, .window {
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100% - 90px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.dialog p { margin: 0; line-height: 1.7; }
+.dialog-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.dialog-actions button { border: 1px solid var(--border); }
+.dialog-actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.window-title { font-weight: 700; }
+.indicator-list .search { margin: 0; }
+.list-body { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; min-height: 120px; }
+.list-heading { color: var(--muted); font-size: 12px; padding: 8px 4px 2px; }
+.list-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: start; padding: 7px 8px; }
+.list-name { font-weight: 600; }
+.list-desc { color: var(--muted); font-size: 12px; }
+.list-status { min-height: 18px; color: var(--up); font-size: 12px; }
+.settings-window .field { display: grid; grid-template-columns: 1fr 90px; gap: 2px 10px; align-items: center; }
+.settings-window .field small { grid-column: 2; color: var(--muted); font-size: 11px; direction: ltr; }
+.settings-window input[type="number"] {
+  width: 90px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.settings-window input.invalid { border-color: var(--down); }
+.popup-error { color: var(--down); font-size: 12px; }
+.popup-error[hidden] { display: none; }
+.market-state.stopped { color: #f7a600; }
+.muted { color: var(--muted); margin: 0; }

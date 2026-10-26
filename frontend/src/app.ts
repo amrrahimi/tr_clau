@@ -4,16 +4,14 @@
 
 import { BackendError, type Backend, type LiveConnection } from "./api.ts";
 import { applyLiveCandle, prependOlder } from "./candles.ts";
-import { ChartView, LINE_COLORS } from "./chart.ts";
+import { ChartView } from "./chart.ts";
 import { displaySymbol, formatClock, formatPrice, formatSince, formatVolume } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
-import {
-  DEFAULT_SETTINGS, MULT_MAX, MULT_MIN, PERIOD_MAX, PERIOD_MIN,
-  clearManual, invalidFields, legendItems, loadManual, saveManual, type LegendItem,
-} from "./indicatorSettings.ts";
+import { IndicatorController } from "./indicatorController.ts";
+import type { BotMode } from "./indicatorList.ts";
 import type { MessageKey } from "./locales/en.ts";
 import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
-import type { Analysis, Candle, IndicatorSettings, MarketInfo, MarketType, Mode, Options } from "./types.ts";
+import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
 
 type LiveStatus = "connecting" | "live" | "stopped";
 
@@ -21,13 +19,6 @@ const DEFAULT_TIMEFRAME: Record<Mode, string> = { scalping: "5m", daily: "1h" };
 const SEARCH_DELAY_MS = 300;
 /** Wait after a candle closes before asking for indicators, so the exchange has the final price. */
 const ANALYSIS_DELAY_MS = 2000;
-
-const LEGEND_COLORS: Record<LegendItem["id"], string> = {
-  emaFast: LINE_COLORS.emaFast,
-  emaSlow: LINE_COLORS.emaSlow,
-  bb: LINE_COLORS.bbMiddle,
-  rsi: LINE_COLORS.rsi,
-};
 
 export class App {
   private language: Language = loadLanguage();
@@ -50,8 +41,8 @@ export class App {
   // Without this, quickly clicking BTC then ETH could show BTC's candles under ETH's name.
   private requestId = 0;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
-  // Indicators. `manual` null means Auto: the bot picks the settings.
-  private manual: IndicatorSettings | null = loadManual();
+  // Indicators: the controller owns Auto/Manual/Start and the user's list.
+  private indicators!: IndicatorController;
   private analysis: Analysis | null = null;
   private analysisId = 0;
   private analysisTimer: ReturnType<typeof setTimeout> | undefined;
@@ -74,6 +65,7 @@ export class App {
   private async loadOptions(): Promise<void> {
     try {
       this.options = await this.backend.getOptions();
+      this.indicators.setCatalog(await this.backend.getCatalog());
       this.renderControls();
       await this.loadMarkets();
     } catch (error) {
@@ -141,7 +133,7 @@ export class App {
     this.stopLive();
     this.candles = [];
     this.analysis = null;
-    this.chart.setIndicators(null);
+    this.indicators.clearResults();
     this.renderAnalysis();
     this.noMoreHistory = false;
     this.loadingOlder = false;
@@ -200,20 +192,22 @@ export class App {
   /** Ask the backend for market state and indicator lines with the current settings. */
   private async loadAnalysis(): Promise<void> {
     if (!this.symbol) return;
-    const chartId = this.requestId;
+    const wanted = this.indicators.request();
     const id = ++this.analysisId;
+    if (wanted === "stopped") return; // the bot is stopped: no analysis until Start
+    const chartId = this.requestId;
     try {
       const analysis = await this.backend.getAnalysis({
         marketType: this.marketType,
         symbol: this.symbol,
         timeframe: this.timeframe,
         tradingMode: this.mode,
-        settings: this.manual,
+        indicators: wanted,
       });
-      // Ignore answers for an older chart or older settings.
-      if (id !== this.analysisId || chartId !== this.requestId) return;
+      // Ignore answers for an older chart, older settings, or after the bot was stopped.
+      if (id !== this.analysisId || chartId !== this.requestId || this.indicators.mode === "manual-stopped") return;
       this.analysis = analysis;
-      this.chart.setIndicators(analysis);
+      this.indicators.showResults(analysis.indicators);
       this.renderAnalysis();
     } catch (error) {
       if (id !== this.analysisId) return;
@@ -225,78 +219,15 @@ export class App {
     }
   }
 
-  // ---------- Auto / Manual ----------
-
-  private setAuto(): void {
-    this.closePopup();
-    if (!this.manual) return;
-    this.manual = null;
-    clearManual();
-    this.renderSettingsMode();
-    void this.loadAnalysis();
-  }
-
-  /** Open the settings window, filled with the manual settings or, the first time, what the bot is using now. */
-  private openPopup(): void {
-    const start = this.manual ?? this.analysis?.settings ?? DEFAULT_SETTINGS;
-    const form = this.els.popup as HTMLFormElement;
-    form.dir = direction(this.language);
-    const check = (field: keyof IndicatorSettings, label: MessageKey) =>
-      `<label class="check"><input type="checkbox" id="set-${field}" ${start[field] ? "checked" : ""} /> ${this.t(label)}</label>`;
-    const number = (field: keyof IndicatorSettings, label: MessageKey, step = 1) =>
-      `<label class="num">${this.t(label)} <input type="number" id="set-${field}" dir="ltr" step="${step}" value="${start[field]}" /></label>`;
-    form.innerHTML = `
-      <div class="popup-title">${this.t("settings.title")}</div>
-      <div class="popup-row">${check("ema_fast_on", "settings.emaFast")}${number("ema_fast", "settings.length")}</div>
-      <div class="popup-row">${check("ema_slow_on", "settings.emaSlow")}${number("ema_slow", "settings.length")}</div>
-      <div class="popup-row">${check("bb_on", "settings.bb")}${number("bb_period", "settings.length")}${number("bb_mult", "settings.mult", 0.1)}</div>
-      <div class="popup-row">${check("rsi_on", "settings.rsi")}${number("rsi_period", "settings.length")}</div>
-      <div class="popup-row"><span class="check">${this.t("settings.atr")}</span>${number("atr_period", "settings.length")}</div>
-      <div class="popup-error" hidden></div>
-      <div class="popup-actions">
-        <button type="submit" class="primary">${this.t("settings.apply")}</button>
-        <button type="button" data-action="cancel">${this.t("settings.cancel")}</button>
-      </div>`;
-    form.querySelector("[data-action=cancel]")!.addEventListener("click", () => this.closePopup());
-    form.hidden = false;
-    (form.querySelector("input[type=number]") as HTMLInputElement | null)?.focus();
-  }
-
-  private readPopup(): IndicatorSettings {
-    const form = this.els.popup;
-    const checked = (f: string) => (form.querySelector(`#set-${f}`) as HTMLInputElement).checked;
-    const value = (f: string) => Number((form.querySelector(`#set-${f}`) as HTMLInputElement).value);
-    return {
-      ema_fast_on: checked("ema_fast_on"), ema_fast: value("ema_fast"),
-      ema_slow_on: checked("ema_slow_on"), ema_slow: value("ema_slow"),
-      bb_on: checked("bb_on"), bb_period: value("bb_period"), bb_mult: value("bb_mult"),
-      rsi_on: checked("rsi_on"), rsi_period: value("rsi_period"),
-      atr_period: value("atr_period"),
-    };
-  }
-
-  private applyPopup(): void {
-    const settings = this.readPopup();
-    const bad = invalidFields(settings);
-    const errorBox = this.els.popup.querySelector(".popup-error") as HTMLElement;
-    this.els.popup.querySelectorAll("input").forEach((input) => input.classList.toggle("invalid", bad.includes(input.id.slice(4))));
-    if (bad.length) {
-      errorBox.textContent = this.t("settings.invalid", {
-        pmin: String(PERIOD_MIN), pmax: String(PERIOD_MAX), mmin: String(MULT_MIN), mmax: String(MULT_MAX),
-      });
-      errorBox.hidden = false;
-      return;
+  /** Called by the indicator controller when Auto/Manual/Start changes the mode. */
+  private onBotModeChange(mode: BotMode): void {
+    this.analysisId++; // drop answers that are still on their way
+    if (mode === "manual-stopped") {
+      this.analysis = null;
+      this.renderAnalysis();
+    } else {
+      void this.loadAnalysis();
     }
-    this.manual = settings;
-    saveManual(settings);
-    this.closePopup();
-    this.renderSettingsMode();
-    void this.loadAnalysis();
-  }
-
-  private closePopup(): void {
-    this.els.popup.hidden = true;
-    this.els.popup.replaceChildren();
   }
 
   private stopLive(): void {
@@ -393,14 +324,9 @@ export class App {
           </aside>
           <section class="chart-area" dir="ltr">
             <div class="chart" data-el="chart"></div>
-            <div class="chart-corner">
-              <div class="corner-controls">
-                <div class="segmented small" data-el="settingsMode"></div>
-                <button type="button" class="icon-button small" data-el="gear">⚙</button>
-              </div>
-              <div class="legend" data-el="legend"></div>
-            </div>
-            <form class="settings-popup" data-el="popup" hidden></form>
+            <div class="pane-legends" data-el="legends"></div>
+            <div class="chart-corner corner-controls" data-el="corner"></div>
+            <div class="modal-layer" data-el="modal" hidden></div>
             <div class="chart-footer">
               <div class="tz-picker">
                 <button type="button" class="tz-button" data-el="tzButton"></button>
@@ -426,14 +352,17 @@ export class App {
       if (!(event.target as HTMLElement).closest(".tz-picker")) this.els.tzMenu.hidden = true;
     });
     setInterval(() => this.renderClock(), 1000);
-    this.els.gear.addEventListener("click", () => this.openPopup());
-    this.els.popup.addEventListener("submit", (event) => {
-      event.preventDefault();
-      this.applyPopup();
-    });
-    this.els.popup.addEventListener("keydown", (event) => {
-      if ((event as KeyboardEvent).key === "Escape") this.closePopup();
-    });
+    this.indicators = new IndicatorController(
+      {
+        t: (key, params) => this.t(key, params),
+        dir: () => direction(this.language),
+        chart: this.chart,
+        onModeChange: (mode) => this.onBotModeChange(mode),
+      },
+      { corner: this.els.corner, legends: this.els.legends, modal: this.els.modal },
+    );
+    // Pane sizes change with the window; legends follow their panes.
+    new ResizeObserver(() => this.indicators.render()).observe(this.els.chart);
     this.els.watchlistToggle.addEventListener("click", () => {
       this.watchlistOpen = !this.watchlistOpen;
       this.els.watchlist.hidden = !this.watchlistOpen;
@@ -451,11 +380,11 @@ export class App {
     this.els.watchlistToggle.title = this.t("watchlist.toggle");
     (this.els.search as HTMLInputElement).placeholder = this.t("watchlist.searchPlaceholder");
     this.els.retry.textContent = this.t("action.retry");
-    this.closePopup();
+    this.indicators.closeModal();
+    this.indicators.render();
     this.els.tzMenu.hidden = true;
     this.renderClock();
     this.renderControls();
-    this.renderSettingsMode();
     this.renderAnalysis();
     this.renderWatchlist();
     this.renderLiveStatus();
@@ -484,24 +413,19 @@ export class App {
     })));
   }
 
-  private renderSettingsMode(): void {
-    this.renderSegmented(this.els.settingsMode, [
-      { label: this.t("settings.auto"), active: !this.manual, onClick: () => this.setAuto() },
-      { label: this.t("settings.manual"), active: !!this.manual, onClick: () => this.openPopup() },
-    ]);
-    (this.els.settingsMode.firstElementChild as HTMLElement).title = this.t("settings.autoHint");
-    this.els.gear.hidden = !this.manual;
-    this.els.gear.title = this.t("settings.edit");
-  }
-
-  /** Market state label, ATR and the legend in the chart's corner. */
+  /** Market state label and ATR in the top bar. */
   private renderAnalysis(): void {
+    if (this.indicators?.mode === "manual-stopped") {
+      this.els.marketState.textContent = this.t("bot.stopped");
+      this.els.marketState.className = "market-state stopped";
+      this.els.atr.textContent = "";
+      return;
+    }
     const a = this.analysis;
     if (!a) {
       this.els.marketState.textContent = "";
       this.els.marketState.className = "market-state";
       this.els.atr.textContent = "";
-      this.els.legend.replaceChildren();
       return;
     }
     const state = a.state;
@@ -512,24 +436,7 @@ export class App {
     if (state.adx !== null) label += ` · ADX ${state.adx.toFixed(1)}`;
     this.els.marketState.textContent = label;
     this.els.marketState.className = `market-state ${state.current}`;
-    this.els.atr.textContent = a.atr === null ? "" : `ATR ${a.settings.atr_period}: ${formatPrice(a.atr, this.chart.pricePrecision)}`;
-
-    this.els.legend.replaceChildren(...legendItems(a).map((item) => {
-      const row = document.createElement("div");
-      row.className = "legend-row";
-      const dot = document.createElement("span");
-      dot.className = "dot";
-      dot.style.background = LEGEND_COLORS[item.id];
-      const name = document.createElement("span");
-      name.className = "legend-label";
-      name.textContent = item.label;
-      const values = document.createElement("span");
-      values.className = "legend-value";
-      const precision = item.id === "rsi" ? 2 : this.chart.pricePrecision;
-      values.textContent = item.values.map((v) => formatPrice(v, precision)).join("  ");
-      row.append(dot, name, values);
-      return row;
-    }));
+    this.els.atr.textContent = a.atr === null ? "" : `ATR ${a.atrLength}: ${formatPrice(a.atr, this.chart.pricePrecision)}`;
   }
 
   // ---------- time zone ----------

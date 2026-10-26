@@ -97,21 +97,31 @@ class AutoListsTest(unittest.TestCase):
 
 
 class AnalysisWithListsTest(unittest.TestCase):
-    def test_auto_adds_indicator_list_and_keeps_old_fields(self):
+    def test_auto_gives_indicator_list(self):
         data = [{"time": i * 60, "open": 100 + i, "high": 101 + i, "low": 99 + i, "close": 100.5 + i, "volume": 1}
                 for i in range(400)]
         result = analyze(data, "1m", "daily", now=10**9)
         self.assertEqual(result["state"]["current"], "trend_up")
         self.assertEqual([i["label"] for i in result["indicators"]], ["EMA 20", "EMA 50", "EMA 200", "RSI 14"])
-        self.assertIn("lines", result)      # old screen still works
-        self.assertIn("settings", result)
 
     def test_given_list_is_used(self):
         inst = catalog.parse_instances([{"id": "m", "type": "macd"}])
-        result = analyze(candles(), "1m", "daily", now=10**9, instances=inst)
+        result = analyze(candles(), "1m", "daily", inst, now=10**9)
         self.assertFalse(result["auto"])
         self.assertEqual([i["id"] for i in result["indicators"]], ["m"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreviewCopyTest(unittest.TestCase):
+    def test_preview_catalog_matches_backend(self):
+        """frontend/src/mockCatalog.ts (used only by the sample-data preview) must match the real catalog."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "src", "mockCatalog.ts")
+        if not os.path.exists(path):
+            self.skipTest("frontend folder not present")
+        text = open(path, encoding="utf-8").read()
+        copy = json.loads(text[text.index("= [") + 2 : text.rindex("]") + 1])
+        self.assertEqual(copy, json.loads(json.dumps(catalog.public_catalog())))

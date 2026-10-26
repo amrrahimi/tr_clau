@@ -20,35 +20,61 @@ export interface MarketInfo {
   lastPrice: number | null;
 }
 
-// ---------- phase 2: analysis (matches backend/app/analysis.py) ----------
+// ---------- analysis and indicators (match backend/app/catalog.py and analysis.py) ----------
 
 export type MarketState = "trend_up" | "trend_down" | "range" | "volatile" | "unknown";
 
-/** Field names match the backend so they can be sent as they are. */
-export interface IndicatorSettings {
-  ema_fast_on: boolean;
-  ema_fast: number;
-  ema_slow_on: boolean;
-  ema_slow: number;
-  bb_on: boolean;
-  bb_period: number;
-  bb_mult: number;
-  rsi_on: boolean;
-  rsi_period: number;
-  atr_period: number;
+/** One setting of an indicator, from the backend's catalog. */
+export interface ParamSpec {
+  name: string; // e.g. "length"
+  default: number;
+  min: number;
+  max: number;
+  step: number; // 1 = whole numbers only
 }
 
-export interface LinePoint {
+/** One indicator the app can draw (a "spec card"). */
+export interface CatalogSpec {
+  type: string; // e.g. "ema"
+  name: string; // e.g. "EMA"
+  pane: "price" | "own";
+  params: ParamSpec[];
+  outputs: { key: string; color: string; style: "line" | "histogram" }[];
+  levels: number[];
+  scale: [number, number] | null;
+  candle_colors: boolean;
+}
+
+/** One indicator placed on the chart with its own settings. */
+export interface IndicatorInstance {
+  id: string;
+  type: string;
+  params: Record<string, number>;
+}
+
+export interface SeriesPoint {
   time: number;
   value: number;
+  color?: string; // volume bars take the candle's colour
 }
 
-export type LineName = "emaFast" | "emaSlow" | "bbUpper" | "bbMiddle" | "bbLower" | "rsi";
+/** The lines of one indicator instance, as calculated by the backend. */
+export interface IndicatorResult {
+  id: string;
+  type: string;
+  name: string;
+  label: string; // e.g. "EMA 21"
+  pane: "price" | "own";
+  params: Record<string, number>;
+  levels: number[];
+  scale: [number, number] | null;
+  outputs: { key: string; color: string; style: "line" | "histogram"; points: SeriesPoint[] }[];
+}
 
 export interface Analysis {
   auto: boolean;
   tradingMode: Mode;
-  settings: IndicatorSettings;
+  indicators: IndicatorResult[];
   state: {
     current: MarketState;
     since: number | null;
@@ -56,8 +82,8 @@ export interface Analysis {
     atrRatio: number | null;
   };
   atr: number | null;
+  atrLength: number;
   lastClosedTime: number | null;
-  lines: Partial<Record<LineName, LinePoint[]>>;
   stateChanges: { time: number; state: MarketState }[];
 }
 

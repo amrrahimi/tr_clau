@@ -1,15 +1,14 @@
 // Everything the screen needs from the backend, behind one interface.
 // The real app uses HttpBackend; the preview uses a fake one with sample data.
 
-import { analysisParams } from "./indicatorSettings.ts";
-import type { Analysis, Candle, IndicatorSettings, MarketInfo, MarketType, Mode, Options } from "./types.ts";
+import type { Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options } from "./types.ts";
 
 export interface AnalysisRequest {
   marketType: MarketType;
   symbol: string;
   timeframe: string;
   tradingMode: Mode;
-  settings: IndicatorSettings | null; // null = let the bot choose (automatic)
+  indicators: IndicatorInstance[] | null; // null = let the bot choose (automatic)
 }
 
 export interface CandleRequest {
@@ -33,6 +32,7 @@ export interface Backend {
   getMarkets(marketType: MarketType, query?: string): Promise<MarketInfo[]>;
   getCandles(request: CandleRequest): Promise<Candle[]>;
   getAnalysis(request: AnalysisRequest): Promise<Analysis>;
+  getCatalog(): Promise<CatalogSpec[]>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
 
@@ -92,9 +92,14 @@ export class HttpBackend implements Backend {
       symbol: request.symbol,
       timeframe: request.timeframe,
       trading_mode: request.tradingMode,
-      ...analysisParams(request.settings),
+      ...analysisParams(request.indicators),
     });
     return body;
+  }
+
+  async getCatalog(): Promise<CatalogSpec[]> {
+    const body = await this.getJson<{ indicators: CatalogSpec[] }>("/api/indicators/catalog", {});
+    return body.indicators;
   }
 
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection {
@@ -150,6 +155,12 @@ export async function waitForBackend(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return false;
+}
+
+/** Query parameters for /api/analysis. `null` = automatic (the bot chooses). */
+export function analysisParams(list: IndicatorInstance[] | null): Record<string, string> {
+  if (!list) return { auto: "true" };
+  return { auto: "false", indicators: JSON.stringify(list.map(({ id, type, params }) => ({ id, type, params }))) };
 }
 
 export type LiveMessage =

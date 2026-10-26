@@ -48,14 +48,15 @@ async def check(market_type: str) -> None:
             result = analyze(history, "15m", trading_mode)
             state = result["state"]
             assert state["current"] != "unknown", f"{market_type}: market state still unknown after {len(history)} candles"
-            rsi = result["lines"].get("rsi", [])
-            assert rsi and 0 <= rsi[-1]["value"] <= 100, f"{market_type}: RSI missing or out of range"
+            assert result["indicators"], f"{market_type}: automatic list is empty"
             print(f"  analysis 15m {trading_mode}: state {state['current']}, ADX {state['adx']:.1f}, "
-                  f"RSI {rsi[-1]['value']:.2f}, indicators {[i['label'] for i in result['indicators']]}")
+                  f"indicators {[i['label'] for i in result['indicators']]}")
 
         # Phase 2b: every indicator in the catalog on real data.
         everything = parse_instances([{"type": t} for t in SPECS])
-        result = analyze(history, "15m", "daily", instances=everything)
+        result = analyze(history, "15m", "daily", everything)
+        rsi = next(i for i in result["indicators"] if i["type"] == "rsi")["outputs"][0]["points"]
+        assert 0 <= rsi[-1]["value"] <= 100, f"{market_type}: RSI out of range"
         for item in result["indicators"]:
             for output in item["outputs"]:
                 assert output["points"], f"{market_type}: {item['label']} {output['key']} has no values"

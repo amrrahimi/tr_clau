@@ -2,8 +2,10 @@
 // the screen without the Python backend. Prices are random walks, NOT real data.
 
 import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers } from "./api.ts";
-import { DEFAULT_SETTINGS } from "./indicatorSettings.ts";
-import type { Analysis, Candle, IndicatorSettings, LinePoint, MarketInfo, MarketState, MarketType, Options } from "./types.ts";
+import { MOCK_CATALOG } from "./mockCatalog.ts";
+import type {
+  Analysis, CatalogSpec, Candle, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
+} from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -87,6 +89,10 @@ export class MockBackend implements Backend {
     return older.slice(-500).map((c) => ({ ...c }));
   }
 
+  async getCatalog(): Promise<CatalogSpec[]> {
+    return MOCK_CATALOG;
+  }
+
   /**
    * Simplified analysis for the preview only. The real numbers come from the
    * Python backend (backend/app/analysis.py); this just draws plausible lines.
@@ -95,45 +101,28 @@ export class MockBackend implements Backend {
     const step = TIMEFRAME_SECONDS[request.timeframe];
     const closed = this.history(request).filter((c) => c.time + step <= this.now());
     const closes = closed.map((c) => c.close);
-    const [fastLen, slowLen] = request.tradingMode === "scalping" ? [9, 21] : [20, 50];
+    const [fastLen, slowLen, longLen] = request.tradingMode === "scalping" ? [9, 21, 50] : [20, 50, 200];
     const slow = ema(closes, slowLen);
     const last = closes.length - 1;
     const slope = (slow[last] ?? 0) - (slow[Math.max(0, last - 10)] ?? 0);
     const trendStrength = Math.abs(slope) / ((slow[last] ?? 1) * 0.002);
     const state: MarketState = trendStrength > 1 ? (slope > 0 ? "trend_up" : "trend_down") : "range";
-    const auto: IndicatorSettings = {
-      ...DEFAULT_SETTINGS,
-      ema_fast: fastLen,
-      ema_slow: slowLen,
-      bb_on: state === "range",
-      ema_fast_on: state !== "range",
-    };
-    const s = request.settings ?? auto;
+    const autoList: IndicatorInstance[] = state === "range"
+      ? [inst("auto-ema", "ema", { length: slowLen }), inst("auto-bb", "bb", { length: 20, mult: 2 }), inst("auto-rsi", "rsi", { length: 14 })]
+      : [inst("a1", "ema", { length: fastLen }), inst("a2", "ema", { length: slowLen }), inst("a3", "ema", { length: longLen }), inst("auto-rsi", "rsi", { length: 14 })];
+    const list = request.indicators ?? autoList;
     const shown = closed.slice(-500);
-    const cut = closed.length - shown.length;
-    const line = (values: (number | null)[]): LinePoint[] =>
-      shown.flatMap((c, i) => (values[cut + i] === null ? [] : [{ time: c.time, value: values[cut + i] as number }]));
-    const lines: Analysis["lines"] = {};
-    if (s.ema_fast_on) lines.emaFast = line(ema(closes, s.ema_fast));
-    if (s.ema_slow_on) lines.emaSlow = line(ema(closes, s.ema_slow));
-    if (s.bb_on) {
-      const mid = sma(closes, s.bb_period);
-      const dev = closes.map((_, i) => {
-        if (i < s.bb_period - 1) return null;
-        const w = closes.slice(i - s.bb_period + 1, i + 1);
-        const m = w.reduce((a, b) => a + b, 0) / w.length;
-        return Math.sqrt(w.reduce((a, b) => a + (b - m) ** 2, 0) / w.length);
-      });
-      lines.bbMiddle = line(mid);
-      lines.bbUpper = line(mid.map((m, i) => (m === null || dev[i] === null ? null : m + s.bb_mult * (dev[i] as number))));
-      lines.bbLower = line(mid.map((m, i) => (m === null || dev[i] === null ? null : m - s.bb_mult * (dev[i] as number))));
-    }
-    if (s.rsi_on) lines.rsi = line(rsi(closes, s.rsi_period));
-    const ranges = closed.slice(-s.atr_period).map((c) => c.high - c.low);
+    const perType = new Map<string, number>();
+    const indicators = list.map((i) => {
+      const n = perType.get(i.type) ?? 0;
+      perType.set(i.type, n + 1);
+      return mockIndicator(i, closed, shown.length, n);
+    });
+    const ranges = closed.slice(-14).map((c) => c.high - c.low);
     return {
-      auto: !request.settings,
+      auto: !request.indicators,
       tradingMode: request.tradingMode,
-      settings: s,
+      indicators,
       state: {
         current: state,
         since: closed[Math.max(0, last - 37)]?.time ?? null,
@@ -141,8 +130,8 @@ export class MockBackend implements Backend {
         atrRatio: 1,
       },
       atr: ranges.reduce((a, b) => a + b, 0) / Math.max(1, ranges.length),
+      atrLength: 14,
       lastClosedTime: closed[last]?.time ?? null,
-      lines,
       stateChanges: [],
     };
   }
@@ -206,6 +195,104 @@ export class MockBackend implements Backend {
 }
 
 // ---------- small indicator helpers for the preview ----------
+
+const PALETTE = ["#f7c948", "#ab47bc", "#26c6da", "#ff7043", "#66bb6a", "#ec407a"];
+
+function inst(id: string, type: string, params: Record<string, number>): IndicatorInstance {
+  return { id, type, params };
+}
+
+function mockIndicator(i: IndicatorInstance, candles: Candle[], keep: number, order: number): IndicatorResult {
+  const spec = MOCK_CATALOG.find((s) => s.type === i.type)!;
+  const p = { ...Object.fromEntries(spec.params.map((x) => [x.name, x.default])), ...i.params };
+  const c = candles.map((x) => x.close);
+  const h = candles.map((x) => x.high);
+  const l = candles.map((x) => x.low);
+  const series: Record<string, (number | null)[]> = {};
+  switch (i.type) {
+    case "ema": series.value = ema(c, p.length); break;
+    case "sma": series.value = sma(c, p.length); break;
+    case "wma": series.value = sma(c, p.length); break;
+    case "bb": {
+      const mid = sma(c, p.length);
+      const dev = c.map((_, k) => (k < p.length - 1 ? null : std(c.slice(k - p.length + 1, k + 1))));
+      series.basis = mid;
+      series.upper = mid.map((m, k) => (m === null || dev[k] === null ? null : m + p.mult * (dev[k] as number)));
+      series.lower = mid.map((m, k) => (m === null || dev[k] === null ? null : m - p.mult * (dev[k] as number)));
+      break;
+    }
+    case "supertrend": {
+      const mid = sma(c, p.atr_length);
+      series.up = mid.map((m, k) => (m !== null && c[k] >= m ? m - (h[k] - l[k]) * p.factor : null));
+      series.down = mid.map((m, k) => (m !== null && c[k] < m ? m + (h[k] - l[k]) * p.factor : null));
+      break;
+    }
+    case "volume": series.volume = candles.map((x) => x.volume); break;
+    case "rsi": series.rsi = rsi(c, p.length); break;
+    case "macd": {
+      const f = ema(c, p.fast), s2 = ema(c, p.slow);
+      const m = f.map((v, k) => (v === null || s2[k] === null ? null : v - (s2[k] as number)));
+      const sig = smooth(m, p.signal, 2 / (p.signal + 1));
+      series.macd = m; series.signal = sig;
+      series.hist = m.map((v, k) => (v === null || sig[k] === null ? null : v - (sig[k] as number)));
+      break;
+    }
+    case "stoch": case "stochrsi": {
+      const src = i.type === "stoch" ? c : rsi(c, 14).map((v) => v ?? 50);
+      const len = i.type === "stoch" ? p.k_length : p.stoch_length;
+      const k = src.map((v, n) => {
+        if (n < len - 1) return null;
+        const w = src.slice(n - len + 1, n + 1);
+        const lo = Math.min(...w), hi = Math.max(...w);
+        return hi === lo ? 50 : (100 * (v - lo)) / (hi - lo);
+      });
+      series.k = k; series.d = smaNullable(k, 3);
+      break;
+    }
+    case "atr": series.atr = sma(h.map((v, k) => v - l[k]), p.length); break;
+    case "dmi": {
+      const r = rsi(c, p.length);
+      series.plus = r.map((v) => (v === null ? null : v / 2));
+      series.minus = r.map((v) => (v === null ? null : (100 - v) / 2));
+      series.adx = r.map((v) => (v === null ? null : Math.abs(v - 50)));
+      break;
+    }
+  }
+  const cut = candles.length - keep;
+  return {
+    id: i.id,
+    type: i.type,
+    name: spec.name,
+    label: [spec.name, ...spec.params.map((x) => String(p[x.name]))].join(" "),
+    pane: spec.pane,
+    params: p,
+    levels: spec.levels,
+    scale: spec.scale,
+    outputs: spec.outputs.map((o) => ({
+      key: o.key,
+      style: o.style,
+      color: spec.pane === "price" && spec.outputs.length === 1 && order ? PALETTE[order % PALETTE.length] : o.color,
+      points: candles.slice(cut).flatMap((x, k) => {
+        const v = series[o.key]?.[cut + k];
+        if (v === null || v === undefined) return [];
+        return [spec.candle_colors ? { time: x.time, value: v, color: x.close >= x.open ? "#089981" : "#f23645" } : { time: x.time, value: v }];
+      }),
+    })),
+  };
+}
+
+function std(w: number[]): number {
+  const m = w.reduce((a, b) => a + b, 0) / w.length;
+  return Math.sqrt(w.reduce((a, b) => a + (b - m) ** 2, 0) / w.length);
+}
+
+function smaNullable(values: (number | null)[], length: number): (number | null)[] {
+  return values.map((_, i) => {
+    if (i < length - 1) return null;
+    const w = values.slice(i - length + 1, i + 1);
+    return w.some((v) => v === null) ? null : (w as number[]).reduce((a, b) => a + b, 0) / length;
+  });
+}
 
 function sma(values: number[], length: number): (number | null)[] {
   return values.map((_, i) => (i < length - 1 ? null : values.slice(i - length + 1, i + 1).reduce((a, b) => a + b, 0) / length));

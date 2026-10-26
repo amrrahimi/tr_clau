@@ -51,9 +51,10 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(auto.status_code, 200)
         self.assertTrue(auto.json()["auto"])
         self.assertEqual(exchange.last_ohlcv_args["limit"], 1000)
-        manual = client.get("/api/analysis", params={**params, "auto": "false", "rsi_on": "false"})
+        mine = json.dumps([{"id": "r", "type": "rsi", "params": {"length": 7}}])
+        manual = client.get("/api/analysis", params={**params, "auto": "false", "indicators": mine})
         self.assertFalse(manual.json()["auto"])
-        self.assertNotIn("rsi", manual.json()["lines"])
+        self.assertEqual([i["label"] for i in manual.json()["indicators"]], ["RSI 7"])
 
     def test_catalog_endpoint(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
@@ -74,10 +75,11 @@ class ServerTest(unittest.TestCase):
 
     def test_analysis_rejects_bad_settings(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
-        params = {"symbol": "BTC/USDT", "timeframe": "1m", "auto": "false", "rsi_period": 1}
+        bad = json.dumps([{"type": "rsi", "params": {"length": 1}}])
+        params = {"symbol": "BTC/USDT", "timeframe": "1m", "auto": "false", "indicators": bad}
         response = client.get("/api/analysis", params=params)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("rsi_period", response.json()["detail"])
+        self.assertIn("length", response.json()["detail"])
         bad_mode = client.get("/api/analysis", params={"symbol": "BTC/USDT", "timeframe": "1m", "trading_mode": "x"})
         self.assertEqual(bad_mode.status_code, 400)
 

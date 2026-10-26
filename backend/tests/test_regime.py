@@ -79,23 +79,16 @@ class DetectTest(unittest.TestCase):
 
 
 class PresetsTest(unittest.TestCase):
-    def test_mode_sets_ema_lengths(self):
-        self.assertEqual(presets.auto_settings("unknown", "scalping").ema_fast, 9)
-        self.assertEqual(presets.auto_settings("unknown", "daily").ema_slow, 50)
+    def test_mode_lengths(self):
+        self.assertEqual(presets.MODE_EMAS["scalping"], (9, 21))
+        self.assertEqual(presets.MODE_EMAS["daily"], (20, 50))
 
-    def test_state_changes(self):
-        self.assertFalse(presets.auto_settings("trend_up", "daily").bb_on)
-        self.assertFalse(presets.auto_settings("range", "daily").ema_fast_on)
-        self.assertEqual(presets.auto_settings("volatile", "daily").bb_mult, 2.5)
-
-    def test_every_state_has_a_valid_preset(self):
-        for state in presets.STATES:
-            for mode in presets.MODE_EMAS:
-                self.assertEqual(presets.validate(presets.auto_settings(state, mode)), [])
-
-    def test_validation(self):
-        bad = presets.IndicatorSettings(rsi_period=1, bb_mult=9)
-        self.assertEqual(len(presets.validate(bad)), 2)
+    def test_state_lists(self):
+        types = lambda state: [i["type"] for i in presets.auto_instances(state, "daily")]
+        self.assertNotIn("bb", types("trend_up"))
+        self.assertIn("bb", types("range"))
+        volatile_bb = [i for i in presets.auto_instances("volatile", "daily") if i["type"] == "bb"][0]
+        self.assertEqual(volatile_bb["params"]["mult"], 2.5)
 
 
 if __name__ == "__main__":

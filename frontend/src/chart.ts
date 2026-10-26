@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   ColorType,
   CrosshairMode,
+  HistogramSeries,
   LineSeries,
   LineStyle,
   createChart,
@@ -17,7 +18,7 @@ import {
 import { pricePrecision } from "./candles.ts";
 import { formatLocalDateTime, formatLocalTick } from "./format.ts";
 import type { ZoneId } from "./timezone.ts";
-import type { Analysis, Candle, LineName, LinePoint } from "./types.ts";
+import type { Candle, IndicatorResult } from "./types.ts";
 
 // Colors close to TradingView's dark theme.
 export const THEME = {
@@ -29,18 +30,24 @@ export const THEME = {
   down: "#f23645",
 };
 
-// Indicator colors, close to TradingView's defaults.
-export const LINE_COLORS: Record<LineName, string> = {
-  emaFast: "#f7c948",
-  emaSlow: "#ab47bc",
-  bbUpper: "#2962ff",
-  bbMiddle: "#ff6d00",
-  bbLower: "#2962ff",
-  rsi: "#7e57c2",
-};
-const PRICE_LINES: LineName[] = ["emaFast", "emaSlow", "bbUpper", "bbMiddle", "bbLower"];
-const RSI_PANE = 1;
-const RSI_PANE_HEIGHT = 130;
+const OWN_PANE_HEIGHT = 120;
+const LEVEL_COLOR = "#787b86";
+
+/**
+ * Which pane each indicator goes in: price-chart indicators share pane 0,
+ * every other indicator gets its own pane below, in list order.
+ */
+export function paneLayout(results: Pick<IndicatorResult, "id" | "pane">[]): Map<string, number> {
+  const panes = new Map<string, number>();
+  let next = 1;
+  for (const r of results) panes.set(r.id, r.pane === "price" ? 0 : next++);
+  return panes;
+}
+
+/** Identifies the drawn structure; if it is unchanged, only the data needs updating. */
+export function layoutSignature(results: IndicatorResult[]): string {
+  return results.map((r) => `${r.id}|${r.pane}|${r.outputs.map((o) => o.key + o.style + o.color).join(",")}|${r.levels.join(",")}`).join(";");
+}
 
 /** When fewer than this many candles are left of the view, load older ones. */
 const LOAD_OLDER_MARGIN = 10;
@@ -56,8 +63,10 @@ export class ChartView {
   private readonly series: ISeriesApi<"Candlestick">;
   private precision = 2;
   private zone: ZoneId = "local";
-  // Indicator lines are created when first needed and removed when switched off.
-  private readonly lines = new Map<LineName, ISeriesApi<"Line">>();
+  // One series per indicator output, keyed "instanceId:outputKey".
+  private readonly indicatorSeries = new Map<string, ISeriesApi<"Line"> | ISeriesApi<"Histogram">>();
+  private priceScaled: ISeriesApi<"Line">[] = []; // series shown in price units, updated with the precision
+  private signature = "";
 
   constructor(container: HTMLElement, private readonly onNeedOlder: () => void) {
     this.chart = createChart(container, {
@@ -119,51 +128,77 @@ export class ChartView {
   }
 
   /**
-   * Draw the indicator lines of an analysis; lines it does not contain are removed.
-   * `null` removes all of them (used while a new chart loads).
+   * Draw the indicators of an analysis. An empty list removes them all
+   * (used while the bot is stopped or a new chart loads).
    */
-  setIndicators(analysis: Analysis | null): void {
-    const wanted = analysis?.lines ?? {};
-    for (const [name, series] of [...this.lines]) {
-      if (!wanted[name]) {
-        this.chart.removeSeries(series);
-        this.lines.delete(name);
+  setIndicators(results: IndicatorResult[]): void {
+    const signature = layoutSignature(results);
+    if (signature !== this.signature) this.rebuild(results);
+    this.signature = signature;
+    for (const r of results) {
+      for (const o of r.outputs) {
+        const series = this.indicatorSeries.get(`${r.id}:${o.key}`);
+        series?.setData(o.points.map((p) => (
+          p.color ? { time: p.time as UTCTimestamp, value: p.value, color: p.color } : { time: p.time as UTCTimestamp, value: p.value }
+        )));
       }
-    }
-    for (const [name, points] of Object.entries(wanted) as [LineName, LinePoint[]][]) {
-      const series = this.lines.get(name) ?? this.createLine(name);
-      series.setData(points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
     }
   }
 
-  private createLine(name: LineName): ISeriesApi<"Line"> {
-    const isRsi = name === "rsi";
-    const series = this.chart.addSeries(
-      LineSeries,
-      {
-        color: LINE_COLORS[name],
-        lineWidth: name === "bbUpper" || name === "bbLower" ? 1 : 2,
-        priceLineVisible: false,
-        lastValueVisible: isRsi,
-        crosshairMarkerVisible: false,
-        priceFormat: isRsi
-          ? { type: "price", precision: 2, minMove: 0.01 }
-          : { type: "price", precision: this.precision, minMove: 10 ** -this.precision },
-        // RSI always runs from 0 to 100, so its pane keeps that scale.
-        autoscaleInfoProvider: isRsi ? () => ({ priceRange: { minValue: 0, maxValue: 100 } }) : undefined,
-      },
-      isRsi ? RSI_PANE : 0,
-    );
-    if (isRsi) {
-      for (const level of [70, 30]) {
-        series.createPriceLine({
-          price: level, color: "#787b86", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "",
-        });
-      }
-      this.chart.panes()[RSI_PANE]?.setHeight(RSI_PANE_HEIGHT);
+  /** Remove every indicator series and create them again for a new structure. */
+  private rebuild(results: IndicatorResult[]): void {
+    for (const series of this.indicatorSeries.values()) this.chart.removeSeries(series);
+    this.indicatorSeries.clear();
+    this.priceScaled = [];
+    const panes = paneLayout(results);
+    for (const r of results) {
+      const pane = panes.get(r.id)!;
+      const isVolume = r.type === "volume";
+      const fixedScale = r.scale;
+      const priceFormat = isVolume
+        ? { type: "volume" as const }
+        : fixedScale
+          ? { type: "price" as const, precision: 2, minMove: 0.01 }
+          : { type: "price" as const, precision: this.precision, minMove: 10 ** -this.precision };
+      r.outputs.forEach((o, n) => {
+        const common = {
+          color: o.color,
+          priceLineVisible: false,
+          lastValueVisible: pane !== 0,
+          priceFormat,
+          autoscaleInfoProvider: fixedScale
+            ? () => ({ priceRange: { minValue: fixedScale[0], maxValue: fixedScale[1] } })
+            : undefined,
+        };
+        const series = o.style === "histogram"
+          ? this.chart.addSeries(HistogramSeries, common, pane)
+          : this.chart.addSeries(LineSeries, {
+              ...common,
+              lineWidth: r.type === "bb" && o.key !== "basis" ? 1 : 2,
+              crosshairMarkerVisible: false,
+            }, pane);
+        if (n === 0) {
+          for (const level of r.levels) {
+            series.createPriceLine({ price: level, color: LEVEL_COLOR, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "" });
+          }
+        }
+        if (o.style === "line" && !fixedScale && !isVolume) this.priceScaled.push(series as ISeriesApi<"Line">);
+        this.indicatorSeries.set(`${r.id}:${o.key}`, series);
+      });
     }
-    this.lines.set(name, series);
-    return series;
+    const allPanes = this.chart.panes();
+    for (let i = 1; i < allPanes.length; i++) allPanes[i].setHeight(OWN_PANE_HEIGHT);
+  }
+
+  /** Distance of each pane's top edge from the chart's top, for placing the legends. */
+  paneTops(): number[] {
+    const tops: number[] = [];
+    let y = 0;
+    for (const pane of this.chart.panes()) {
+      tops.push(y);
+      y += pane.getHeight() + 1; // 1px separator between panes
+    }
+    return tops;
   }
 
   /** Update the latest candle, or add a new one. */
@@ -175,7 +210,7 @@ export class ChartView {
     this.precision = pricePrecision(price ?? 0);
     const priceFormat = { type: "price" as const, precision: this.precision, minMove: 10 ** -this.precision };
     this.series.applyOptions({ priceFormat });
-    for (const name of PRICE_LINES) this.lines.get(name)?.applyOptions({ priceFormat });
+    for (const series of this.priceScaled) series.applyOptions({ priceFormat });
   }
 
   get pricePrecision(): number {
