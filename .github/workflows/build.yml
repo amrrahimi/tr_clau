@@ -1,11 +1,19 @@
 # Builds the desktop installers. Start it from the Actions tab ("Run workflow"),
-# or by pushing a version tag such as v0.1.0.
+# by pushing a version tag such as v0.1.0, or automatically when files that
+# affect packaging change on main.
 name: Build desktop apps
 
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - ".github/workflows/build.yml"
+      - "backend/requirements.txt"
+      - "backend/run.py"
+      - "backend/scripts/smoke_packaged.py"
+      - "frontend/src-tauri/**"
 
 jobs:
   build:
@@ -30,12 +38,25 @@ jobs:
         working-directory: backend
         shell: bash
         run: |
-          pip install -r requirements.txt pyinstaller
+          # cryptography only from ready-made packages: they carry their own
+          # OpenSSL. Built from source on macOS it links to a newer OpenSSL
+          # that clashes with Python's own copy inside the packaged program.
+          pip install --only-binary cryptography -r requirements.txt pyinstaller
+          pip show cryptography | head -2
           pyinstaller --onefile --name backend --noconfirm \
             --collect-submodules uvicorn \
             --collect-submodules ccxt \
             --collect-data certifi \
             run.py
+
+      # Run the packaged backend like the app does and fetch real market lists.
+      - name: Check packaged backend
+        working-directory: backend
+        shell: bash
+        run: |
+          EXT=""
+          if [ "$RUNNER_OS" = "Windows" ]; then EXT=".exe"; fi
+          python scripts/smoke_packaged.py "dist/backend$EXT"
 
       - uses: dtolnay/rust-toolchain@stable
 

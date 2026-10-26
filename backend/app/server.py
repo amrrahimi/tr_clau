@@ -41,7 +41,13 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, f"market_type must be one of {list(config.MARKET_TYPES)}")
         async with services_lock:
             if market_type not in services:
-                services[market_type] = factory(market_type)
+                try:
+                    services[market_type] = factory(market_type)
+                except Exception as error:
+                    # Turned into a normal error answer. A raw crash would reach
+                    # the screen without permission headers, the browser would
+                    # hide it, and the screen would wrongly say "backend not running".
+                    raise HTTPException(500, f"Could not start the exchange connection: {error}")
             return services[market_type]
 
     @asynccontextmanager
