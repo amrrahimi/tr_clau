@@ -1,7 +1,16 @@
 // Everything the screen needs from the backend, behind one interface.
 // The real app uses HttpBackend; the preview uses a fake one with sample data.
 
-import type { Candle, MarketInfo, MarketType, Options } from "./types.ts";
+import { analysisParams } from "./indicatorSettings.ts";
+import type { Analysis, Candle, IndicatorSettings, MarketInfo, MarketType, Mode, Options } from "./types.ts";
+
+export interface AnalysisRequest {
+  marketType: MarketType;
+  symbol: string;
+  timeframe: string;
+  tradingMode: Mode;
+  settings: IndicatorSettings | null; // null = let the bot choose (automatic)
+}
 
 export interface CandleRequest {
   marketType: MarketType;
@@ -23,6 +32,7 @@ export interface Backend {
   getOptions(): Promise<Options>;
   getMarkets(marketType: MarketType, query?: string): Promise<MarketInfo[]>;
   getCandles(request: CandleRequest): Promise<Candle[]>;
+  getAnalysis(request: AnalysisRequest): Promise<Analysis>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
 
@@ -74,6 +84,17 @@ export class HttpBackend implements Backend {
       before: request.before,
     });
     return body.candles;
+  }
+
+  async getAnalysis(request: AnalysisRequest): Promise<Analysis> {
+    const body = await this.getJson<Analysis>("/api/analysis", {
+      market_type: request.marketType,
+      symbol: request.symbol,
+      timeframe: request.timeframe,
+      trading_mode: request.tradingMode,
+      ...analysisParams(request.settings),
+    });
+    return body;
   }
 
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection {

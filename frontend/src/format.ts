@@ -30,7 +30,15 @@ export function formatLocalDateTime(timeSeconds: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "17:20" if the time is today (local), otherwise "2026-10-24 17:20". */
+export function formatSince(timeSeconds: number, nowMs: number = Date.now()): string {
+  const d = new Date(timeSeconds * 1000);
+  const now = new Date(nowMs);
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  return sameDay ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : formatLocalDateTime(timeSeconds);
+}
+
+const MONTHS =["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /**
  * Labels along the time axis. The chart says what kind of mark it is:

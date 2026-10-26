@@ -1,8 +1,9 @@
 // A pretend backend with made-up prices, for the preview and for working on
 // the screen without the Python backend. Prices are random walks, NOT real data.
 
-import type { Backend, CandleRequest, LiveConnection, LiveHandlers } from "./api.ts";
-import type { Candle, MarketInfo, MarketType, Options } from "./types.ts";
+import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers } from "./api.ts";
+import { DEFAULT_SETTINGS } from "./indicatorSettings.ts";
+import type { Analysis, Candle, IndicatorSettings, LinePoint, MarketInfo, MarketState, MarketType, Options } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -86,6 +87,66 @@ export class MockBackend implements Backend {
     return older.slice(-500).map((c) => ({ ...c }));
   }
 
+  /**
+   * Simplified analysis for the preview only. The real numbers come from the
+   * Python backend (backend/app/analysis.py); this just draws plausible lines.
+   */
+  async getAnalysis(request: AnalysisRequest): Promise<Analysis> {
+    const step = TIMEFRAME_SECONDS[request.timeframe];
+    const closed = this.history(request).filter((c) => c.time + step <= this.now());
+    const closes = closed.map((c) => c.close);
+    const [fastLen, slowLen] = request.tradingMode === "scalping" ? [9, 21] : [20, 50];
+    const slow = ema(closes, slowLen);
+    const last = closes.length - 1;
+    const slope = (slow[last] ?? 0) - (slow[Math.max(0, last - 10)] ?? 0);
+    const trendStrength = Math.abs(slope) / ((slow[last] ?? 1) * 0.002);
+    const state: MarketState = trendStrength > 1 ? (slope > 0 ? "trend_up" : "trend_down") : "range";
+    const auto: IndicatorSettings = {
+      ...DEFAULT_SETTINGS,
+      ema_fast: fastLen,
+      ema_slow: slowLen,
+      bb_on: state === "range",
+      ema_fast_on: state !== "range",
+    };
+    const s = request.settings ?? auto;
+    const shown = closed.slice(-500);
+    const cut = closed.length - shown.length;
+    const line = (values: (number | null)[]): LinePoint[] =>
+      shown.flatMap((c, i) => (values[cut + i] === null ? [] : [{ time: c.time, value: values[cut + i] as number }]));
+    const lines: Analysis["lines"] = {};
+    if (s.ema_fast_on) lines.emaFast = line(ema(closes, s.ema_fast));
+    if (s.ema_slow_on) lines.emaSlow = line(ema(closes, s.ema_slow));
+    if (s.bb_on) {
+      const mid = sma(closes, s.bb_period);
+      const dev = closes.map((_, i) => {
+        if (i < s.bb_period - 1) return null;
+        const w = closes.slice(i - s.bb_period + 1, i + 1);
+        const m = w.reduce((a, b) => a + b, 0) / w.length;
+        return Math.sqrt(w.reduce((a, b) => a + (b - m) ** 2, 0) / w.length);
+      });
+      lines.bbMiddle = line(mid);
+      lines.bbUpper = line(mid.map((m, i) => (m === null || dev[i] === null ? null : m + s.bb_mult * (dev[i] as number))));
+      lines.bbLower = line(mid.map((m, i) => (m === null || dev[i] === null ? null : m - s.bb_mult * (dev[i] as number))));
+    }
+    if (s.rsi_on) lines.rsi = line(rsi(closes, s.rsi_period));
+    const ranges = closed.slice(-s.atr_period).map((c) => c.high - c.low);
+    return {
+      auto: !request.settings,
+      tradingMode: request.tradingMode,
+      settings: s,
+      state: {
+        current: state,
+        since: closed[Math.max(0, last - 37)]?.time ?? null,
+        adx: Math.min(60, 12 + trendStrength * 14),
+        atrRatio: 1,
+      },
+      atr: ranges.reduce((a, b) => a + b, 0) / Math.max(1, ranges.length),
+      lastClosedTime: closed[last]?.time ?? null,
+      lines,
+      stateChanges: [],
+    };
+  }
+
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection {
     const step = TIMEFRAME_SECONDS[request.timeframe];
     const all = this.history(request);
@@ -142,4 +203,44 @@ export class MockBackend implements Backend {
     this.series.set(key, candles);
     return candles;
   }
+}
+
+// ---------- small indicator helpers for the preview ----------
+
+function sma(values: number[], length: number): (number | null)[] {
+  return values.map((_, i) => (i < length - 1 ? null : values.slice(i - length + 1, i + 1).reduce((a, b) => a + b, 0) / length));
+}
+
+function smooth(values: (number | null)[], length: number, alpha: number): (number | null)[] {
+  const out: (number | null)[] = values.map(() => null);
+  const start = values.findIndex((v) => v !== null);
+  if (start < 0 || values.length < start + length) return out;
+  let prev = (values.slice(start, start + length) as number[]).reduce((a, b) => a + b, 0) / length;
+  out[start + length - 1] = prev;
+  for (let i = start + length; i < values.length; i++) {
+    prev = alpha * (values[i] as number) + (1 - alpha) * prev;
+    out[i] = prev;
+  }
+  return out;
+}
+
+function ema(values: number[], length: number): (number | null)[] {
+  return smooth(values, length, 2 / (length + 1));
+}
+
+function rsi(closes: number[], length: number): (number | null)[] {
+  const gains: (number | null)[] = [null];
+  const losses: (number | null)[] = [null];
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    gains.push(Math.max(d, 0));
+    losses.push(Math.max(-d, 0));
+  }
+  const g = smooth(gains, length, 1 / length);
+  const l = smooth(losses, length, 1 / length);
+  return g.map((gain, i) => {
+    const loss = l[i];
+    if (gain === null || loss === null) return null;
+    return loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+  });
 }

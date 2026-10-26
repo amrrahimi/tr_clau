@@ -6,6 +6,8 @@ import {
   CandlestickSeries,
   ColorType,
   CrosshairMode,
+  LineSeries,
+  LineStyle,
   createChart,
   type IChartApi,
   type ISeriesApi,
@@ -14,7 +16,7 @@ import {
 } from "lightweight-charts";
 import { pricePrecision } from "./candles.ts";
 import { formatLocalDateTime, formatLocalTick } from "./format.ts";
-import type { Candle } from "./types.ts";
+import type { Analysis, Candle, LineName, LinePoint } from "./types.ts";
 
 // Colors close to TradingView's dark theme.
 export const THEME = {
@@ -25,6 +27,19 @@ export const THEME = {
   up: "#089981",
   down: "#f23645",
 };
+
+// Indicator colors, close to TradingView's defaults.
+export const LINE_COLORS: Record<LineName, string> = {
+  emaFast: "#f7c948",
+  emaSlow: "#ab47bc",
+  bbUpper: "#2962ff",
+  bbMiddle: "#ff6d00",
+  bbLower: "#2962ff",
+  rsi: "#7e57c2",
+};
+const PRICE_LINES: LineName[] = ["emaFast", "emaSlow", "bbUpper", "bbMiddle", "bbLower"];
+const RSI_PANE = 1;
+const RSI_PANE_HEIGHT = 130;
 
 /** When fewer than this many candles are left of the view, load older ones. */
 const LOAD_OLDER_MARGIN = 10;
@@ -39,6 +54,8 @@ export class ChartView {
   private readonly chart: IChartApi;
   private readonly series: ISeriesApi<"Candlestick">;
   private precision = 2;
+  // Indicator lines are created when first needed and removed when switched off.
+  private readonly lines = new Map<LineName, ISeriesApi<"Line">>();
 
   constructor(container: HTMLElement, private readonly onNeedOlder: () => void) {
     this.chart = createChart(container, {
@@ -90,6 +107,54 @@ export class ChartView {
     }
   }
 
+  /**
+   * Draw the indicator lines of an analysis; lines it does not contain are removed.
+   * `null` removes all of them (used while a new chart loads).
+   */
+  setIndicators(analysis: Analysis | null): void {
+    const wanted = analysis?.lines ?? {};
+    for (const [name, series] of [...this.lines]) {
+      if (!wanted[name]) {
+        this.chart.removeSeries(series);
+        this.lines.delete(name);
+      }
+    }
+    for (const [name, points] of Object.entries(wanted) as [LineName, LinePoint[]][]) {
+      const series = this.lines.get(name) ?? this.createLine(name);
+      series.setData(points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+    }
+  }
+
+  private createLine(name: LineName): ISeriesApi<"Line"> {
+    const isRsi = name === "rsi";
+    const series = this.chart.addSeries(
+      LineSeries,
+      {
+        color: LINE_COLORS[name],
+        lineWidth: name === "bbUpper" || name === "bbLower" ? 1 : 2,
+        priceLineVisible: false,
+        lastValueVisible: isRsi,
+        crosshairMarkerVisible: false,
+        priceFormat: isRsi
+          ? { type: "price", precision: 2, minMove: 0.01 }
+          : { type: "price", precision: this.precision, minMove: 10 ** -this.precision },
+        // RSI always runs from 0 to 100, so its pane keeps that scale.
+        autoscaleInfoProvider: isRsi ? () => ({ priceRange: { minValue: 0, maxValue: 100 } }) : undefined,
+      },
+      isRsi ? RSI_PANE : 0,
+    );
+    if (isRsi) {
+      for (const level of [70, 30]) {
+        series.createPriceLine({
+          price: level, color: "#787b86", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "",
+        });
+      }
+      this.chart.panes()[RSI_PANE]?.setHeight(RSI_PANE_HEIGHT);
+    }
+    this.lines.set(name, series);
+    return series;
+  }
+
   /** Update the latest candle, or add a new one. */
   updateCandle(candle: Candle): void {
     this.series.update(toBar(candle));
@@ -97,9 +162,9 @@ export class ChartView {
 
   private setPrecisionFor(price: number | undefined): void {
     this.precision = pricePrecision(price ?? 0);
-    this.series.applyOptions({
-      priceFormat: { type: "price", precision: this.precision, minMove: 10 ** -this.precision },
-    });
+    const priceFormat = { type: "price" as const, precision: this.precision, minMove: 10 ** -this.precision };
+    this.series.applyOptions({ priceFormat });
+    for (const name of PRICE_LINES) this.lines.get(name)?.applyOptions({ priceFormat });
   }
 
   get pricePrecision(): number {
