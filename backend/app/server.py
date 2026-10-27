@@ -18,7 +18,7 @@ from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
-from .strategies import RULES, STRATEGIES, parse_params, public_strategies
+from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
 from .presets import MODE_EMAS
@@ -82,12 +82,22 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             "exchange": config.EXCHANGE_ID,
             "marketTypes": list(config.MARKET_TYPES),
             "timeframes": config.TIMEFRAME_GROUPS,
+            "fees": config.DEFAULT_FEES,
         }
 
     @app.get("/api/indicators/catalog")
     async def indicator_catalog():
         """Every indicator the app can draw, with its settings and defaults."""
         return {"indicators": public_catalog()}
+
+    def fees_for(market_type: str, maker: float | None, taker: float | None) -> Fees:
+        """The user's fee rates (percent), or the defaults of the market type."""
+        default = config.DEFAULT_FEES.get(market_type, config.DEFAULT_FEES["spot"])
+        chosen = Fees(default["maker"] if maker is None else maker, default["taker"] if taker is None else taker)
+        for name, value in (("maker_fee", chosen.maker), ("taker_fee", chosen.taker)):
+            if not 0 <= value <= config.MAX_FEE:
+                raise HTTPException(400, f"{name} must be between 0 and {config.MAX_FEE:g} (percent)")
+        return chosen
 
     @app.get("/api/strategies/catalog")
     async def strategy_catalog():
@@ -103,7 +113,10 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         trading_mode: str = "daily",
         # Settings as JSON, e.g. {"fast": 9, "slow": 21}; missing ones get defaults.
         params: str = "{}",
+        maker_fee: float | None = None,  # percent; default: the market type's rate
+        taker_fee: float | None = None,
     ):
+        fees = fees_for(market_type, maker_fee, taker_fee)
         if trading_mode not in MODE_EMAS:
             raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
         try:
@@ -117,7 +130,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = run_strategy(rows, timeframe, strategy, settings, trading_mode)
+        result = run_strategy(rows, timeframe, strategy, settings, trading_mode, fees=fees)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/strategies/overview")
@@ -132,7 +145,10 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         active: str = "",
         # Automatic choice by the bot: "cautious" or "max_profit" ("" = manual, use `active`).
         auto_rule: str = "",
+        maker_fee: float | None = None,  # percent; default: the market type's rate
+        taker_fee: float | None = None,
     ):
+        fees = fees_for(market_type, maker_fee, taker_fee)
         if trading_mode not in MODE_EMAS:
             raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
         if active and active not in STRATEGIES:
@@ -160,7 +176,8 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = strategy_overview(rows, timeframe, checked, active or None, trading_mode, auto_rule=auto_rule or None)
+        result = strategy_overview(rows, timeframe, checked, active or None, trading_mode,
+                                   auto_rule=auto_rule or None, fees=fees)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/markets")

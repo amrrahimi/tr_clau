@@ -379,3 +379,15 @@ button:hover { background: var(--border); }
 .strategy-table tbody tr.locked { cursor: default; }
 .strategy-choice { padding: 6px 10px 0; font-size: 12px; color: var(--text); }
 .strategy-choice.waiting { color: var(--muted); }
+.fee-line {
+  display: block;
+  margin: 4px 10px 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.fee-line:hover { color: var(--text); }

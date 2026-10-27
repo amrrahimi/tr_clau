@@ -3,6 +3,7 @@
 // strategy on (its trades are drawn on the chart); clicking again turns it off.
 // Only one strategy is on at a time. ⚙ opens its rules and settings.
 
+import { validFee, type FeeRates } from "./fees.ts";
 import { invalidParams } from "./indicatorList.ts";
 import type { MessageKey } from "./locales/en.ts";
 import {
@@ -18,7 +19,7 @@ import {
   type AutoRule,
   type StrategyState,
 } from "./strategyState.ts";
-import type { Mode, ParamSpec, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
+import type { MarketType, Mode, ParamSpec, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
 
 /** Settings every strategy has (the extra rules); shown under their own heading. */
 const COMMON = new Set(["state_filter", "breakeven", "max_candles"]);
@@ -35,6 +36,9 @@ export interface StrategyHost {
   closeWindow(): void;
   /** The active strategy or a setting changed: ask the backend again. */
   onChange(): void;
+  /** Fee rates for the current market type (null until the backend's defaults arrived). */
+  fees(): { market: MarketType; rates: FeeRates | null; defaults: FeeRates | null };
+  saveFees(rates: FeeRates): void;
 }
 
 export class StrategyPanel {
@@ -175,6 +179,16 @@ export class StrategyPanel {
       parts.push(choice);
     }
     parts.push(note);
+    // Fee rates in use; click to change them.
+    const rates = this.host.fees().rates;
+    if (rates) {
+      const feeLine = document.createElement("button");
+      feeLine.type = "button";
+      feeLine.className = "fee-line";
+      feeLine.textContent = `${t("strategies.feeLine", { taker: String(rates.taker), maker: String(rates.maker) })} ⚙`;
+      feeLine.addEventListener("click", () => this.openFees());
+      parts.push(feeLine);
+    }
     this.root.replaceChildren(...parts);
   }
 
@@ -257,7 +271,8 @@ export class StrategyPanel {
       fact("strategies.colTrades", `${stats.trades} (${t("strategies.colWins")} ${stats.wins} · ${t("strategies.colLosses")} ${stats.losses} · ${t("strategies.breakevens")} ${stats.breakevens})`);
       fact("strategies.winRate", stats.winRate === null ? "—" : `${stats.winRate.toFixed(0)}%`);
       fact("strategies.profitFactor", stats.profitFactor === null ? (stats.wins ? "∞" : "—") : stats.profitFactor.toFixed(2));
-      fact("strategies.colNet", `${formatPercent(stats.netPercent)} (${t("strategies.withoutFees")})`);
+      fact("strategies.colNet", formatPercent(stats.netPercent));
+      fact("strategies.feeTotal", `${stats.feePercent.toFixed(2)}%`);
     }
     form.append(title, desc, facts);
 
@@ -337,6 +352,81 @@ export class StrategyPanel {
       }
       this.host.closeWindow();
       this.update(setParams(this.state, card, params, mode));
+    });
+    this.host.openWindow(form);
+  }
+
+  /** Window to change the fee rates of the current market type. */
+  private openFees(): void {
+    const t = this.host.t;
+    const { market, rates, defaults } = this.host.fees();
+    if (!rates) return;
+    const form = document.createElement("form");
+    form.className = "window settings-window";
+    form.noValidate = true;
+    const title = document.createElement("div");
+    title.className = "window-title";
+    title.textContent = t("strategies.feeTitle", { market: t(market === "spot" ? "market.spot" : "market.futures") });
+    const help = document.createElement("p");
+    help.className = "strategy-desc";
+    help.textContent = t("strategies.feeHelp");
+    form.append(title, help);
+    const field = (id: string, label: MessageKey, value: number) => {
+      const wrap = document.createElement("label");
+      wrap.className = "field";
+      const name = document.createElement("span");
+      name.textContent = t(label);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.id = id;
+      input.dir = "ltr";
+      input.min = "0";
+      input.max = "1";
+      input.step = "0.001";
+      input.value = String(value);
+      const range = document.createElement("small");
+      range.textContent = t("settings.range", { min: "0", max: "1" });
+      wrap.append(name, input, range);
+      form.append(wrap);
+      return input;
+    };
+    const taker = field("fee-taker", "strategies.feeTaker", rates.taker);
+    const maker = field("fee-maker", "strategies.feeMaker", rates.maker);
+    const error = document.createElement("div");
+    error.className = "popup-error";
+    error.hidden = true;
+    const actions = document.createElement("div");
+    actions.className = "dialog-actions";
+    const apply = document.createElement("button");
+    apply.type = "submit";
+    apply.className = "primary";
+    apply.textContent = t("settings.apply");
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = t("strategies.defaults");
+    reset.addEventListener("click", () => {
+      if (!defaults) return;
+      taker.value = String(defaults.taker);
+      maker.value = String(defaults.maker);
+    });
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = t("settings.cancel");
+    cancel.addEventListener("click", () => this.host.closeWindow());
+    actions.append(apply, reset, cancel);
+    form.append(error, actions);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const chosen = { maker: Number(maker.value), taker: Number(taker.value) };
+      taker.classList.toggle("invalid", !validFee(chosen.taker));
+      maker.classList.toggle("invalid", !validFee(chosen.maker));
+      if (!validFee(chosen.taker) || !validFee(chosen.maker)) {
+        error.textContent = t("settings.invalidParam");
+        error.hidden = false;
+        return;
+      }
+      this.host.closeWindow();
+      this.host.saveFees(chosen);
     });
     this.host.openWindow(form);
   }

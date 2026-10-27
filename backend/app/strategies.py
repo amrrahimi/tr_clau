@@ -12,13 +12,16 @@ Common rules (agreed with the owner, the same for every strategy):
 - One position at a time per strategy; signals while a position is open are ignored.
 - If one candle touches both stop-loss and take-profit, it counts as a loss
   (we cannot know which came first, so we assume the worse).
-- Results are without fees for now (fees come in phase 3).
+- Fees (phase 3): entry, stop-loss and time exits are market orders (taker
+  fee); the take-profit is a waiting limit order (maker fee). Results are
+  after fees.
 
 Three extra rules, each with an on/off setting on every strategy (owner's choice):
 - Market state: trade only when the market is in a state the strategy suits;
   trend strategies trade only with the trend (long in an uptrend, short in a downtrend).
 - Break-even: once the price has gone part of the way to the take-profit
-  (half by default), the stop-loss moves to the entry price.
+  (half by default), the stop-loss moves to the break-even price: the price
+  where the trade, after both fees, ends with neither profit nor loss.
 - Time limit: after N candles, a trade that is in profit is closed at the
   candle's close. A trade in loss is not forced out (that would lock in the loss).
 
@@ -295,11 +298,42 @@ def allowed_by_state(sig: Signal, state: str, suited: tuple[str, ...]) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class Fees:
+    """Fee rates in percent of the order's value, e.g. taker 0.1 = 0.1%."""
+    maker: float = 0.0
+    taker: float = 0.0
+
+
+NO_FEES = Fees()
+
+
+def breakeven_price(side: str, entry: float, fees: Fees) -> float:
+    """Exit price where the result after the entry fee and a taker exit fee is zero.
+
+    long:  (S - E) - fin*E - fout*S = 0  ->  S = E (1 + fin) / (1 - fout)
+    short: (E - S) - fin*E - fout*S = 0  ->  S = E (1 - fin) / (1 + fout)
+    """
+    fin = fout = fees.taker / 100
+    if side == LONG:
+        return entry * (1 + fin) / (1 - fout)
+    return entry * (1 - fin) / (1 + fout)
+
+
+def net_percent(side: str, entry: float, exit_: float, exit_fee: float, fees: Fees) -> float:
+    """Result in percent of the entry value, after the entry fee (taker) and the exit fee."""
+    direction = 1 if side == LONG else -1
+    move = (exit_ - entry) * direction
+    paid = entry * fees.taker / 100 + exit_ * exit_fee / 100
+    return (move - paid) / entry * 100
+
+
 def simulate(
     candles: list[dict],
     signals: list[Signal],
     breakeven: float = 0,
     max_candles: int = 0,
+    fees: Fees = NO_FEES,
 ) -> tuple[list[dict], Optional[str]]:
     """Walk the candles and turn signals into trades under the common rules.
 
@@ -330,29 +364,32 @@ def simulate(
             # A gap past the stop fills at the open (worse than the stop).
             gapped = c["open"] < stop if long_ else c["open"] > stop
             reason = "breakeven" if pos["breakevenTime"] is not None else "stop"
-            trades.append(_close(pos, c["time"], c["open"] if gapped else stop, reason))
+            trades.append(_close(pos, c["time"], c["open"] if gapped else stop, reason, fees))
             pos = None
             continue
         if hit_target:
-            trades.append(_close(pos, c["time"], pos["takeProfit"], "target"))
+            trades.append(_close(pos, c["time"], pos["takeProfit"], "target", fees))
             pos = None
             continue
-        # Time limit: close a trade that is in profit at this candle's close.
+        # Time limit: close a trade that is in profit (after fees) at this candle's close.
         held = i - pos["_entryIndex"] + 1
-        in_profit = c["close"] > pos["entryPrice"] if long_ else c["close"] < pos["entryPrice"]
+        in_profit = net_percent(pos["side"], pos["entryPrice"], c["close"], fees.taker, fees) > 0
         if max_candles and held >= max_candles and in_profit:
-            trades.append(_close(pos, c["time"], c["close"], "time"))
+            trades.append(_close(pos, c["time"], c["close"], "time", fees))
             pos = None
             continue
-        # Break-even: from the next candle on, the stop sits at the entry price.
+        # Break-even: from the next candle on, the stop sits at the break-even price.
         if breakeven and pos["breakevenTime"] is None:
             trigger = pos["entryPrice"] + (pos["takeProfit"] - pos["entryPrice"]) * breakeven
-            if (c["high"] >= trigger) if long_ else (c["low"] <= trigger):
-                pos["_stop"] = pos["entryPrice"]
-                pos["breakevenTime"] = c["time"]
+            level = breakeven_price(pos["side"], pos["entryPrice"], fees)
+            # Only when it is still between the entry and the take-profit (fees can be larger than the move).
+            if (level < pos["takeProfit"]) if long_ else (level > pos["takeProfit"]):
+                if (c["high"] >= trigger) if long_ else (c["low"] <= trigger):
+                    pos["_stop"] = level
+                    pos["breakevenTime"] = c["time"]
     if pos is not None:
         trades.append({**_public(pos), "exitTime": None, "exitPrice": None, "exitReason": None,
-                       "result": "open", "pnlPercent": None, "r": None})
+                       "result": "open", "pnlPercent": None, "grossPercent": None, "feePercent": None, "r": None})
     last = by_index.get(n - 1)
     pending = last.side if last is not None and pos is None else None
     return trades, pending
@@ -362,15 +399,22 @@ def _public(pos: dict) -> dict:
     return {k: v for k, v in pos.items() if not k.startswith("_")}
 
 
-def _close(pos: dict, time: int, price: float, reason: str) -> dict:
+def _close(pos: dict, time: int, price: float, reason: str, fees: Fees = NO_FEES) -> dict:
     direction = 1 if pos["side"] == LONG else -1
-    move = (price - pos["entryPrice"]) * direction
-    risk = abs(pos["entryPrice"] - pos["stopLoss"])
-    result = "win" if move > 0 else "loss" if move < 0 else "breakeven"
+    entry = pos["entryPrice"]
+    exit_fee = fees.maker if reason == "target" else fees.taker  # take-profit waits as a limit order
+    gross = (price - entry) * direction / entry * 100
+    net = net_percent(pos["side"], entry, price, exit_fee, fees)
+    if abs(net) < 1e-9:
+        net = 0.0
+    risk = abs(entry - pos["stopLoss"])
+    result = "win" if net > 0 else "loss" if net < 0 else "breakeven"
     return {**_public(pos), "exitTime": time, "exitPrice": price, "exitReason": reason,
             "result": result,
-            "pnlPercent": move / pos["entryPrice"] * 100,
-            "r": move / risk}
+            "grossPercent": gross,
+            "feePercent": gross - net,
+            "pnlPercent": net,
+            "r": net / 100 * entry / risk}
 
 
 def stats(trades: list[dict]) -> dict:
@@ -389,11 +433,13 @@ def stats(trades: list[dict]) -> dict:
         # None when there is no loss yet (profit factor would be infinite).
         "profitFactor": gross_win / gross_loss if gross_loss > 0 else None,
         "netPercent": sum(wins) + sum(losses),
-        "feesIncluded": False,
+        "feePercent": sum(t.get("feePercent") or 0 for t in closed),
+        "feesIncluded": any(t.get("feePercent") for t in closed),
     }
 
 
-def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]] = None) -> dict:
+def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]] = None,
+        fees: Fees = NO_FEES) -> dict:
     """Run one strategy over closed candles. `states` is the market state of
     every candle (needed when the market-state rule is on)."""
     strategy = STRATEGIES[kind]
@@ -407,7 +453,7 @@ def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]
     signals = strategy.signals(data, params)
     if params.get("state_filter") and states is not None:
         signals = [sig for sig in signals if allowed_by_state(sig, states[sig.index], strategy.states)]
-    trades, pending = simulate(candles, signals, params.get("breakeven", 0), int(params.get("max_candles", 0)))
+    trades, pending = simulate(candles, signals, params.get("breakeven", 0), int(params.get("max_candles", 0)), fees)
     return {
         "strategy": kind,
         "name": strategy.name,

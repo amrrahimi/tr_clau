@@ -91,6 +91,7 @@ export interface Options {
   exchange: string;
   marketTypes: MarketType[];
   timeframes: Record<Mode, string[]>;
+  fees: Record<MarketType, { maker: number; taker: number }>; // default fee rates, percent
 }
 
 // ---------- strategies (match backend/app/strategies.py) ----------
@@ -120,7 +121,9 @@ export interface Trade {
   exitReason: "target" | "stop" | "breakeven" | "time" | null;
   breakevenTime: number | null; // when the stop moved to the entry price
   result: "win" | "loss" | "breakeven" | "open";
-  pnlPercent: number | null;
+  pnlPercent: number | null; // after fees
+  grossPercent: number | null; // before fees
+  feePercent: number | null; // both fees, in percent of the entry value
   r: number | null;
 }
 
@@ -132,7 +135,8 @@ export interface StrategyStats {
   open: number;
   winRate: number | null;
   profitFactor: number | null; // null when there is no loss yet
-  netPercent: number; // sum of trade results, %
+  netPercent: number; // sum of trade results after fees, %
+  feePercent: number; // sum of all fees, %
   feesIncluded: boolean;
 }
 
@@ -151,6 +155,7 @@ export interface StrategyOverview {
   autoRule: "cautious" | "max_profit" | null; // set when the bot picked the strategy
   choice: { strategy: string; profitFactor: number | null; trades: number; netPercent: number } | null;
   candles: number; // how many candles the results are based on
+  fees: { maker: number; taker: number }; // rates used, percent
   firstTime: number | null;
   lastClosedTime: number | null;
 }

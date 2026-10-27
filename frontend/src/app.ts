@@ -10,6 +10,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import { IndicatorController } from "./indicatorController.ts";
 import type { BotMode } from "./indicatorList.ts";
 import type { MessageKey } from "./locales/en.ts";
+import { effectiveFees, loadFees, saveFees, setFees, type FeeOverrides } from "./fees.ts";
 import { StrategyPanel } from "./strategyPanel.ts";
 import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
 import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
@@ -51,6 +52,7 @@ export class App {
   // Strategies: the table under the coin list and the trades of the active one.
   private strategies!: StrategyPanel;
   private strategyId = 0;
+  private fees: FeeOverrides = loadFees(); // the user's own fee rates, per market type
 
   private readonly root: HTMLElement;
   private chart!: ChartView;
@@ -244,6 +246,7 @@ export class App {
         settings: this.strategies.settings,
         active: this.strategies.active,
         autoRule: this.strategies.autoRule,
+        fees: effectiveFees(this.options?.fees, this.fees, this.marketType),
       });
       // Ignore answers for an older chart or older choices.
       if (id !== this.strategyId || chartId !== this.requestId) return;
@@ -410,6 +413,16 @@ export class App {
         openWindow: (content) => this.indicators.openModal(content),
         closeWindow: () => this.indicators.closeModal(),
         onChange: () => void this.loadStrategies(),
+        fees: () => ({
+          market: this.marketType,
+          rates: effectiveFees(this.options?.fees, this.fees, this.marketType),
+          defaults: this.options?.fees[this.marketType] ?? null,
+        }),
+        saveFees: (rates) => {
+          this.fees = setFees(this.fees, this.marketType, rates, this.options?.fees[this.marketType]);
+          saveFees(this.fees);
+          void this.loadStrategies();
+        },
       },
       this.els.strategies,
     );

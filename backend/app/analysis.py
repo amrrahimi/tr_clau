@@ -81,11 +81,12 @@ def run_strategy(
     trading_mode: str = "daily",
     now: Optional[float] = None,
     returned_points: int = RETURNED_POINTS,
+    fees: strategies.Fees = strategies.NO_FEES,
 ) -> dict:
     """One strategy on closed candles: its trades, summary, and the lines it reads."""
     closed = closed_only(candles, timeframe, time.time() if now is None else now)
     states, _ = detect(closed, trading_mode)
-    result = strategies.run(closed, kind, params, states)
+    result = strategies.run(closed, kind, params, states, fees)
     lines = result.pop("lines")
     result["indicators"] = compute_instances(closed, parse_instances(lines), returned_points)
     result["firstTime"] = closed[0]["time"] if closed else None
@@ -101,6 +102,7 @@ def strategy_overview(
     trading_mode: str = "daily",
     now: Optional[float] = None,
     auto_rule: Optional[str] = None,
+    fees: strategies.Fees = strategies.NO_FEES,
 ) -> dict:
     """Summary of every strategy on this chart (the screen's table), plus the
     trades of the active one (drawn as arrows and boxes). `settings` holds
@@ -110,7 +112,7 @@ def strategy_overview(
     rows = []
     all_trades = {}
     for kind in strategies.STRATEGIES:
-        result = strategies.run(closed, kind, settings[kind], states)
+        result = strategies.run(closed, kind, settings[kind], states, fees)
         result.pop("lines")
         all_trades[kind] = result.pop("trades")
         rows.append(result)
@@ -124,6 +126,7 @@ def strategy_overview(
         "active": active_result,
         "marketState": reading.state,
         "autoRule": auto_rule,
+        "fees": {"maker": fees.maker, "taker": fees.taker},
         "choice": choice,
         "candles": len(closed),
         "firstTime": closed[0]["time"] if closed else None,

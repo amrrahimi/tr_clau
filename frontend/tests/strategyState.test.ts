@@ -23,7 +23,7 @@ const empty: StrategyState = { auto: false, rule: "cautious", active: null, sett
 function trade(over: Partial<Trade>): Trade {
   return {
     side: "long", signalTime: 0, entryTime: 60, entryPrice: 100, stopLoss: 99, takeProfit: 102,
-    exitTime: 180, exitPrice: 102, exitReason: "target", breakevenTime: null, result: "win", pnlPercent: 2, r: 2, ...over,
+    exitTime: 180, exitPrice: 102, exitReason: "target", breakevenTime: null, result: "win", pnlPercent: 2, grossPercent: 2, feePercent: 0, r: 2, ...over,
   };
 }
 

@@ -63,6 +63,7 @@ export class MockBackend implements Backend {
       exchange: "toobit",
       marketTypes: ["spot", "futures"],
       timeframes: { scalping: ["1m", "3m", "5m", "15m"], daily: ["15m", "30m", "1h", "2h", "4h", "6h", "1d"] },
+      fees: { spot: { maker: 0.075, taker: 0.1 }, futures: { maker: 0.02, taker: 0.06 } },
     };
   }
 
@@ -129,6 +130,7 @@ export class MockBackend implements Backend {
           winRate: done.length ? (wins.length / done.length) * 100 : null,
           profitFactor: grossLoss > 0 ? wins.reduce((a, b) => a + b, 0) / grossLoss : null,
           netPercent: [...wins, ...losses].reduce((a, b) => a + b, 0),
+          feePercent: 0,
           feesIncluded: false,
         },
         nextSignal: null,
@@ -152,6 +154,7 @@ export class MockBackend implements Backend {
       marketState: "range",
       autoRule: request.autoRule,
       choice,
+      fees: request.fees ?? { maker: 0, taker: 0 },
       candles: closed.length,
     };
   }
@@ -412,7 +415,7 @@ function mockTrades(candles: Candle[], fastLen: number, slowLen: number, reward:
         const exit = stop ? open.stopLoss : open.takeProfit;
         const move = (exit - open.entryPrice) * (long ? 1 : -1);
         open = { ...open, exitTime: c.time, exitPrice: exit, result: stop ? "loss" : "win", exitReason: stop ? "stop" : "target",
-          pnlPercent: (move / open.entryPrice) * 100, r: move / Math.abs(open.entryPrice - open.stopLoss) };
+          pnlPercent: (move / open.entryPrice) * 100, grossPercent: (move / open.entryPrice) * 100, feePercent: 0, r: move / Math.abs(open.entryPrice - open.stopLoss) };
         trades.push(open);
         open = null;
       }
@@ -430,7 +433,7 @@ function mockTrades(candles: Candle[], fastLen: number, slowLen: number, reward:
     const dir = up ? 1 : -1;
     open = { side, signalTime: c.time, entryTime: candles[i + 1].time, entryPrice: entry,
       stopLoss: entry - dir * risk, takeProfit: entry + dir * risk * reward,
-      exitTime: null, exitPrice: null, exitReason: null, breakevenTime: null, result: "open", pnlPercent: null, r: null };
+      exitTime: null, exitPrice: null, exitReason: null, breakevenTime: null, result: "open", pnlPercent: null, grossPercent: null, feePercent: null, r: null };
     // The entry candle (i + 1) is checked for stop and target on the next pass.
   }
   if (open) trades.push(open);

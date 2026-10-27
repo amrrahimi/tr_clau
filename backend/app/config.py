@@ -48,3 +48,14 @@ TICKER_CACHE_SECONDS = 60.0
 # The local server. 127.0.0.1 means only this computer can connect.
 HOST = "127.0.0.1"
 PORT = 8765
+
+# Trading fees in percent of the order's value (Toobit, regular user, checked
+# 2026-10-27 on toobit.com/en-US/support/fee-rate and the zero-fee announcement).
+# Spot is 0% for website trading until 2026-12-26, but that campaign excludes
+# API users, and the bot trades through the API, so the standard spot rate is used.
+# The user can change these in the app.
+DEFAULT_FEES = {
+    "spot": {"maker": 0.075, "taker": 0.1},
+    "futures": {"maker": 0.02, "taker": 0.06},
+}
+MAX_FEE = 1.0  # percent; anything above is surely a typing mistake

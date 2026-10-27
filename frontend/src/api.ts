@@ -21,6 +21,7 @@ export interface StrategyRequest {
   settings: Record<string, Record<string, number>>; // only the settings the user changed
   active: string | null; // strategy whose trades are drawn (manual)
   autoRule: "cautious" | "max_profit" | null; // set = the bot picks the strategy
+  fees: { maker: number; taker: number } | null; // percent; null = the backend's defaults
 }
 
 export interface CandleRequest {
@@ -130,6 +131,8 @@ export class HttpBackend implements Backend {
       settings: JSON.stringify(request.settings),
       active: request.active ?? "",
       auto_rule: request.autoRule ?? "",
+      maker_fee: request.fees?.maker,
+      taker_fee: request.fees?.taker,
     });
   }
 

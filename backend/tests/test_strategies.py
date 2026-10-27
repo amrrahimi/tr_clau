@@ -172,6 +172,56 @@ class ExtraRulesTest(unittest.TestCase):
         self.assertTrue(all_up["trades"])
 
 
+class FeesTest(unittest.TestCase):
+    """Fees by hand: entry 100, stop 99, take-profit 102, both rates 0.1%."""
+
+    def setUp(self):
+        self.fees = st.Fees(maker=0.1, taker=0.1)
+        self.signal = bar(0, 100, 100, 100, 100)
+        self.long = [Signal(0, LONG, stop_distance=1, reward=2)]
+
+    def test_win_pays_entry_fee_and_maker_exit_fee(self):
+        rows = [self.signal, bar(60, 100, 102.5, 99.5, 102)]
+        t = st.simulate(rows, self.long, fees=self.fees)[0][0]
+        # 2% move - 0.1% entry fee - 0.1% of 102 (exit value) = 2 - 0.1 - 0.102
+        self.assertAlmostEqual(t["pnlPercent"], 1.798)
+        self.assertAlmostEqual(t["grossPercent"], 2.0)
+        self.assertAlmostEqual(t["feePercent"], 0.202)
+
+    def test_loss_pays_taker_on_both_sides(self):
+        rows = [self.signal, bar(60, 100, 100.5, 98.5, 99)]
+        t = st.simulate(rows, self.long, fees=self.fees)[0][0]
+        self.assertAlmostEqual(t["pnlPercent"], -1.0 - 0.1 - 0.099)
+
+    def test_break_even_price_covers_both_fees(self):
+        level = st.breakeven_price(LONG, 100, self.fees)
+        self.assertAlmostEqual(level, 100 * 1.001 / 0.999)
+        self.assertAlmostEqual(st.net_percent(LONG, 100, level, 0.1, self.fees), 0)
+        short = st.breakeven_price(SHORT, 100, self.fees)
+        self.assertAlmostEqual(st.net_percent(SHORT, 100, short, 0.1, self.fees), 0)
+        rows = [self.signal, bar(60, 100, 101.2, 99.5, 101), bar(120, 101, 101.1, 99.9, 100.2)]
+        t = st.simulate(rows, self.long, breakeven=0.5, fees=self.fees)[0][0]
+        self.assertEqual((t["result"], t["exitReason"]), ("breakeven", "breakeven"))
+        self.assertAlmostEqual(t["exitPrice"], level)
+        self.assertEqual(t["pnlPercent"], 0)
+
+    def test_time_limit_needs_profit_after_fees(self):
+        rows = [self.signal, bar(60, 100, 100.3, 99.5, 100.15), bar(120, 100.15, 100.3, 99.9, 100.15)]
+        trades, _ = st.simulate(rows, self.long, max_candles=1, fees=self.fees)
+        self.assertEqual(trades[0]["result"], "open")   # +0.15% is less than the 0.2% of fees
+        rows.append(bar(180, 100.15, 100.6, 100.1, 100.5))
+        trades, _ = st.simulate(rows, self.long, max_candles=1, fees=self.fees)
+        self.assertEqual((trades[0]["result"], trades[0]["exitReason"]), ("win", "time"))
+
+    def test_stats_sum_fees(self):
+        rows = [self.signal, bar(60, 100, 102.5, 99.5, 102)]
+        trades, _ = st.simulate(rows, self.long, fees=self.fees)
+        s = st.stats(trades)
+        self.assertTrue(s["feesIncluded"])
+        self.assertAlmostEqual(s["feePercent"], 0.202)
+        self.assertFalse(st.stats(st.simulate(rows, self.long)[0])["feesIncluded"])
+
+
 class HandExamplesTest(unittest.TestCase):
     def test_channel_breakout(self):
         rows = [bar(i * 60, 100, 101, 99, 100) for i in range(25)] + [bar(1500, 100, 103.5, 100, 103)]

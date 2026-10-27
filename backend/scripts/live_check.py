@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.analysis import ANALYSIS_CANDLES, analyze, run_strategy  # noqa: E402
 from app.catalog import SPECS, parse_instances  # noqa: E402
 from app.exchange import MarketService, create_exchange  # noqa: E402
-from app.strategies import STRATEGIES, parse_params  # noqa: E402
+from app import config  # noqa: E402
+from app.strategies import STRATEGIES, Fees, parse_params  # noqa: E402
 from app.history import STRATEGY_CANDLES, fetch_history  # noqa: E402
 
 
@@ -89,7 +90,8 @@ async def check(market_type: str) -> None:
 
         # Strategies: every one runs on real data and gives sensible trades.
         for kind in STRATEGIES:
-            result = run_strategy(long_history, "5m", kind, parse_params(kind, {}, "scalping"), "scalping")
+            result = run_strategy(long_history, "5m", kind, parse_params(kind, {}, "scalping"), "scalping",
+                                  fees=Fees(**config.DEFAULT_FEES[market_type]))
             for t in result["trades"]:
                 direction = 1 if t["side"] == "long" else -1
                 assert (t["entryPrice"] - t["stopLoss"]) * direction > 0, f"{market_type}: {kind} stop on wrong side"
@@ -98,7 +100,7 @@ async def check(market_type: str) -> None:
             rate = f"{s['winRate']:.0f}%" if s["winRate"] is not None else "-"
             pf = f"{s['profitFactor']:.2f}" if s["profitFactor"] is not None else "-"
             print(f"  strategy {kind:<13} trades {s['trades']:>3}  win {rate:>4}  PF {pf:>5}  "
-                  f"total {s['netPercent']:+.1f}% (no fees)")
+                  f"total {s['netPercent']:+.1f}% after fees ({s['feePercent']:.1f}% paid)")
     finally:
         await service.close()
 
