@@ -51,7 +51,7 @@ export function updateParams(list: IndicatorInstance[], id: string, params: Reco
 }
 
 /** Names of settings that are missing, not numbers, out of range, or decimals where whole numbers are needed. */
-export function invalidParams(spec: CatalogSpec, params: Record<string, number>): string[] {
+export function invalidParams(spec: Pick<CatalogSpec, "params">, params: Record<string, number>): string[] {
   return spec.params
     .filter((p) => {
       const v = params[p.name];

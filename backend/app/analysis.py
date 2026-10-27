@@ -89,3 +89,31 @@ def run_strategy(
     result["firstTime"] = closed[0]["time"] if closed else None
     result["lastClosedTime"] = closed[-1]["time"] if closed else None
     return result
+
+
+def strategy_overview(
+    candles: Sequence[dict],
+    timeframe: str,
+    settings: dict[str, dict],
+    active: Optional[str],
+    now: Optional[float] = None,
+) -> dict:
+    """Summary of every strategy on this chart (the screen's table), plus the
+    trades of the active one (drawn as arrows and boxes). `settings` holds
+    checked settings per strategy type."""
+    closed = closed_only(candles, timeframe, time.time() if now is None else now)
+    rows = []
+    active_result = None
+    for kind in strategies.STRATEGIES:
+        result = strategies.run(closed, kind, settings[kind])
+        result.pop("lines")
+        trades = result.pop("trades")
+        rows.append(result)
+        if kind == active:
+            active_result = {"strategy": kind, "trades": trades}
+    return {
+        "rows": rows,
+        "active": active_result,
+        "firstTime": closed[0]["time"] if closed else None,
+        "lastClosedTime": closed[-1]["time"] if closed else None,
+    }

@@ -1,0 +1,249 @@
+// The strategies table under the coin list (the owner's design): every
+// strategy with its result on the current chart. Clicking a row turns that
+// strategy on (its trades are drawn on the chart); clicking again turns it off.
+// Only one strategy is on at a time. ⚙ opens its rules and settings.
+
+import { invalidParams } from "./indicatorList.ts";
+import type { MessageKey } from "./locales/en.ts";
+import {
+  cleanStrategyState,
+  defaultValue,
+  effectiveParams,
+  formatPercent,
+  loadStrategyState,
+  saveStrategyState,
+  setParams,
+  toggleActive,
+  type StrategyState,
+} from "./strategyState.ts";
+import type { Mode, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
+
+export interface StrategyHost {
+  t(key: MessageKey, params?: Record<string, string>): string;
+  mode(): Mode;
+  openWindow(content: HTMLElement): void;
+  closeWindow(): void;
+  /** The active strategy or a setting changed: ask the backend again. */
+  onChange(): void;
+}
+
+export class StrategyPanel {
+  private cards: StrategyCard[] = [];
+  private state: StrategyState = loadStrategyState();
+  private overview: StrategyOverview | null = null;
+  private status: "idle" | "loading" | "error" = "idle";
+
+  constructor(private readonly host: StrategyHost, private readonly root: HTMLElement) {}
+
+  setCatalog(cards: StrategyCard[]): void {
+    this.cards = cards;
+    this.state = cleanStrategyState(this.state, cards);
+    this.render();
+  }
+
+  get active(): string | null {
+    return this.state.active;
+  }
+
+  /** Only the settings the user changed (the backend fills in the rest). */
+  get settings(): StrategyState["settings"] {
+    return this.state.settings;
+  }
+
+  setLoading(): void {
+    this.status = "loading";
+    this.render();
+  }
+
+  setError(): void {
+    this.status = "error";
+    this.render();
+  }
+
+  showOverview(overview: StrategyOverview | null): void {
+    this.overview = overview;
+    this.status = "idle";
+    this.render();
+  }
+
+  private name(type: string): string {
+    return this.host.t(`strat.${type}` as MessageKey);
+  }
+
+  private update(state: StrategyState): void {
+    this.state = state;
+    saveStrategyState(state);
+    this.render();
+    this.host.onChange();
+  }
+
+  render(): void {
+    const t = this.host.t;
+    const title = document.createElement("div");
+    title.className = "section-title";
+    title.textContent = t("strategies.title");
+
+    const table = document.createElement("table");
+    table.className = "strategy-table";
+    const head = document.createElement("tr");
+    for (const [key, cls] of [
+      ["strategies.colName", "name"], ["strategies.colTrades", "num"], ["strategies.colWins", "num win"],
+      ["strategies.colLosses", "num loss"], ["strategies.colNet", "num"],
+    ] as const) {
+      const th = document.createElement("th");
+      th.className = cls;
+      th.textContent = t(key);
+      head.append(th);
+    }
+    const thead = document.createElement("thead");
+    thead.append(head);
+    const body = document.createElement("tbody");
+    const rows = new Map((this.overview?.rows ?? []).map((r) => [r.strategy, r]));
+    for (const card of this.cards) body.append(this.row(card, rows.get(card.type)));
+    table.append(thead, body);
+
+    const note = document.createElement("div");
+    note.className = "strategy-note";
+    note.textContent = this.status === "loading" ? t("strategies.loading")
+      : this.status === "error" ? t("strategies.error")
+      : t("strategies.noFees");
+    this.root.replaceChildren(title, table, note);
+  }
+
+  private row(card: StrategyCard, row: StrategyRow | undefined): HTMLTableRowElement {
+    const t = this.host.t;
+    const tr = document.createElement("tr");
+    const on = this.state.active === card.type;
+    tr.className = on ? "active" : "";
+    tr.title = on ? t("strategies.turnOff") : t("strategies.turnOn");
+    const s = row?.stats;
+    const name = document.createElement("td");
+    name.className = "name";
+    name.innerHTML = `<div class="name-wrap"><span class="radio"></span><span class="label"></span></div>`;
+    name.querySelector(".label")!.textContent = this.name(card.type);
+    const cells = [
+      s ? String(s.trades) : "—",
+      s ? String(s.wins) : "—",
+      s ? String(s.losses) : "—",
+      s ? formatPercent(s.netPercent) : "—",
+    ];
+    const classes = ["num", "num win", "num loss", `num ${s ? (s.netPercent > 0 ? "up" : s.netPercent < 0 ? "down" : "") : ""}`];
+    tr.append(name, ...cells.map((text, i) => {
+      const td = document.createElement("td");
+      td.className = classes[i];
+      td.dir = "ltr";
+      td.textContent = text;
+      return td;
+    }));
+    const gear = document.createElement("button");
+    gear.type = "button";
+    gear.className = "legend-button";
+    gear.textContent = "⚙";
+    gear.title = t("strategies.details");
+    gear.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.openDetails(card);
+    });
+    name.firstElementChild!.append(gear);
+    tr.addEventListener("click", () => this.update(toggleActive(this.state, card.type)));
+    return tr;
+  }
+
+  /** The rules in plain words, the result on this chart, and the settings. */
+  private openDetails(card: StrategyCard): void {
+    const t = this.host.t;
+    const mode = this.host.mode();
+    const current = effectiveParams(card, this.state, mode);
+    const stats = this.overview?.rows.find((r) => r.strategy === card.type)?.stats;
+
+    const form = document.createElement("form");
+    form.className = "window settings-window strategy-window";
+    form.noValidate = true;
+    const title = document.createElement("div");
+    title.className = "window-title";
+    title.textContent = this.name(card.type);
+    const desc = document.createElement("p");
+    desc.className = "strategy-desc";
+    desc.textContent = t(`strat.${card.type}.desc` as MessageKey);
+    const facts = document.createElement("dl");
+    facts.className = "strategy-facts";
+    const fact = (label: MessageKey, value: string) => {
+      const dt = document.createElement("dt");
+      dt.textContent = t(label);
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      facts.append(dt, dd);
+    };
+    fact("strategies.suits", card.states.map((s) => t(`state.${s}` as MessageKey)).join("، "));
+    fact("strategies.uses", card.uses.join(", "));
+    if (stats) {
+      fact("strategies.colTrades", `${stats.trades} (${t("strategies.colWins")} ${stats.wins} · ${t("strategies.colLosses")} ${stats.losses})`);
+      fact("strategies.winRate", stats.winRate === null ? "—" : `${stats.winRate.toFixed(0)}%`);
+      fact("strategies.profitFactor", stats.profitFactor === null ? (stats.wins ? "∞" : "—") : stats.profitFactor.toFixed(2));
+      fact("strategies.colNet", `${formatPercent(stats.netPercent)} (${t("strategies.withoutFees")})`);
+    }
+    form.append(title, desc, facts);
+
+    const settingsTitle = document.createElement("div");
+    settingsTitle.className = "list-heading";
+    settingsTitle.textContent = t("strategies.settings");
+    form.append(settingsTitle);
+    for (const p of card.params) {
+      const field = document.createElement("label");
+      field.className = "field";
+      const label = document.createElement("span");
+      label.textContent = t(`param.${p.name}` as MessageKey);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.id = `param-${p.name}`;
+      input.dir = "ltr";
+      input.min = String(p.min);
+      input.max = String(p.max);
+      input.step = String(p.step);
+      input.value = String(current[p.name]);
+      const range = document.createElement("small");
+      range.textContent = t("settings.range", { min: String(p.min), max: String(p.max) });
+      field.append(label, input, range);
+      form.append(field);
+    }
+    const error = document.createElement("div");
+    error.className = "popup-error";
+    error.hidden = true;
+    const actions = document.createElement("div");
+    actions.className = "dialog-actions";
+    const apply = document.createElement("button");
+    apply.type = "submit";
+    apply.className = "primary";
+    apply.textContent = t("settings.apply");
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = t("strategies.defaults");
+    reset.addEventListener("click", () => {
+      for (const p of card.params) {
+        (form.querySelector(`#param-${p.name}`) as HTMLInputElement).value = String(defaultValue(card, p.name, mode));
+      }
+    });
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = t("settings.cancel");
+    cancel.addEventListener("click", () => this.host.closeWindow());
+    actions.append(apply, reset, cancel);
+    form.append(error, actions);
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const params: Record<string, number> = {};
+      for (const p of card.params) params[p.name] = Number((form.querySelector(`#param-${p.name}`) as HTMLInputElement).value);
+      const bad = invalidParams(card, params);
+      form.querySelectorAll("input").forEach((i) => i.classList.toggle("invalid", bad.includes(i.id.slice(6))));
+      if (bad.length) {
+        error.textContent = t("settings.invalidParam");
+        error.hidden = false;
+        return;
+      }
+      this.host.closeWindow();
+      this.update(setParams(this.state, card, params, mode));
+    });
+    this.host.openWindow(form);
+  }
+}

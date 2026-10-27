@@ -249,7 +249,8 @@ export class IndicatorController {
 
   // ---------- windows ----------
 
-  private openModal(content: HTMLElement): void {
+  /** Show a window (or dialog) over the chart. Also used by the strategies section. */
+  openModal(content: HTMLElement): void {
     this.els.modal.replaceChildren(content);
     content.dir = this.host.dir();
     this.els.modal.hidden = false;

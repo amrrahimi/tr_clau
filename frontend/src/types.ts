@@ -92,3 +92,58 @@ export interface Options {
   marketTypes: MarketType[];
   timeframes: Record<Mode, string[]>;
 }
+
+// ---------- strategies (match backend/app/strategies.py) ----------
+
+/** One strategy card from the backend. */
+export interface StrategyCard {
+  type: string; // e.g. "ema_cross"
+  name: string; // e.g. "EMA Cross"
+  states: MarketState[]; // market states it suits
+  uses: string[]; // indicators it reads, e.g. ["EMA", "ATR"]
+  params: ParamSpec[];
+  modeDefaults: Record<string, Record<Mode, number>>; // e.g. trend EMA: scalping 50, daily 200
+}
+
+export type Side = "long" | "short";
+
+/** One past (or still open) trade of a strategy. */
+export interface Trade {
+  side: Side;
+  signalTime: number;
+  entryTime: number;
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  exitTime: number | null; // null while open
+  exitPrice: number | null;
+  result: "win" | "loss" | "open";
+  pnlPercent: number | null;
+  r: number | null;
+}
+
+export interface StrategyStats {
+  trades: number; // closed trades
+  wins: number;
+  losses: number;
+  open: number;
+  winRate: number | null;
+  profitFactor: number | null; // null when there is no loss yet
+  netPercent: number; // sum of trade results, %
+  feesIncluded: boolean;
+}
+
+export interface StrategyRow {
+  strategy: string;
+  name: string;
+  params: Record<string, number>;
+  stats: StrategyStats;
+  nextSignal: Side | null;
+}
+
+export interface StrategyOverview {
+  rows: StrategyRow[];
+  active: { strategy: string; trades: Trade[] } | null;
+  firstTime: number | null;
+  lastClosedTime: number | null;
+}

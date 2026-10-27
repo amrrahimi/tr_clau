@@ -1,10 +1,12 @@
 // A pretend backend with made-up prices, for the preview and for working on
 // the screen without the Python backend. Prices are random walks, NOT real data.
 
-import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers } from "./api.ts";
+import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers, StrategyRequest } from "./api.ts";
 import { MOCK_CATALOG } from "./mockCatalog.ts";
+import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
+  StrategyCard, StrategyOverview, StrategyRow, Trade,
 } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
@@ -91,6 +93,52 @@ export class MockBackend implements Backend {
 
   async getCatalog(): Promise<CatalogSpec[]> {
     return MOCK_CATALOG;
+  }
+
+  async getStrategyCatalog(): Promise<StrategyCard[]> {
+    return MOCK_STRATEGIES;
+  }
+
+  /**
+   * Made-up strategy results for the preview only: every strategy here is a
+   * simple moving-average cross with different lengths. The real rules are in
+   * the Python backend (backend/app/strategies.py).
+   */
+  async getStrategyOverview(request: StrategyRequest): Promise<StrategyOverview> {
+    const step = TIMEFRAME_SECONDS[request.timeframe];
+    const closed = this.history(request).filter((c) => c.time + step <= this.now()).slice(-1000);
+    const rows: StrategyRow[] = [];
+    let active: StrategyOverview["active"] = null;
+    MOCK_STRATEGIES.forEach((card, n) => {
+      const trades = mockTrades(closed, 5 + n * 2, 15 + n * 4, 1.5 + (n % 3) * 0.5);
+      const done = trades.filter((t) => t.result !== "open");
+      const wins = done.filter((t) => t.result === "win").map((t) => t.pnlPercent ?? 0);
+      const losses = done.filter((t) => t.result === "loss").map((t) => t.pnlPercent ?? 0);
+      const grossLoss = -losses.reduce((a, b) => a + b, 0);
+      rows.push({
+        strategy: card.type,
+        name: card.name,
+        params: Object.fromEntries(card.params.map((p) => [p.name, p.default])),
+        stats: {
+          trades: done.length,
+          wins: wins.length,
+          losses: losses.length,
+          open: trades.length - done.length,
+          winRate: done.length ? (wins.length / done.length) * 100 : null,
+          profitFactor: grossLoss > 0 ? wins.reduce((a, b) => a + b, 0) / grossLoss : null,
+          netPercent: [...wins, ...losses].reduce((a, b) => a + b, 0),
+          feesIncluded: false,
+        },
+        nextSignal: null,
+      });
+      if (card.type === request.active) active = { strategy: card.type, trades };
+    });
+    return {
+      rows,
+      active,
+      firstTime: closed[0]?.time ?? null,
+      lastClosedTime: closed[closed.length - 1]?.time ?? null,
+    };
   }
 
   /**
@@ -330,4 +378,46 @@ function rsi(closes: number[], length: number): (number | null)[] {
     if (gain === null || loss === null) return null;
     return loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
   });
+}
+
+/** Preview only: EMA cross trades with stop 1.5 x average range and a fixed reward ratio. */
+function mockTrades(candles: Candle[], fastLen: number, slowLen: number, reward: number): Trade[] {
+  const closes = candles.map((c) => c.close);
+  const fast = ema(closes, fastLen);
+  const slow = ema(closes, slowLen);
+  const trades: Trade[] = [];
+  let open: Trade | null = null;
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    if (open) {
+      const long = open.side === "long";
+      const stop = long ? c.low <= open.stopLoss : c.high >= open.stopLoss;
+      const target = long ? c.high >= open.takeProfit : c.low <= open.takeProfit;
+      if (stop || target) {
+        const exit = stop ? open.stopLoss : open.takeProfit;
+        const move = (exit - open.entryPrice) * (long ? 1 : -1);
+        open = { ...open, exitTime: c.time, exitPrice: exit, result: stop ? "loss" : "win",
+          pnlPercent: (move / open.entryPrice) * 100, r: move / Math.abs(open.entryPrice - open.stopLoss) };
+        trades.push(open);
+        open = null;
+      }
+      continue;
+    }
+    const a = fast[i - 1], b = slow[i - 1], x = fast[i], y = slow[i];
+    if (a === null || b === null || x === null || y === null || i + 1 >= candles.length) continue;
+    const up = a <= b && x > y;
+    const down = a >= b && x < y;
+    if (!up && !down) continue;
+    const range = candles.slice(Math.max(0, i - 14), i + 1).reduce((s, k) => s + k.high - k.low, 0) / 15;
+    const entry = candles[i + 1].open;
+    const risk = range * 1.5;
+    const side = up ? "long" : "short";
+    const dir = up ? 1 : -1;
+    open = { side, signalTime: c.time, entryTime: candles[i + 1].time, entryPrice: entry,
+      stopLoss: entry - dir * risk, takeProfit: entry + dir * risk * reward,
+      exitTime: null, exitPrice: null, result: "open", pnlPercent: null, r: null };
+    // The entry candle (i + 1) is checked for stop and target on the next pass.
+  }
+  if (open) trades.push(open);
+  return trades;
 }

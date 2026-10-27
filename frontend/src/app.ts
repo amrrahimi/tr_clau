@@ -1,5 +1,5 @@
-// The screen: choices at the top, coin list on the side, chart in the middle,
-// indicator controls in the chart's corner. It only asks the backend and shows
+// The screen: choices at the top, coin list and strategies table on the side,
+// chart in the middle, indicator controls in the chart's corner. It only asks the backend and shows
 // answers; all calculations happen in the backend.
 
 import { BackendError, type Backend, type LiveConnection } from "./api.ts";
@@ -10,6 +10,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import { IndicatorController } from "./indicatorController.ts";
 import type { BotMode } from "./indicatorList.ts";
 import type { MessageKey } from "./locales/en.ts";
+import { StrategyPanel } from "./strategyPanel.ts";
 import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
 import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
 
@@ -47,6 +48,9 @@ export class App {
   private analysisId = 0;
   private analysisTimer: ReturnType<typeof setTimeout> | undefined;
   private zone: ZoneId = loadZone();
+  // Strategies: the table under the coin list and the trades of the active one.
+  private strategies!: StrategyPanel;
+  private strategyId = 0;
 
   private readonly root: HTMLElement;
   private chart!: ChartView;
@@ -66,6 +70,7 @@ export class App {
     try {
       this.options = await this.backend.getOptions();
       this.indicators.setCatalog(await this.backend.getCatalog());
+      this.strategies.setCatalog(await this.backend.getStrategyCatalog());
       this.renderControls();
       await this.loadMarkets();
     } catch (error) {
@@ -134,6 +139,8 @@ export class App {
     this.candles = [];
     this.analysis = null;
     this.indicators.clearResults();
+    this.chart.setTrades([], null);
+    this.strategies.showOverview(null);
     this.renderAnalysis();
     this.noMoreHistory = false;
     this.loadingOlder = false;
@@ -151,6 +158,7 @@ export class App {
       this.renderHeader();
       this.startLive(id);
       void this.loadAnalysis();
+      void this.loadStrategies();
     } catch (error) {
       if (id !== this.requestId) return;
       this.setChartMessage(null);
@@ -186,7 +194,10 @@ export class App {
 
   private scheduleAnalysis(): void {
     clearTimeout(this.analysisTimer);
-    this.analysisTimer = setTimeout(() => void this.loadAnalysis(), ANALYSIS_DELAY_MS);
+    this.analysisTimer = setTimeout(() => {
+      void this.loadAnalysis();
+      void this.loadStrategies();
+    }, ANALYSIS_DELAY_MS);
   }
 
   /** Ask the backend for market state and indicator lines with the current settings. */
@@ -215,6 +226,32 @@ export class App {
         this.errorKey = { key: "error.analysis", detail: error instanceof Error ? error.message : String(error) };
         this.renderError();
       }
+    }
+  }
+
+  /** Results of every strategy on this chart, and the trades of the active one. */
+  private async loadStrategies(): Promise<void> {
+    if (!this.symbol) return;
+    const id = ++this.strategyId;
+    const chartId = this.requestId;
+    this.strategies.setLoading();
+    try {
+      const overview = await this.backend.getStrategyOverview({
+        marketType: this.marketType,
+        symbol: this.symbol,
+        timeframe: this.timeframe,
+        tradingMode: this.mode,
+        settings: this.strategies.settings,
+        active: this.strategies.active,
+      });
+      // Ignore answers for an older chart or older choices.
+      if (id !== this.strategyId || chartId !== this.requestId) return;
+      this.strategies.showOverview(overview);
+      this.chart.setTrades(overview.active?.trades ?? [], overview.lastClosedTime);
+    } catch (error) {
+      if (id !== this.strategyId) return;
+      this.strategies.setError();
+      if (error instanceof BackendError && error.unreachable) this.showError(error);
     }
   }
 
@@ -315,9 +352,12 @@ export class App {
         </div>
         <main class="body">
           <aside class="watchlist" data-el="watchlist">
-            <input class="search" data-el="search" type="search" autocomplete="off" />
-            <div class="watchlist-title" data-el="watchlistTitle"></div>
-            <ul class="coin-list" data-el="coinList"></ul>
+            <div class="coins">
+              <input class="search" data-el="search" type="search" autocomplete="off" />
+              <div class="watchlist-title" data-el="watchlistTitle"></div>
+              <ul class="coin-list" data-el="coinList"></ul>
+            </div>
+            <section class="strategies" data-el="strategies"></section>
           </aside>
           <section class="chart-area" dir="ltr">
             <div class="chart" data-el="chart"></div>
@@ -359,6 +399,16 @@ export class App {
       },
       { corner: this.els.corner, legends: this.els.legends, modal: this.els.modal },
     );
+    this.strategies = new StrategyPanel(
+      {
+        t: (key, params) => this.t(key, params),
+        mode: () => this.mode,
+        openWindow: (content) => this.indicators.openModal(content),
+        closeWindow: () => this.indicators.closeModal(),
+        onChange: () => void this.loadStrategies(),
+      },
+      this.els.strategies,
+    );
     // Pane sizes change with the window; legends follow their panes.
     new ResizeObserver(() => this.indicators.render()).observe(this.els.chart);
     this.els.watchlistToggle.addEventListener("click", () => {
@@ -385,6 +435,7 @@ export class App {
     this.renderControls();
     this.renderAnalysis();
     this.renderWatchlist();
+    this.strategies.render();
     this.renderLiveStatus();
     this.renderError();
     this.renderChartMessage();

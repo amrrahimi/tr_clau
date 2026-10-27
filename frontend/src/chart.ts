@@ -10,15 +10,23 @@ import {
   LineSeries,
   LineStyle,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
+  type IPrimitivePaneRenderer,
+  type IPrimitivePaneView,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type ISeriesPrimitive,
   type LogicalRange,
+  type SeriesAttachedParameter,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { pricePrecision } from "./candles.ts";
 import { formatLocalDateTime, formatLocalTick } from "./format.ts";
+import { tradeBoxes, tradeMarkers, type Box } from "./strategyState.ts";
 import type { ZoneId } from "./timezone.ts";
-import type { Candle, IndicatorResult } from "./types.ts";
+import type { Candle, IndicatorResult, Trade } from "./types.ts";
 
 // Colors close to TradingView's dark theme.
 export const THEME = {
@@ -67,6 +75,8 @@ export class ChartView {
   private readonly indicatorSeries = new Map<string, ISeriesApi<"Line"> | ISeriesApi<"Histogram">>();
   private priceScaled: ISeriesApi<"Line">[] = []; // series shown in price units, updated with the precision
   private signature = "";
+  private readonly markers: ISeriesMarkersPluginApi<Time>;
+  private readonly boxes = new PositionBoxes();
 
   constructor(container: HTMLElement, private readonly onNeedOlder: () => void) {
     this.chart = createChart(container, {
@@ -96,6 +106,8 @@ export class ChartView {
       wickUpColor: THEME.up,
       wickDownColor: THEME.down,
     });
+    this.markers = createSeriesMarkers(this.series, []);
+    this.series.attachPrimitive(this.boxes);
     this.chart.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
       if (range && range.from < LOAD_OLDER_MARGIN) this.onNeedOlder();
     });
@@ -201,6 +213,15 @@ export class ChartView {
     return tops;
   }
 
+  /**
+   * Draw a strategy's trades: arrows on the candles and take-profit / stop-loss
+   * boxes. An empty list removes them.
+   */
+  setTrades(trades: Trade[], lastTime: number | null): void {
+    this.markers.setMarkers(tradeMarkers(trades).map((m) => ({ ...m, time: m.time as UTCTimestamp })));
+    this.boxes.setBoxes(tradeBoxes(trades, lastTime));
+  }
+
   /** Update the latest candle, or add a new one. */
   updateCandle(candle: Candle): void {
     this.series.update(toBar(candle));
@@ -219,5 +240,61 @@ export class ChartView {
 
   destroy(): void {
     this.chart.remove();
+  }
+}
+
+/**
+ * Draws the green (take-profit) and red (stop-loss) box of each trade, like
+ * TradingView's position tool. It is a "primitive": a small drawing plugin
+ * the chart calls whenever it redraws.
+ */
+class PositionBoxes implements ISeriesPrimitive<Time> {
+  private boxes: Box[] = [];
+  private param: SeriesAttachedParameter<Time> | null = null;
+  private readonly view: IPrimitivePaneView;
+
+  constructor() {
+    const renderer: IPrimitivePaneRenderer = {
+      draw: () => undefined,
+      drawBackground: (target) => {
+        const param = this.param;
+        if (!param || !this.boxes.length) return;
+        const timeScale = param.chart.timeScale();
+        const series = param.series;
+        target.useBitmapCoordinateSpace(({ context, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+          for (const box of this.boxes) {
+            const x1 = timeScale.timeToCoordinate(box.from as UTCTimestamp);
+            const x2 = timeScale.timeToCoordinate(box.to as UTCTimestamp);
+            const y1 = series.priceToCoordinate(box.top);
+            const y2 = series.priceToCoordinate(box.bottom);
+            if (x1 === null || x2 === null || y1 === null || y2 === null) continue; // not on the loaded candles
+            const left = Math.round(Math.min(x1, x2) * hr);
+            const width = Math.max(Math.round(Math.abs(x2 - x1) * hr), Math.round(6 * hr));
+            const top = Math.round(Math.min(y1, y2) * vr);
+            const height = Math.max(Math.round(Math.abs(y2 - y1) * vr), 1);
+            context.fillStyle = box.color;
+            context.fillRect(left, top, width, height);
+          }
+        });
+      },
+    };
+    this.view = { zOrder: () => "bottom", renderer: () => renderer };
+  }
+
+  attached(param: SeriesAttachedParameter<Time>): void {
+    this.param = param;
+  }
+
+  detached(): void {
+    this.param = null;
+  }
+
+  paneViews(): readonly IPrimitivePaneView[] {
+    return [this.view];
+  }
+
+  setBoxes(boxes: Box[]): void {
+    this.boxes = boxes;
+    this.param?.requestUpdate();
   }
 }

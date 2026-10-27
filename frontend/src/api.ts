@@ -1,7 +1,9 @@
 // Everything the screen needs from the backend, behind one interface.
 // The real app uses HttpBackend; the preview uses a fake one with sample data.
 
-import type { Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options } from "./types.ts";
+import type {
+  Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options, StrategyCard, StrategyOverview,
+} from "./types.ts";
 
 export interface AnalysisRequest {
   marketType: MarketType;
@@ -9,6 +11,15 @@ export interface AnalysisRequest {
   timeframe: string;
   tradingMode: Mode;
   indicators: IndicatorInstance[] | null; // null = let the bot choose (automatic)
+}
+
+export interface StrategyRequest {
+  marketType: MarketType;
+  symbol: string;
+  timeframe: string;
+  tradingMode: Mode;
+  settings: Record<string, Record<string, number>>; // only the settings the user changed
+  active: string | null; // strategy whose trades are drawn
 }
 
 export interface CandleRequest {
@@ -33,6 +44,8 @@ export interface Backend {
   getCandles(request: CandleRequest): Promise<Candle[]>;
   getAnalysis(request: AnalysisRequest): Promise<Analysis>;
   getCatalog(): Promise<CatalogSpec[]>;
+  getStrategyCatalog(): Promise<StrategyCard[]>;
+  getStrategyOverview(request: StrategyRequest): Promise<StrategyOverview>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
 
@@ -100,6 +113,22 @@ export class HttpBackend implements Backend {
   async getCatalog(): Promise<CatalogSpec[]> {
     const body = await this.getJson<{ indicators: CatalogSpec[] }>("/api/indicators/catalog", {});
     return body.indicators;
+  }
+
+  async getStrategyCatalog(): Promise<StrategyCard[]> {
+    const body = await this.getJson<{ strategies: StrategyCard[] }>("/api/strategies/catalog", {});
+    return body.strategies;
+  }
+
+  async getStrategyOverview(request: StrategyRequest): Promise<StrategyOverview> {
+    return this.getJson<StrategyOverview>("/api/strategies/overview", {
+      market_type: request.marketType,
+      symbol: request.symbol,
+      timeframe: request.timeframe,
+      trading_mode: request.tradingMode,
+      settings: JSON.stringify(request.settings),
+      active: request.active ?? "",
+    });
   }
 
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection {

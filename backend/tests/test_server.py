@@ -58,7 +58,7 @@ class ServerTest(unittest.TestCase):
 
     def test_strategy_endpoints(self):
         rows = [[i * 60_000, 100 + i % 7, 102 + i % 7, 99 + i % 7, 101 + i % 5, 1] for i in range(400)]
-        exchange = FakeExchange(candles=[rows, rows])
+        exchange = FakeExchange(candles=[rows] * 6)
         client = self.client(lambda market_type: MarketService(exchange, market_type))
         cards = client.get("/api/strategies/catalog").json()["strategies"]
         self.assertEqual(len(cards), 6)
@@ -72,6 +72,14 @@ class ServerTest(unittest.TestCase):
         self.assertIn("between", bad.json()["detail"])
         unknown = client.get("/api/strategies/run", params={**params, "strategy": "nope"})
         self.assertEqual(unknown.status_code, 400)
+        base = {"symbol": "BTC/USDT", "timeframe": "1m", "trading_mode": "daily"}
+        overview = client.get("/api/strategies/overview", params={
+            **base, "active": "donchian", "settings": json.dumps({"ema_cross": {"fast": 5}})}).json()
+        self.assertEqual(len(overview["rows"]), 6)
+        self.assertEqual(overview["rows"][0]["params"]["fast"], 5)
+        self.assertEqual(overview["active"]["strategy"], "donchian")
+        for bad_params in ({"active": "nope"}, {"settings": '{"nope": {}}'}, {"settings": '{"ema_cross": {"fast": 0}}'}):
+            self.assertEqual(client.get("/api/strategies/overview", params={**base, **bad_params}).status_code, 400)
 
     def test_catalog_endpoint(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))

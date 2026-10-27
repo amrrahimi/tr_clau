@@ -4,7 +4,7 @@ import unittest
 
 from app import indicators as ind
 from app import strategies as st
-from app.analysis import run_strategy
+from app.analysis import run_strategy, strategy_overview
 from app.catalog import Candles, parse_instances
 from app.strategies import LONG, SHORT, Signal
 
@@ -244,6 +244,30 @@ class CardsAndSettingsTest(unittest.TestCase):
         result = run_strategy(rows, "1m", "ema_cross", st.parse_params("ema_cross", {}, "scalping"), now=now)
         self.assertEqual(result["lastClosedTime"], rows[-2]["time"])
         self.assertEqual([i["label"] for i in result["indicators"]], ["EMA 9", "EMA 21", "EMA 50"])
+
+    def test_preview_copy_matches_backend(self):
+        """frontend/src/mockStrategies.ts (sample-data preview only) must match the real cards."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "src", "mockStrategies.ts")
+        if not os.path.exists(path):
+            self.skipTest("frontend folder not present")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        copy = json.loads(text[text.index("= [") + 2 : text.rindex("]") + 1])
+        self.assertEqual(copy, json.loads(json.dumps(st.public_strategies())))
+
+
+class OverviewTest(unittest.TestCase):
+    def test_table_of_all_and_trades_of_the_active_one(self):
+        rows = wave(500)
+        settings = {k: st.parse_params(k, {}, "scalping") for k in st.STRATEGIES}
+        result = strategy_overview(rows, "1m", settings, "supertrend", now=10**9)
+        self.assertEqual([r["strategy"] for r in result["rows"]], list(st.STRATEGIES))
+        self.assertTrue(all("trades" not in r and "stats" in r for r in result["rows"]))
+        self.assertEqual(result["active"]["strategy"], "supertrend")
+        direct = st.run(rows, "supertrend", settings["supertrend"])
+        self.assertEqual(result["active"]["trades"], direct["trades"])
+        self.assertIsNone(strategy_overview(rows, "1m", settings, None, now=10**9)["active"])
 
 
 if __name__ == "__main__":

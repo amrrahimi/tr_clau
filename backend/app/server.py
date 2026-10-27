@@ -15,9 +15,9 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
-from .analysis import ANALYSIS_CANDLES, analyze, run_strategy
+from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
-from .strategies import parse_params, public_strategies
+from .strategies import STRATEGIES, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
 from .presets import MODE_EMAS
@@ -116,6 +116,41 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
         result = run_strategy(rows, timeframe, strategy, settings)
+        return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
+
+    @app.get("/api/strategies/overview")
+    async def strategies_overview(
+        symbol: str,
+        timeframe: str,
+        market_type: str = "spot",
+        trading_mode: str = "daily",
+        # The user's changed settings per strategy, as JSON: {"ema_cross": {"fast": 12}}.
+        settings: str = "{}",
+        # The strategy whose trades are drawn on the chart ("" = none).
+        active: str = "",
+    ):
+        if trading_mode not in MODE_EMAS:
+            raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
+        if active and active not in STRATEGIES:
+            raise HTTPException(400, f"unknown strategy: {active}")
+        try:
+            given = json.loads(settings)
+            if not isinstance(given, dict):
+                raise ValueError("settings must be an object")
+            unknown = set(given) - set(STRATEGIES)
+            if unknown:
+                raise ValueError(f"unknown strategy: {sorted(unknown)[0]}")
+            checked = {kind: parse_params(kind, given.get(kind), trading_mode) for kind in STRATEGIES}
+        except (ValueError, json.JSONDecodeError) as error:
+            raise HTTPException(400, f"settings: {error}")
+        service = await get_service(market_type)
+        try:
+            rows = await service.fetch_candles(symbol, timeframe, ANALYSIS_CANDLES)
+        except MarketDataError as error:
+            raise HTTPException(400, str(error))
+        except Exception as error:
+            raise HTTPException(502, f"Exchange request failed: {error}")
+        result = strategy_overview(rows, timeframe, checked, active or None)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/markets")
