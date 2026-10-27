@@ -77,6 +77,8 @@ async def check(market_type: str) -> None:
         times = [c["time"] for c in long_history]
         # The exchange may keep less history than we ask for; then we use what there is.
         print(f"  long history pages: {pages}")
+        # Shown as a note on GitHub's run page.
+        print(f"::notice title=Long history {market_type}::pages {pages}, total {len(times)} candles")
         assert len(times) >= 1000, f"{market_type}: only {len(times)} candles of long history"
         steps = [b - a for a, b in zip(times, times[1:])]
         assert all(step > 0 for step in steps), f"{market_type}: repeated or unordered candles in long history"
