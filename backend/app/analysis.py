@@ -100,6 +100,7 @@ def strategy_overview(
     active: Optional[str],
     trading_mode: str = "daily",
     now: Optional[float] = None,
+    auto_rule: Optional[str] = None,
 ) -> dict:
     """Summary of every strategy on this chart (the screen's table), plus the
     trades of the active one (drawn as arrows and boxes). `settings` holds
@@ -107,18 +108,23 @@ def strategy_overview(
     closed = closed_only(candles, timeframe, time.time() if now is None else now)
     states, reading = detect(closed, trading_mode)
     rows = []
-    active_result = None
+    all_trades = {}
     for kind in strategies.STRATEGIES:
         result = strategies.run(closed, kind, settings[kind], states)
         result.pop("lines")
-        trades = result.pop("trades")
+        all_trades[kind] = result.pop("trades")
         rows.append(result)
-        if kind == active:
-            active_result = {"strategy": kind, "trades": trades}
+    # Automatic: the bot picks the strategy; its trades are the ones drawn.
+    choice = strategies.choose(rows, reading.state, auto_rule) if auto_rule else None
+    if auto_rule:
+        active = choice["strategy"] if choice else None
+    active_result = {"strategy": active, "trades": all_trades[active]} if active else None
     return {
         "rows": rows,
         "active": active_result,
         "marketState": reading.state,
+        "autoRule": auto_rule,
+        "choice": choice,
         "candles": len(closed),
         "firstTime": closed[0]["time"] if closed else None,
         "lastClosedTime": closed[-1]["time"] if closed else None,

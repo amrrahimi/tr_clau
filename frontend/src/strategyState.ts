@@ -17,15 +17,20 @@ export const COLORS = {
   lossBox: "rgba(242, 54, 69, 0.22)",
 };
 
+/** How the bot picks a strategy by itself (the owner wanted both). */
+export type AutoRule = "cautious" | "max_profit";
+
 export interface StrategyState {
-  active: string | null; // only one strategy at a time
+  auto: boolean; // true = the bot picks the strategy
+  rule: AutoRule;
+  active: string | null; // manual choice; only one strategy at a time
   settings: Record<string, Record<string, number>>; // only settings the user changed, per strategy
 }
 
 const STORAGE_KEY = "trading-bot.strategies";
 
 export function loadStrategyState(storage: Pick<Storage, "getItem"> | null = safeStorage()): StrategyState {
-  const empty: StrategyState = { active: null, settings: {} };
+  const empty: StrategyState = { auto: false, rule: "cautious", active: null, settings: {} };
   try {
     const raw = storage?.getItem(STORAGE_KEY);
     if (!raw) return empty;
@@ -38,7 +43,12 @@ export function loadStrategyState(storage: Pick<Storage, "getItem"> | null = saf
         if (Object.keys(clean).length) settings[kind] = clean;
       }
     }
-    return { active: typeof data.active === "string" ? data.active : null, settings };
+    return {
+      auto: data.auto === true,
+      rule: data.rule === "max_profit" ? "max_profit" : "cautious",
+      active: typeof data.active === "string" ? data.active : null,
+      settings,
+    };
   } catch {
     return empty;
   }
@@ -64,7 +74,16 @@ function safeStorage(): Storage | null {
 export function cleanStrategyState(state: StrategyState, cards: StrategyCard[]): StrategyState {
   const known = new Set(cards.map((c) => c.type));
   const settings = Object.fromEntries(Object.entries(state.settings).filter(([kind]) => known.has(kind)));
-  return { active: state.active && known.has(state.active) ? state.active : null, settings };
+  return { ...state, active: state.active && known.has(state.active) ? state.active : null, settings };
+}
+
+/**
+ * Auto on: the bot picks. Auto off: the user continues with the bot's last
+ * pick (so the chart does not suddenly go empty).
+ */
+export function setAuto(state: StrategyState, auto: boolean, lastChoice: string | null): StrategyState {
+  if (auto) return { ...state, auto: true };
+  return { ...state, auto: false, active: lastChoice ?? state.active };
 }
 
 /** Clicking a row: turns that strategy on, or off if it was already on. */

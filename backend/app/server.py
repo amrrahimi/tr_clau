@@ -18,7 +18,7 @@ from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
-from .strategies import STRATEGIES, parse_params, public_strategies
+from .strategies import RULES, STRATEGIES, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
 from .presets import MODE_EMAS
@@ -130,11 +130,15 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         settings: str = "{}",
         # The strategy whose trades are drawn on the chart ("" = none).
         active: str = "",
+        # Automatic choice by the bot: "cautious" or "max_profit" ("" = manual, use `active`).
+        auto_rule: str = "",
     ):
         if trading_mode not in MODE_EMAS:
             raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
         if active and active not in STRATEGIES:
             raise HTTPException(400, f"unknown strategy: {active}")
+        if auto_rule and auto_rule not in RULES:
+            raise HTTPException(400, f"auto_rule must be one of {list(RULES)}")
         try:
             given = json.loads(settings)
             if not isinstance(given, dict):
@@ -156,7 +160,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = strategy_overview(rows, timeframe, checked, active or None, trading_mode)
+        result = strategy_overview(rows, timeframe, checked, active or None, trading_mode, auto_rule=auto_rule or None)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/markets")

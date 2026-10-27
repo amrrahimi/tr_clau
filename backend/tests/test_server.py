@@ -78,7 +78,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(len(overview["rows"]), 6)
         self.assertEqual(overview["rows"][0]["params"]["fast"], 5)
         self.assertEqual(overview["active"]["strategy"], "donchian")
-        for bad_params in ({"active": "nope"}, {"settings": '{"nope": {}}'}, {"settings": '{"ema_cross": {"fast": 0}}'}):
+        for bad_params in ({"active": "nope"}, {"auto_rule": "best"}, {"settings": '{"nope": {}}'}, {"settings": '{"ema_cross": {"fast": 0}}'}):
             self.assertEqual(client.get("/api/strategies/overview", params={**base, **bad_params}).status_code, 400)
 
     def test_catalog_endpoint(self):

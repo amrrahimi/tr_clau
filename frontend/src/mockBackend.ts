@@ -109,6 +109,7 @@ export class MockBackend implements Backend {
     const closed = this.history(request).filter((c) => c.time + step <= this.now()).slice(-1000);
     const rows: StrategyRow[] = [];
     let active: StrategyOverview["active"] = null;
+    const allTrades = new Map<string, Trade[]>();
     MOCK_STRATEGIES.forEach((card, n) => {
       const trades = mockTrades(closed, 5 + n * 2, 15 + n * 4, 1.5 + (n % 3) * 0.5);
       const done = trades.filter((t) => t.result !== "open");
@@ -133,13 +134,24 @@ export class MockBackend implements Backend {
         nextSignal: null,
       });
       if (card.type === request.active) active = { strategy: card.type, trades };
+      allTrades.set(card.type, trades);
     });
+    // Preview only: a simple version of the bot's pick (the real rule is in the backend).
+    let choice: StrategyOverview["choice"] = null;
+    if (request.autoRule) {
+      const best = rows.filter((r) => r.stats.netPercent > 0 && r.stats.trades > 0)
+        .sort((a, b) => b.stats.netPercent - a.stats.netPercent)[0];
+      choice = best ? { strategy: best.strategy, profitFactor: best.stats.profitFactor, trades: best.stats.trades, netPercent: best.stats.netPercent } : null;
+      active = choice ? { strategy: choice.strategy, trades: allTrades.get(choice.strategy) ?? [] } : null;
+    }
     return {
       rows,
       active,
       firstTime: closed[0]?.time ?? null,
       lastClosedTime: closed[closed.length - 1]?.time ?? null,
       marketState: "range",
+      autoRule: request.autoRule,
+      choice,
       candles: closed.length,
     };
   }

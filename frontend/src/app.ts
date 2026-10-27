@@ -243,6 +243,7 @@ export class App {
         tradingMode: this.mode,
         settings: this.strategies.settings,
         active: this.strategies.active,
+        autoRule: this.strategies.autoRule,
       });
       // Ignore answers for an older chart or older choices.
       if (id !== this.strategyId || chartId !== this.requestId) return;

@@ -417,3 +417,40 @@ def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]
         "nextSignal": pending,
         "lines": strategy.lines(params),
     }
+
+
+# ---------- automatic choice (the owner's two rules) ----------
+
+RULES = ("cautious", "max_profit")
+MIN_TRADES = 10  # cautious rule: fewer trades than this is mostly luck
+
+
+def choose(rows: list[dict], market_state: str, rule: str) -> Optional[dict]:
+    """Pick the strategy the bot uses, from the table's rows (strategy + stats).
+
+    cautious:   suits the current market state, at least MIN_TRADES trades and
+                profit factor above 1; the best profit factor wins.
+    max_profit: the highest total result, with no other condition.
+    Either way nothing is picked when no strategy made a profit.
+    """
+    if rule not in RULES:
+        raise ValueError(f"rule must be one of {list(RULES)}")
+    best = None
+    best_key = None
+    for row in rows:
+        s = row["stats"]
+        if s["trades"] == 0 or s["netPercent"] <= 0:
+            continue
+        if rule == "cautious":
+            pf = s["profitFactor"] if s["profitFactor"] is not None else float("inf")  # no loss at all
+            if market_state not in STRATEGIES[row["strategy"]].states or s["trades"] < MIN_TRADES or pf <= 1:
+                continue
+            key = (pf, s["trades"])
+        else:
+            key = (s["netPercent"], s["trades"])
+        if best_key is None or key > best_key:
+            best, best_key = row, key
+    if best is None:
+        return None
+    return {"strategy": best["strategy"], "profitFactor": best["stats"]["profitFactor"],
+            "trades": best["stats"]["trades"], "netPercent": best["stats"]["netPercent"]}

@@ -12,8 +12,10 @@ import {
   formatPercent,
   loadStrategyState,
   saveStrategyState,
+  setAuto,
   setParams,
   toggleActive,
+  type AutoRule,
   type StrategyState,
 } from "./strategyState.ts";
 import type { Mode, ParamSpec, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
@@ -47,6 +49,11 @@ export class StrategyPanel {
     this.cards = cards;
     this.state = cleanStrategyState(this.state, cards);
     this.render();
+  }
+
+  /** Automatic: the bot picks with this rule; null = manual. */
+  get autoRule(): AutoRule | null {
+    return this.state.auto ? this.state.rule : null;
   }
 
   get active(): string | null {
@@ -91,6 +98,41 @@ export class StrategyPanel {
     title.className = "section-title";
     title.textContent = t("strategies.title");
 
+    // Auto / Manual, and in Auto the way the bot picks.
+    const controls = document.createElement("div");
+    controls.className = "strategy-controls";
+    const segmented = (items: { label: string; active: boolean; title?: string; onClick: () => void }[]) => {
+      const box = document.createElement("div");
+      box.className = "segmented small";
+      for (const item of items) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = item.label;
+        b.className = item.active ? "active" : "";
+        if (item.title) b.title = item.title;
+        b.addEventListener("click", item.onClick);
+        box.append(b);
+      }
+      return box;
+    };
+    const lastChoice = this.overview?.choice?.strategy ?? null;
+    controls.append(segmented([
+      { label: t("settings.auto"), active: this.state.auto, title: t("strategies.autoHint"),
+        onClick: () => !this.state.auto && this.update(setAuto(this.state, true, lastChoice)) },
+      { label: t("settings.manual"), active: !this.state.auto,
+        onClick: () => this.state.auto && this.update(setAuto(this.state, false, lastChoice)) },
+    ]));
+    if (this.state.auto) {
+      const rules: [AutoRule, MessageKey, MessageKey][] = [
+        ["cautious", "strategies.cautious", "strategies.cautiousHint"],
+        ["max_profit", "strategies.maxProfit", "strategies.maxProfitHint"],
+      ];
+      controls.append(segmented(rules.map(([rule, label, hint]) => ({
+        label: t(label), active: this.state.rule === rule, title: t(hint),
+        onClick: () => this.state.rule !== rule && this.update({ ...this.state, rule }),
+      }))));
+    }
+
     const table = document.createElement("table");
     table.className = "strategy-table";
     const head = document.createElement("tr");
@@ -115,18 +157,40 @@ export class StrategyPanel {
     note.textContent = this.status === "loading" ? t("strategies.loading")
       : this.status === "error" ? t("strategies.error")
       : t("strategies.note", { n: String(this.overview?.candles ?? "") });
-    this.root.replaceChildren(title, table, note);
+    const parts: HTMLElement[] = [title, controls, table];
+    if (this.state.auto && this.status === "idle" && this.overview) {
+      // Why the bot picked what it picked (or that it waits).
+      const choice = document.createElement("div");
+      choice.className = "strategy-choice";
+      const c = this.overview.choice;
+      choice.textContent = c
+        ? t("strategies.chosen", {
+            name: this.name(c.strategy),
+            pf: c.profitFactor === null ? "∞" : c.profitFactor.toFixed(2),
+            n: String(c.trades),
+            net: `\u2066${formatPercent(c.netPercent)}\u2069`, // keep "+4.4%" together in right-to-left text
+          })
+        : t("strategies.noChoice");
+      choice.classList.toggle("waiting", !c);
+      parts.push(choice);
+    }
+    parts.push(note);
+    this.root.replaceChildren(...parts);
   }
 
   private row(card: StrategyCard, row: StrategyRow | undefined): HTMLTableRowElement {
     const t = this.host.t;
     const tr = document.createElement("tr");
-    const on = this.state.active === card.type;
+    const on = this.state.auto
+      ? this.overview?.choice?.strategy === card.type
+      : this.state.active === card.type;
     // Dimmed when the market's current state does not suit this strategy.
     const current = this.overview?.marketState;
     const unsuited = current !== undefined && !card.states.includes(current);
     tr.className = (on ? "active" : "") + (unsuited ? " unsuited" : "");
-    tr.title = (on ? t("strategies.turnOff") : t("strategies.turnOn")) + (unsuited ? `\n${t("strategies.unsuited")}` : "");
+    tr.title = (this.state.auto ? t("strategies.autoRows") : on ? t("strategies.turnOff") : t("strategies.turnOn"))
+      + (unsuited ? `\n${t("strategies.unsuited")}` : "");
+    if (this.state.auto) tr.classList.add("locked");
     const s = row?.stats;
     const name = document.createElement("td");
     name.className = "name";
@@ -156,7 +220,9 @@ export class StrategyPanel {
       this.openDetails(card);
     });
     name.firstElementChild!.append(gear);
-    tr.addEventListener("click", () => this.update(toggleActive(this.state, card.type)));
+    tr.addEventListener("click", () => {
+      if (!this.state.auto) this.update(toggleActive(this.state, card.type)); // in Auto the bot picks
+    });
     return tr;
   }
 

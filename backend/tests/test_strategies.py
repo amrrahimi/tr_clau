@@ -351,6 +351,32 @@ class HistoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(c["time"], c["close"]) for c in merged], [(60, 5), (120, 6)])
 
 
+def row(kind, trades, net, pf, wins=1):
+    return {"strategy": kind, "stats": {"trades": trades, "netPercent": net, "profitFactor": pf, "wins": wins}}
+
+
+class ChooseTest(unittest.TestCase):
+    def test_cautious_needs_state_trades_and_profit_factor(self):
+        rows = [row("ema_cross", 20, 5.0, 1.8),        # trend strategy
+                row("supertrend", 12, 3.0, 2.5),       # trend, better profit factor
+                row("bb_reversion", 30, 9.0, 3.0),     # range only
+                row("donchian", 5, 20.0, 9.0)]         # too few trades
+        self.assertEqual(st.choose(rows, "trend_up", "cautious")["strategy"], "supertrend")
+        self.assertEqual(st.choose(rows, "range", "cautious")["strategy"], "bb_reversion")
+        self.assertIsNone(st.choose([row("ema_cross", 20, 1.0, 0.9)], "trend_up", "cautious"))  # PF below 1
+        self.assertIsNone(st.choose(rows, "unknown", "cautious"))
+        # No loss at all counts as the best profit factor.
+        no_loss = [row("ema_cross", 11, 2.0, None, wins=11), row("supertrend", 12, 3.0, 2.5)]
+        self.assertEqual(st.choose(no_loss, "trend_down", "cautious")["strategy"], "ema_cross")
+
+    def test_max_profit_ignores_conditions_but_not_losses(self):
+        rows = [row("ema_cross", 20, 5.0, 1.8), row("donchian", 3, 20.0, 9.0)]
+        self.assertEqual(st.choose(rows, "unknown", "max_profit")["strategy"], "donchian")
+        self.assertIsNone(st.choose([row("ema_cross", 20, -1.0, 0.8)], "range", "max_profit"))
+        with self.assertRaises(ValueError):
+            st.choose(rows, "range", "best")
+
+
 class OverviewTest(unittest.TestCase):
     def test_table_of_all_and_trades_of_the_active_one(self):
         rows = wave(500)
@@ -364,6 +390,14 @@ class OverviewTest(unittest.TestCase):
         self.assertEqual(result["active"]["trades"], direct["trades"])
         self.assertIn(result["marketState"], ("trend_up", "trend_down", "range", "volatile", "unknown"))
         self.assertIsNone(strategy_overview(rows, "1m", settings, None, now=10**9)["active"])
+        free = {k: st.parse_params(k, {"state_filter": 0}, "scalping") for k in st.STRATEGIES}
+        auto = strategy_overview(rows, "1m", free, "supertrend", "scalping", now=10**9, auto_rule="max_profit")
+        best = max((r for r in auto["rows"] if r["stats"]["trades"]), key=lambda r: r["stats"]["netPercent"])
+        if best["stats"]["netPercent"] > 0:
+            self.assertEqual(auto["choice"]["strategy"], best["strategy"])
+            self.assertEqual(auto["active"]["strategy"], best["strategy"])   # the user's pick is ignored
+        else:
+            self.assertIsNone(auto["active"])
 
 
 if __name__ == "__main__":

@@ -148,6 +148,8 @@ export interface StrategyOverview {
   rows: StrategyRow[];
   active: { strategy: string; trades: Trade[] } | null;
   marketState: MarketState; // now, for dimming strategies that do not suit it
+  autoRule: "cautious" | "max_profit" | null; // set when the bot picked the strategy
+  choice: { strategy: string; profitFactor: number | null; trades: number; netPercent: number } | null;
   candles: number; // how many candles the results are based on
   firstTime: number | null;
   lastClosedTime: number | null;

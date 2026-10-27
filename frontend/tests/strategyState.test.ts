@@ -8,6 +8,7 @@ import {
   formatPercent,
   loadStrategyState,
   saveStrategyState,
+  setAuto,
   setParams,
   toggleActive,
   tradeBoxes,
@@ -17,7 +18,7 @@ import {
 import type { Trade } from "../src/types.ts";
 
 const emaCross = MOCK_STRATEGIES.find((c) => c.type === "ema_cross")!;
-const empty: StrategyState = { active: null, settings: {} };
+const empty: StrategyState = { auto: false, rule: "cautious", active: null, settings: {} };
 
 function trade(over: Partial<Trade>): Trade {
   return {
@@ -48,13 +49,20 @@ test("trend EMA default follows the trading mode; only changes are saved", () =>
 test("saved state survives a restart and bad data is ignored", () => {
   const store = new Map<string, string>();
   const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
-  saveStrategyState({ active: "donchian", settings: { donchian: { length: 30 } } }, storage);
-  assert.deepEqual(loadStrategyState(storage), { active: "donchian", settings: { donchian: { length: 30 } } });
+  saveStrategyState({ auto: true, rule: "max_profit", active: "donchian", settings: { donchian: { length: 30 } } }, storage);
+  assert.deepEqual(loadStrategyState(storage), { auto: true, rule: "max_profit", active: "donchian", settings: { donchian: { length: 30 } } });
   store.set("trading-bot.strategies", "{not json");
   assert.deepEqual(loadStrategyState(storage), empty);
-  store.set("trading-bot.strategies", JSON.stringify({ active: 5, settings: { a: { x: "1", y: 2 } } }));
-  assert.deepEqual(loadStrategyState(storage), { active: null, settings: { a: { y: 2 } } });
-  assert.deepEqual(cleanStrategyState({ active: "gone", settings: { gone: { a: 1 } } }, MOCK_STRATEGIES), empty);
+  store.set("trading-bot.strategies", JSON.stringify({ auto: "yes", rule: "best", active: 5, settings: { a: { x: "1", y: 2 } } }));
+  assert.deepEqual(loadStrategyState(storage), { ...empty, settings: { a: { y: 2 } } });
+  assert.deepEqual(cleanStrategyState({ ...empty, active: "gone", settings: { gone: { a: 1 } } }, MOCK_STRATEGIES), empty);
+});
+
+test("leaving automatic mode keeps the bot's last pick", () => {
+  const auto = setAuto({ ...empty, active: "donchian" }, true, null);
+  assert.equal(auto.auto, true);
+  assert.equal(setAuto(auto, false, "supertrend").active, "supertrend");
+  assert.equal(setAuto(auto, false, null).active, "donchian");
 });
 
 test("arrows: entries green up (long) / red down (short), exits yellow with tick or cross", () => {
