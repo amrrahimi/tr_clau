@@ -53,6 +53,8 @@ export const en = {
   "bot.start": "Start",
   "bot.stopped": "Bot stopped: set up your indicators and press Start",
   "bot.startHint": "Start the bot with your indicators",
+  "bot.preview": "Preview",
+  "bot.previewHint": "Lines are only shown; the bot does not analyse until Start",
   "indicators.add": "+ Indicator",
   "indicators.title": "Indicators",
   "indicators.search": "Search…",

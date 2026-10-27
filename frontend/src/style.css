@@ -305,3 +305,10 @@ button:hover { background: var(--border); }
 .popup-error[hidden] { display: none; }
 .market-state.stopped { color: #f7a600; }
 .muted { color: var(--muted); margin: 0; }
+.preview-tag {
+  padding: 2px 8px;
+  border: 1px dashed #f7a600;
+  border-radius: 4px;
+  color: #f7a600;
+  font-size: 12px;
+}

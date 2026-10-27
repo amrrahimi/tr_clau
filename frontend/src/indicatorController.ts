@@ -16,8 +16,10 @@ export interface ControllerHost {
   t(key: MessageKey, params?: Record<string, string>): string;
   dir(): "rtl" | "ltr";
   chart: ChartView;
-  /** The mode changed: stopped = clear the chart; auto/running = analyse again. */
+  /** The mode changed; the app asks for new lines (a preview when stopped). */
   onModeChange(mode: BotMode): void;
+  /** The user's list changed while stopped: draw a new preview. */
+  onListChange(): void;
 }
 
 export interface ControllerElements {
@@ -44,11 +46,18 @@ export class IndicatorController {
     return this.state.mode;
   }
 
-  /** What to ask the backend for: null = automatic list, a list = the user's, "stopped" = nothing. */
-  request(): IndicatorInstance[] | null | "stopped" {
-    if (this.state.mode === "auto") return null;
-    if (this.state.mode === "manual-stopped") return "stopped";
-    return this.state.list;
+  /**
+   * What to ask the backend for: null = the bot's automatic list, otherwise the
+   * user's list. While stopped the lines are only a preview: the bot itself
+   * (market state now, signals and trades later) stays off until Start.
+   */
+  request(): IndicatorInstance[] | null {
+    return this.state.mode === "auto" ? null : this.state.list;
+  }
+
+  /** True while the lines on the chart are a preview (stopped, before Start). */
+  get isPreview(): boolean {
+    return this.state.mode === "manual-stopped";
   }
 
   setCatalog(catalog: CatalogSpec[]): void {
@@ -77,7 +86,6 @@ export class IndicatorController {
   private setMode(mode: BotMode): void {
     this.state.mode = mode;
     saveManualState(this.state);
-    if (mode === "manual-stopped") this.clearResults();
     this.render();
     this.host.onModeChange(mode);
   }
@@ -90,7 +98,14 @@ export class IndicatorController {
   private saveList(list: IndicatorInstance[]): void {
     this.state.list = list;
     saveManualState(this.state);
+    // Drop removed indicators from the chart straight away; the new preview follows.
+    const ids = new Set(list.map((i) => i.id));
+    if (this.results.some((r) => !ids.has(r.id))) {
+      this.results = this.results.filter((r) => ids.has(r.id));
+      this.host.chart.setIndicators(this.results);
+    }
     this.render();
+    this.host.onListChange();
   }
 
   // ---------- actions ----------
@@ -145,6 +160,11 @@ export class IndicatorController {
       const start = button(`▶ ${t("bot.start")}`, "start-button", () => this.start());
       start.title = t("bot.startHint");
       corner.append(start);
+      const tag = document.createElement("span");
+      tag.className = "preview-tag";
+      tag.textContent = t("bot.preview");
+      tag.title = t("bot.previewHint");
+      corner.append(tag);
     }
     if (mode !== "auto") {
       corner.append(button(t("indicators.add"), "add-button", () => this.openList()));
@@ -157,8 +177,10 @@ export class IndicatorController {
     layer.replaceChildren();
     const editable = this.state.mode !== "auto";
 
-    if (this.state.mode === "manual-stopped") {
-      // Nothing is drawn while stopped, so the whole list sits in the main corner.
+    // While stopped, until the preview for the current list arrives, the list sits in the main corner.
+    const previewReady = this.state.list.length > 0 &&
+      this.state.list.every((i) => this.results.some((r) => r.id === i.id));
+    if (this.state.mode === "manual-stopped" && !previewReady) {
       const block = this.block(0);
       if (!this.state.list.length) {
         const empty = document.createElement("div");
@@ -187,7 +209,10 @@ export class IndicatorController {
       }
       const precision = r.scale ? 2 : this.host.chart.pricePrecision;
       const values = latestValues(r).map((v) => formatPrice(v, precision)).join("  ");
-      block.append(this.row(r.id, r.outputs[0]?.color ?? "#787b86", r.label, r.type === "volume" ? "" : values, editable, false));
+      const label = this.state.list.find((i) => i.id === r.id) && this.isPreview
+        ? instanceLabel(this.spec(r.type), this.state.list.find((i) => i.id === r.id)!)
+        : r.label;
+      block.append(this.row(r.id, r.outputs[0]?.color ?? "#787b86", label, r.type === "volume" ? "" : values, editable, false));
     }
   }
 

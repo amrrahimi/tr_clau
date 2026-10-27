@@ -194,7 +194,6 @@ export class App {
     if (!this.symbol) return;
     const wanted = this.indicators.request();
     const id = ++this.analysisId;
-    if (wanted === "stopped") return; // the bot is stopped: no analysis until Start
     const chartId = this.requestId;
     try {
       const analysis = await this.backend.getAnalysis({
@@ -204,8 +203,8 @@ export class App {
         tradingMode: this.mode,
         indicators: wanted,
       });
-      // Ignore answers for an older chart, older settings, or after the bot was stopped.
-      if (id !== this.analysisId || chartId !== this.requestId || this.indicators.mode === "manual-stopped") return;
+      // Ignore answers for an older chart or older settings.
+      if (id !== this.analysisId || chartId !== this.requestId) return;
       this.analysis = analysis;
       this.indicators.showResults(analysis.indicators);
       this.renderAnalysis();
@@ -221,13 +220,11 @@ export class App {
 
   /** Called by the indicator controller when Auto/Manual/Start changes the mode. */
   private onBotModeChange(mode: BotMode): void {
-    this.analysisId++; // drop answers that are still on their way
     if (mode === "manual-stopped") {
-      this.analysis = null;
+      // The bot stops; the top bar says so. Lines stay as a preview.
       this.renderAnalysis();
-    } else {
-      void this.loadAnalysis();
     }
+    void this.loadAnalysis(); // a new request also drops answers still on their way
   }
 
   private stopLive(): void {
@@ -358,6 +355,7 @@ export class App {
         dir: () => direction(this.language),
         chart: this.chart,
         onModeChange: (mode) => this.onBotModeChange(mode),
+        onListChange: () => void this.loadAnalysis(),
       },
       { corner: this.els.corner, legends: this.els.legends, modal: this.els.modal },
     );

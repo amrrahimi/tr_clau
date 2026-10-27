@@ -55,6 +55,8 @@ export const fa: Record<MessageKey, string> = {
   "bot.start": "شروع",
   "bot.stopped": "ربات متوقف است: اندیکاتورها را تنظیم کنید و «شروع» را بزنید",
   "bot.startHint": "شروع کار ربات با اندیکاتورهای شما",
+  "bot.preview": "پیش‌نمایش",
+  "bot.previewHint": "خط‌ها فقط نمایش داده می‌شوند؛ ربات تا «شروع» تحلیل نمی‌کند",
   "indicators.add": "＋ اندیکاتور",
   "indicators.title": "اندیکاتورها",
   "indicators.search": "جستجو…",
