@@ -14,6 +14,7 @@ from . import indicators as ind
 from .catalog import Instance, compute_instances, parse_instances
 from .presets import auto_instances
 from .regime import ATR_LENGTH, detect
+from . import strategies
 
 # Candles fetched for the analysis. Indicators need earlier candles to "warm
 # up"; without them the first values differ from TradingView's.
@@ -70,3 +71,21 @@ def analyze(
         "lastClosedTime": closed[-1]["time"] if closed else None,
         "stateChanges": changes,
     }
+
+
+def run_strategy(
+    candles: Sequence[dict],
+    timeframe: str,
+    kind: str,
+    params: dict,
+    now: Optional[float] = None,
+    returned_points: int = RETURNED_POINTS,
+) -> dict:
+    """One strategy on closed candles: its trades, summary, and the lines it reads."""
+    closed = closed_only(candles, timeframe, time.time() if now is None else now)
+    result = strategies.run(closed, kind, params)
+    lines = result.pop("lines")
+    result["indicators"] = compute_instances(closed, parse_instances(lines), returned_points)
+    result["firstTime"] = closed[0]["time"] if closed else None
+    result["lastClosedTime"] = closed[-1]["time"] if closed else None
+    return result

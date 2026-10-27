@@ -56,6 +56,23 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(manual.json()["auto"])
         self.assertEqual([i["label"] for i in manual.json()["indicators"]], ["RSI 7"])
 
+    def test_strategy_endpoints(self):
+        rows = [[i * 60_000, 100 + i % 7, 102 + i % 7, 99 + i % 7, 101 + i % 5, 1] for i in range(400)]
+        exchange = FakeExchange(candles=[rows, rows])
+        client = self.client(lambda market_type: MarketService(exchange, market_type))
+        cards = client.get("/api/strategies/catalog").json()["strategies"]
+        self.assertEqual(len(cards), 6)
+        params = {"symbol": "BTC/USDT", "timeframe": "1m", "strategy": "ema_cross", "trading_mode": "scalping"}
+        body = client.get("/api/strategies/run", params=params).json()
+        self.assertEqual(body["params"]["trend"], 50)
+        self.assertIn("winRate", body["stats"])
+        self.assertEqual(exchange.last_ohlcv_args["limit"], 1000)
+        bad = client.get("/api/strategies/run", params={**params, "params": '{"fast": 0}'})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("between", bad.json()["detail"])
+        unknown = client.get("/api/strategies/run", params={**params, "strategy": "nope"})
+        self.assertEqual(unknown.status_code, 400)
+
     def test_catalog_endpoint(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
         body = client.get("/api/indicators/catalog").json()
