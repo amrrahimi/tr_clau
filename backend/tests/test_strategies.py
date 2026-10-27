@@ -5,6 +5,7 @@ import unittest
 from app import indicators as ind
 from app import strategies as st
 from app.analysis import run_strategy, strategy_overview
+from app import history
 from app.catalog import Candles, parse_instances
 from app.strategies import LONG, SHORT, Signal
 
@@ -108,6 +109,67 @@ class EngineTest(unittest.TestCase):
         self.assertFalse(s["feesIncluded"])
         self.assertIsNone(st.stats(trades[:2])["profitFactor"])  # no loss yet
         self.assertIsNone(st.stats([])["winRate"])
+
+
+class ExtraRulesTest(unittest.TestCase):
+    """Break-even, time limit and market state, checked by hand."""
+
+    def setUp(self):
+        self.signal = bar(0, 100, 100, 100, 100)
+        self.long = [Signal(0, LONG, stop_distance=1, reward=2)]  # entry 100, stop 99, target 102
+
+    def test_stop_moves_to_entry_at_half_way(self):
+        rows = [self.signal,
+                bar(60, 100, 101.2, 99.5, 101),    # reaches 101 = half way to 102: stop moves (from next candle)
+                bar(120, 101, 101.1, 99.9, 100.2)]  # back to the entry: closed at 100, no loss
+        trades, _ = st.simulate(rows, self.long, breakeven=0.5)
+        t = trades[0]
+        self.assertEqual((t["result"], t["exitReason"], t["exitPrice"], t["breakevenTime"]), ("breakeven", "breakeven", 100, 60))
+        self.assertEqual(t["stopLoss"], 99)  # the box keeps the original stop
+        self.assertEqual(t["pnlPercent"], 0)
+        # Without the rule the same trade is still open.
+        self.assertEqual(st.simulate(rows, self.long)[0][0]["result"], "open")
+
+    def test_break_even_does_not_count_in_the_same_candle(self):
+        rows = [self.signal, bar(60, 100, 101.5, 99.95, 100)]  # half way and back in one candle
+        trades, _ = st.simulate(rows, self.long, breakeven=0.5)
+        self.assertEqual(trades[0]["result"], "open")
+
+    def test_time_limit_closes_only_in_profit(self):
+        flat_loss = [bar(60 * k, 99.6, 99.8, 99.5, 99.7) for k in range(1, 5)]   # below the entry
+        rows = [self.signal] + flat_loss + [bar(300, 99.7, 100.6, 99.6, 100.5)]  # 5th candle closes in profit
+        rows[1] = bar(60, 100, 100.2, 99.5, 99.7)
+        trades, _ = st.simulate(rows, self.long, max_candles=3)
+        t = trades[0]
+        self.assertEqual((t["result"], t["exitReason"], t["exitTime"], t["exitPrice"]), ("win", "time", 300, 100.5))
+        # Still in loss after the limit: the trade stays open.
+        trades, _ = st.simulate(rows[:-1], self.long, max_candles=3)
+        self.assertEqual(trades[0]["result"], "open")
+
+    def test_stats_count_break_even_separately(self):
+        s = st.stats([{"result": "win", "pnlPercent": 1.0}, {"result": "breakeven", "pnlPercent": 0.0},
+                      {"result": "loss", "pnlPercent": -1.0}])
+        self.assertEqual((s["trades"], s["wins"], s["losses"], s["breakevens"]), (3, 1, 1, 1))
+
+    def test_market_state_rule(self):
+        trend = ("trend_up", "trend_down")
+        self.assertTrue(st.allowed_by_state(Signal(0, LONG), "trend_up", trend))
+        self.assertFalse(st.allowed_by_state(Signal(0, SHORT), "trend_up", trend))
+        self.assertTrue(st.allowed_by_state(Signal(0, SHORT), "trend_down", trend))
+        self.assertFalse(st.allowed_by_state(Signal(0, LONG), "range", trend))
+        self.assertTrue(st.allowed_by_state(Signal(0, SHORT), "range", ("range",)))
+        self.assertFalse(st.allowed_by_state(Signal(0, LONG), "unknown", ("range", "volatile")))
+
+    def test_run_uses_the_state_of_each_signal_candle(self):
+        rows = wave(800)
+        params = st.parse_params("ema_cross", {"max_candles": 0, "breakeven": 0}, "scalping")
+        everything = st.run(rows, "ema_cross", {**params, "state_filter": 0})
+        all_range = st.run(rows, "ema_cross", params, ["range"] * len(rows))
+        all_up = st.run(rows, "ema_cross", params, ["trend_up"] * len(rows))
+        self.assertTrue(everything["trades"])
+        self.assertEqual(all_range["trades"], [])          # a trend strategy never trades in a range
+        self.assertTrue(all(t["side"] == LONG for t in all_up["trades"]))
+        self.assertTrue(all_up["trades"])
 
 
 class HandExamplesTest(unittest.TestCase):
@@ -241,7 +303,7 @@ class CardsAndSettingsTest(unittest.TestCase):
     def test_run_on_chart_drops_the_forming_candle_and_adds_lines(self):
         rows = wave(400)
         now = rows[-1]["time"] + 30   # last candle still forming
-        result = run_strategy(rows, "1m", "ema_cross", st.parse_params("ema_cross", {}, "scalping"), now=now)
+        result = run_strategy(rows, "1m", "ema_cross", st.parse_params("ema_cross", {}, "scalping"), "scalping", now=now)
         self.assertEqual(result["lastClosedTime"], rows[-2]["time"])
         self.assertEqual([i["label"] for i in result["indicators"]], ["EMA 9", "EMA 21", "EMA 50"])
 
@@ -257,16 +319,50 @@ class CardsAndSettingsTest(unittest.TestCase):
         self.assertEqual(copy, json.loads(json.dumps(st.public_strategies())))
 
 
+class HistoryTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.all = [bar(i * 60, 1, 1, 1, 1) for i in range(2500)]
+        self.calls = []
+
+    async def fetch(self, limit, before):
+        self.calls.append(before)
+        older = [c for c in self.all if before is None or c["time"] < before]
+        return [dict(c) for c in older[-limit:]]
+
+    async def test_pages_back_until_enough_or_no_more(self):
+        got = await history.fetch_history(self.fetch, 2200)
+        self.assertEqual([c["time"] for c in got], [c["time"] for c in self.all[-2200:]])
+        self.assertEqual(len(self.calls), 3)
+        got = await history.fetch_history(self.fetch, 5000)   # only 2500 exist
+        self.assertEqual(len(got), 2500)
+
+    async def test_cache_fetches_only_the_newest_page_later(self):
+        cache = history.HistoryCache(total=2200)
+        await cache.get(("spot", "X", "1m"), self.fetch)
+        self.calls.clear()
+        self.all.append(bar(2500 * 60, 2, 2, 2, 2))   # a new candle closed
+        got = await cache.get(("spot", "X", "1m"), self.fetch)
+        self.assertEqual(self.calls, [None])          # one request
+        self.assertEqual(len(got), 2200)
+        self.assertEqual(got[-1]["close"], 2)
+
+    def test_merge_prefers_the_newer_copy(self):
+        merged = history.merge([bar(0, 1, 1, 1, 1), bar(60, 1, 1, 1, 1)], [bar(60, 5, 5, 5, 5), bar(120, 6, 6, 6, 6)], 2)
+        self.assertEqual([(c["time"], c["close"]) for c in merged], [(60, 5), (120, 6)])
+
+
 class OverviewTest(unittest.TestCase):
     def test_table_of_all_and_trades_of_the_active_one(self):
         rows = wave(500)
         settings = {k: st.parse_params(k, {}, "scalping") for k in st.STRATEGIES}
-        result = strategy_overview(rows, "1m", settings, "supertrend", now=10**9)
+        result = strategy_overview(rows, "1m", settings, "supertrend", "scalping", now=10**9)
         self.assertEqual([r["strategy"] for r in result["rows"]], list(st.STRATEGIES))
         self.assertTrue(all("trades" not in r and "stats" in r for r in result["rows"]))
         self.assertEqual(result["active"]["strategy"], "supertrend")
-        direct = st.run(rows, "supertrend", settings["supertrend"])
+        from app.regime import detect
+        direct = st.run(rows, "supertrend", settings["supertrend"], detect(rows, "scalping")[0])
         self.assertEqual(result["active"]["trades"], direct["trades"])
+        self.assertIn(result["marketState"], ("trend_up", "trend_down", "range", "volatile", "unknown"))
         self.assertIsNone(strategy_overview(rows, "1m", settings, None, now=10**9)["active"])
 
 

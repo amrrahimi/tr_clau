@@ -56,6 +56,27 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0.5,
         "max": 10,
         "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 48,
+        "min": 0,
+        "max": 1000,
+        "step": 1
       }
     ],
     "modeDefaults": {
@@ -118,6 +139,27 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0.5,
         "max": 10,
         "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 48,
+        "min": 0,
+        "max": 1000,
+        "step": 1
       }
     ],
     "modeDefaults": {
@@ -188,6 +230,27 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0.5,
         "max": 10,
         "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 48,
+        "min": 0,
+        "max": 1000,
+        "step": 1
       }
     ],
     "modeDefaults": {
@@ -220,6 +283,27 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0.1,
         "max": 10,
         "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 48,
+        "min": 0,
+        "max": 1000,
+        "step": 1
       }
     ],
     "modeDefaults": {}
@@ -263,6 +347,27 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0.5,
         "max": 10,
         "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 48,
+        "min": 0,
+        "max": 1000,
+        "step": 1
       }
     ],
     "modeDefaults": {
@@ -311,6 +416,27 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0.5,
         "max": 10,
         "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 48,
+        "min": 0,
+        "max": 1000,
+        "step": 1
       }
     ],
     "modeDefaults": {}

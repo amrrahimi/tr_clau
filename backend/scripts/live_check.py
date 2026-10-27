@@ -15,6 +15,7 @@ from app.analysis import ANALYSIS_CANDLES, analyze, run_strategy  # noqa: E402
 from app.catalog import SPECS, parse_instances  # noqa: E402
 from app.exchange import MarketService, create_exchange  # noqa: E402
 from app.strategies import STRATEGIES, parse_params  # noqa: E402
+from app.history import STRATEGY_CANDLES, fetch_history  # noqa: E402
 
 
 async def check(market_type: str) -> None:
@@ -64,9 +65,21 @@ async def check(market_type: str) -> None:
         latest = ", ".join(f"{i['label']} {i['outputs'][0]['points'][-1]['value']:.4g}" for i in result["indicators"])
         print(f"  all {len(everything)} indicators: {latest}")
 
+        # Strategies table: 5000 candles fetched page by page, without gaps.
+        long_history = await fetch_history(
+            lambda limit, before: service.fetch_candles(symbol, "5m", limit, before=before), STRATEGY_CANDLES)
+        times = [c["time"] for c in long_history]
+        assert len(times) >= 4500, f"{market_type}: only {len(times)} of {STRATEGY_CANDLES} candles"
+        steps = [b - a for a, b in zip(times, times[1:])]
+        assert all(step > 0 for step in steps), f"{market_type}: repeated or unordered candles in long history"
+        missing = sum(1 for step in steps if step != 300)
+        # The exchange itself may lack a few candles (maintenance); page joins must not.
+        assert missing <= len(steps) // 100, f"{market_type}: {missing} gaps in long history"
+        print(f"  long history: {len(times)} candles of 5m, {missing} gaps")
+
         # Strategies: every one runs on real data and gives sensible trades.
         for kind in STRATEGIES:
-            result = run_strategy(history, "15m", kind, parse_params(kind, {}, "daily"))
+            result = run_strategy(long_history, "5m", kind, parse_params(kind, {}, "scalping"), "scalping")
             for t in result["trades"]:
                 direction = 1 if t["side"] == "long" else -1
                 assert (t["entryPrice"] - t["stopLoss"]) * direction > 0, f"{market_type}: {kind} stop on wrong side"

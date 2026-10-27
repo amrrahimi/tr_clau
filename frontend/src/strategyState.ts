@@ -3,7 +3,7 @@
 // into arrows and boxes on the chart (the owner's design):
 //   entry long  = green arrow up, under the candle
 //   entry short = red arrow down, above the candle
-//   exit        = yellow arrow with ✓ (profit) or ✗ (loss)
+//   exit        = yellow arrow with ✓ (profit), ✗ (loss) or ＝ (closed at the entry price)
 //   each trade  = green box entry→take-profit, red box entry→stop-loss,
 //                 from the entry candle to the exit candle (or the last candle while open)
 
@@ -123,7 +123,7 @@ export function tradeMarkers(trades: Trade[]): Marker[] {
         position: long ? "aboveBar" : "belowBar",
         shape: long ? "arrowDown" : "arrowUp",
         color: COLORS.exit,
-        text: t.result === "win" ? "✓" : "✗",
+        text: t.result === "win" ? "✓" : t.result === "breakeven" ? "＝" : "✗",
         size: ARROW_SIZE,
       });
     }

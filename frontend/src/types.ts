@@ -117,7 +117,9 @@ export interface Trade {
   takeProfit: number;
   exitTime: number | null; // null while open
   exitPrice: number | null;
-  result: "win" | "loss" | "open";
+  exitReason: "target" | "stop" | "breakeven" | "time" | null;
+  breakevenTime: number | null; // when the stop moved to the entry price
+  result: "win" | "loss" | "breakeven" | "open";
   pnlPercent: number | null;
   r: number | null;
 }
@@ -126,6 +128,7 @@ export interface StrategyStats {
   trades: number; // closed trades
   wins: number;
   losses: number;
+  breakevens: number; // closed at the entry price (no profit, no loss)
   open: number;
   winRate: number | null;
   profitFactor: number | null; // null when there is no loss yet
@@ -144,6 +147,8 @@ export interface StrategyRow {
 export interface StrategyOverview {
   rows: StrategyRow[];
   active: { strategy: string; trades: Trade[] } | null;
+  marketState: MarketState; // now, for dimming strategies that do not suit it
+  candles: number; // how many candles the results are based on
   firstTime: number | null;
   lastClosedTime: number | null;
 }

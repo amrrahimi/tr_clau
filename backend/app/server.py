@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
+from .history import HistoryCache
 from .strategies import STRATEGIES, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
@@ -40,6 +41,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
     factory = service_factory or default_factory
     services: dict[str, MarketService] = {}
     services_lock = asyncio.Lock()
+    history = HistoryCache()  # long candle history for the strategies table
 
     async def get_service(market_type: str) -> MarketService:
         if market_type not in config.MARKET_TYPES:
@@ -115,7 +117,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = run_strategy(rows, timeframe, strategy, settings)
+        result = run_strategy(rows, timeframe, strategy, settings, trading_mode)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/strategies/overview")
@@ -145,12 +147,16 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
             raise HTTPException(400, f"settings: {error}")
         service = await get_service(market_type)
         try:
-            rows = await service.fetch_candles(symbol, timeframe, ANALYSIS_CANDLES)
+            # 5000 candles: more trades, so the table's numbers are more trustworthy.
+            rows = await history.get(
+                (market_type, symbol, timeframe),
+                lambda limit, before: service.fetch_candles(symbol, timeframe, limit, before=before),
+            )
         except MarketDataError as error:
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = strategy_overview(rows, timeframe, checked, active or None)
+        result = strategy_overview(rows, timeframe, checked, active or None, trading_mode)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/markets")

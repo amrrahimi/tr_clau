@@ -372,3 +372,6 @@ button:hover { background: var(--border); }
 .strategy-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
 .strategy-facts dt { color: var(--muted); }
 .strategy-facts dd { margin: 0; }
+.strategy-table tbody tr.unsuited { opacity: 0.45; }
+.strategy-table tbody tr.unsuited.active { opacity: 0.8; }
+.settings-window input.switch { width: 18px; height: 18px; justify-self: start; accent-color: var(--accent); }

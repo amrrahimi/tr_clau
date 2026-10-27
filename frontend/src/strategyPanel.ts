@@ -16,7 +16,15 @@ import {
   toggleActive,
   type StrategyState,
 } from "./strategyState.ts";
-import type { Mode, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
+import type { Mode, ParamSpec, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
+
+/** Settings every strategy has (the extra rules); shown under their own heading. */
+const COMMON = new Set(["state_filter", "breakeven", "max_candles"]);
+
+/** A 0/1 setting is shown as a tick box. */
+function isSwitch(p: ParamSpec): boolean {
+  return p.min === 0 && p.max === 1 && p.step === 1;
+}
 
 export interface StrategyHost {
   t(key: MessageKey, params?: Record<string, string>): string;
@@ -106,7 +114,7 @@ export class StrategyPanel {
     note.className = "strategy-note";
     note.textContent = this.status === "loading" ? t("strategies.loading")
       : this.status === "error" ? t("strategies.error")
-      : t("strategies.noFees");
+      : t("strategies.note", { n: String(this.overview?.candles ?? "") });
     this.root.replaceChildren(title, table, note);
   }
 
@@ -114,8 +122,11 @@ export class StrategyPanel {
     const t = this.host.t;
     const tr = document.createElement("tr");
     const on = this.state.active === card.type;
-    tr.className = on ? "active" : "";
-    tr.title = on ? t("strategies.turnOff") : t("strategies.turnOn");
+    // Dimmed when the market's current state does not suit this strategy.
+    const current = this.overview?.marketState;
+    const unsuited = current !== undefined && !card.states.includes(current);
+    tr.className = (on ? "active" : "") + (unsuited ? " unsuited" : "");
+    tr.title = (on ? t("strategies.turnOff") : t("strategies.turnOn")) + (unsuited ? `\n${t("strategies.unsuited")}` : "");
     const s = row?.stats;
     const name = document.createElement("td");
     name.className = "name";
@@ -177,34 +188,53 @@ export class StrategyPanel {
     fact("strategies.suits", card.states.map((s) => t(`state.${s}` as MessageKey)).join("، "));
     fact("strategies.uses", card.uses.join(", "));
     if (stats) {
-      fact("strategies.colTrades", `${stats.trades} (${t("strategies.colWins")} ${stats.wins} · ${t("strategies.colLosses")} ${stats.losses})`);
+      fact("strategies.colTrades", `${stats.trades} (${t("strategies.colWins")} ${stats.wins} · ${t("strategies.colLosses")} ${stats.losses} · ${t("strategies.breakevens")} ${stats.breakevens})`);
       fact("strategies.winRate", stats.winRate === null ? "—" : `${stats.winRate.toFixed(0)}%`);
       fact("strategies.profitFactor", stats.profitFactor === null ? (stats.wins ? "∞" : "—") : stats.profitFactor.toFixed(2));
       fact("strategies.colNet", `${formatPercent(stats.netPercent)} (${t("strategies.withoutFees")})`);
     }
     form.append(title, desc, facts);
 
-    const settingsTitle = document.createElement("div");
-    settingsTitle.className = "list-heading";
-    settingsTitle.textContent = t("strategies.settings");
-    form.append(settingsTitle);
-    for (const p of card.params) {
-      const field = document.createElement("label");
-      field.className = "field";
-      const label = document.createElement("span");
-      label.textContent = t(`param.${p.name}` as MessageKey);
-      const input = document.createElement("input");
-      input.type = "number";
-      input.id = `param-${p.name}`;
-      input.dir = "ltr";
-      input.min = String(p.min);
-      input.max = String(p.max);
-      input.step = String(p.step);
-      input.value = String(current[p.name]);
-      const range = document.createElement("small");
-      range.textContent = t("settings.range", { min: String(p.min), max: String(p.max) });
-      field.append(label, input, range);
-      form.append(field);
+    const heading = (key: MessageKey) => {
+      const h = document.createElement("div");
+      h.className = "list-heading";
+      h.textContent = t(key);
+      form.append(h);
+    };
+    const input = (p: ParamSpec) => form.querySelector(`#param-${p.name}`) as HTMLInputElement;
+    const read = (p: ParamSpec) => (isSwitch(p) ? (input(p).checked ? 1 : 0) : Number(input(p).value));
+    const write = (p: ParamSpec, value: number) => {
+      if (isSwitch(p)) input(p).checked = value === 1;
+      else input(p).value = String(value);
+    };
+    const own = card.params.filter((p) => !COMMON.has(p.name));
+    const common = card.params.filter((p) => COMMON.has(p.name));
+    for (const [key, list] of [["strategies.settings", own], ["strategies.extraRules", common]] as const) {
+      heading(key);
+      for (const p of list) {
+        const field = document.createElement("label");
+        field.className = "field";
+        const label = document.createElement("span");
+        label.textContent = t(`param.${p.name}` as MessageKey);
+        const box = document.createElement("input");
+        box.id = `param-${p.name}`;
+        field.append(label, box);
+        if (isSwitch(p)) {
+          box.type = "checkbox";
+          box.className = "switch";
+        } else {
+          box.type = "number";
+          box.dir = "ltr";
+          box.min = String(p.min);
+          box.max = String(p.max);
+          box.step = String(p.step);
+          const range = document.createElement("small");
+          range.textContent = t("settings.range", { min: String(p.min), max: String(p.max) });
+          field.append(range);
+        }
+        form.append(field);
+        write(p, current[p.name]);
+      }
     }
     const error = document.createElement("div");
     error.className = "popup-error";
@@ -219,9 +249,7 @@ export class StrategyPanel {
     reset.type = "button";
     reset.textContent = t("strategies.defaults");
     reset.addEventListener("click", () => {
-      for (const p of card.params) {
-        (form.querySelector(`#param-${p.name}`) as HTMLInputElement).value = String(defaultValue(card, p.name, mode));
-      }
+      for (const p of card.params) write(p, defaultValue(card, p.name, mode));
     });
     const cancel = document.createElement("button");
     cancel.type = "button";
@@ -233,7 +261,7 @@ export class StrategyPanel {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const params: Record<string, number> = {};
-      for (const p of card.params) params[p.name] = Number((form.querySelector(`#param-${p.name}`) as HTMLInputElement).value);
+      for (const p of card.params) params[p.name] = read(p);
       const bad = invalidParams(card, params);
       form.querySelectorAll("input").forEach((i) => i.classList.toggle("invalid", bad.includes(i.id.slice(6))));
       if (bad.length) {

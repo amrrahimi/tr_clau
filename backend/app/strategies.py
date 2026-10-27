@@ -14,6 +14,14 @@ Common rules (agreed with the owner, the same for every strategy):
   (we cannot know which came first, so we assume the worse).
 - Results are without fees for now (fees come in phase 3).
 
+Three extra rules, each with an on/off setting on every strategy (owner's choice):
+- Market state: trade only when the market is in a state the strategy suits;
+  trend strategies trade only with the trend (long in an uptrend, short in a downtrend).
+- Break-even: once the price has gone part of the way to the take-profit
+  (half by default), the stop-loss moves to the entry price.
+- Time limit: after N candles, a trade that is in profit is closed at the
+  candle's close. A trade in loss is not forced out (that would lock in the loss).
+
 Each rule below is written for long trades; short trades are the mirror image.
 """
 
@@ -51,10 +59,15 @@ class Strategy:
     signals: Callable[[Candles, dict], list[Signal]] = field(repr=False)
     lines: Callable[[dict], list[dict]] = field(repr=False, default=lambda p: [])
 
+    @property
+    def all_params(self) -> tuple[Param, ...]:
+        return self.params + COMMON_PARAMS
+
     def public(self) -> dict:
         data = asdict(self)
         data.pop("signals")
         data.pop("lines")
+        data["params"] = [asdict(p) for p in self.all_params]
         data["modeDefaults"] = {"trend": dict(LONG_EMA)} if any(p.name == "trend" for p in self.params) else {}
         return data
 
@@ -70,6 +83,14 @@ def _crossed_down(a, b, i) -> bool:
 def _ready(*values) -> bool:
     return all(v is not None for v in values)
 
+
+# The three extra rules, shared by every strategy (1 = on, 0 = off for the first;
+# 0 turns the other two off).
+COMMON_PARAMS = (
+    Param("state_filter", 1, 0, 1),
+    Param("breakeven", 0.5, 0, 0.95, 0.05),   # part of the way to the take-profit
+    Param("max_candles", 48, 0, 1000),        # candles before a trade in profit is closed
+)
 
 # Settings shared by several strategies.
 TREND = Param("trend", 200, 2, 500)
@@ -231,11 +252,11 @@ def parse_params(kind: str, given, trading_mode: str = "daily") -> dict:
     given = given or {}
     if not isinstance(given, dict):
         raise ValueError("params must be an object")
-    unknown = set(given) - {p.name for p in strategy.params}
+    unknown = set(given) - {p.name for p in strategy.all_params}
     if unknown:
         raise ValueError(f"{kind}: unknown setting {sorted(unknown)[0]}")
     out = {}
-    for p in strategy.params:
+    for p in strategy.all_params:
         default = LONG_EMA.get(trading_mode, p.default) if p.name == "trend" else p.default
         value = given.get(p.name, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -262,7 +283,24 @@ def _levels(sig: Signal, entry: float) -> Optional[tuple[float, float]]:
     return stop, target
 
 
-def simulate(candles: list[dict], signals: list[Signal]) -> tuple[list[dict], Optional[str]]:
+def allowed_by_state(sig: Signal, state: str, suited: tuple[str, ...]) -> bool:
+    """Market-state rule: the state must suit the strategy, and in a trend
+    only trades in the trend's direction are taken."""
+    if state not in suited:
+        return False
+    if state == "trend_up":
+        return sig.side == LONG
+    if state == "trend_down":
+        return sig.side == SHORT
+    return True
+
+
+def simulate(
+    candles: list[dict],
+    signals: list[Signal],
+    breakeven: float = 0,
+    max_candles: int = 0,
+) -> tuple[list[dict], Optional[str]]:
     """Walk the candles and turn signals into trades under the common rules.
 
     Returns the trades and the side of a signal on the last candle (the trade
@@ -280,32 +318,57 @@ def simulate(candles: list[dict], signals: list[Signal]) -> tuple[list[dict], Op
             levels = _levels(sig, c["open"])
             if levels is not None:
                 pos = {"side": sig.side, "entryTime": c["time"], "entryPrice": c["open"],
-                       "stopLoss": levels[0], "takeProfit": levels[1], "signalTime": candles[i - 1]["time"]}
-        if pos is not None:
-            long_ = pos["side"] == LONG
-            hit_stop = c["low"] <= pos["stopLoss"] if long_ else c["high"] >= pos["stopLoss"]
-            hit_target = c["high"] >= pos["takeProfit"] if long_ else c["low"] <= pos["takeProfit"]
-            if hit_stop:
-                # A gap past the stop fills at the open (worse than the stop).
-                gapped = c["open"] < pos["stopLoss"] if long_ else c["open"] > pos["stopLoss"]
-                trades.append(_close(pos, c["time"], c["open"] if gapped else pos["stopLoss"]))
-                pos = None
-            elif hit_target:
-                trades.append(_close(pos, c["time"], pos["takeProfit"]))
-                pos = None
+                       "stopLoss": levels[0], "takeProfit": levels[1], "signalTime": candles[i - 1]["time"],
+                       "breakevenTime": None, "_stop": levels[0], "_entryIndex": i}
+        if pos is None:
+            continue
+        long_ = pos["side"] == LONG
+        stop = pos["_stop"]
+        hit_stop = c["low"] <= stop if long_ else c["high"] >= stop
+        hit_target = c["high"] >= pos["takeProfit"] if long_ else c["low"] <= pos["takeProfit"]
+        if hit_stop:
+            # A gap past the stop fills at the open (worse than the stop).
+            gapped = c["open"] < stop if long_ else c["open"] > stop
+            reason = "breakeven" if pos["breakevenTime"] is not None else "stop"
+            trades.append(_close(pos, c["time"], c["open"] if gapped else stop, reason))
+            pos = None
+            continue
+        if hit_target:
+            trades.append(_close(pos, c["time"], pos["takeProfit"], "target"))
+            pos = None
+            continue
+        # Time limit: close a trade that is in profit at this candle's close.
+        held = i - pos["_entryIndex"] + 1
+        in_profit = c["close"] > pos["entryPrice"] if long_ else c["close"] < pos["entryPrice"]
+        if max_candles and held >= max_candles and in_profit:
+            trades.append(_close(pos, c["time"], c["close"], "time"))
+            pos = None
+            continue
+        # Break-even: from the next candle on, the stop sits at the entry price.
+        if breakeven and pos["breakevenTime"] is None:
+            trigger = pos["entryPrice"] + (pos["takeProfit"] - pos["entryPrice"]) * breakeven
+            if (c["high"] >= trigger) if long_ else (c["low"] <= trigger):
+                pos["_stop"] = pos["entryPrice"]
+                pos["breakevenTime"] = c["time"]
     if pos is not None:
-        trades.append({**pos, "exitTime": None, "exitPrice": None, "result": "open", "pnlPercent": None, "r": None})
+        trades.append({**_public(pos), "exitTime": None, "exitPrice": None, "exitReason": None,
+                       "result": "open", "pnlPercent": None, "r": None})
     last = by_index.get(n - 1)
     pending = last.side if last is not None and pos is None else None
     return trades, pending
 
 
-def _close(pos: dict, time: int, price: float) -> dict:
+def _public(pos: dict) -> dict:
+    return {k: v for k, v in pos.items() if not k.startswith("_")}
+
+
+def _close(pos: dict, time: int, price: float, reason: str) -> dict:
     direction = 1 if pos["side"] == LONG else -1
     move = (price - pos["entryPrice"]) * direction
     risk = abs(pos["entryPrice"] - pos["stopLoss"])
-    return {**pos, "exitTime": time, "exitPrice": price,
-            "result": "win" if move > 0 else "loss",
+    result = "win" if move > 0 else "loss" if move < 0 else "breakeven"
+    return {**_public(pos), "exitTime": time, "exitPrice": price, "exitReason": reason,
+            "result": result,
             "pnlPercent": move / pos["entryPrice"] * 100,
             "r": move / risk}
 
@@ -320,6 +383,7 @@ def stats(trades: list[dict]) -> dict:
         "trades": len(closed),
         "wins": len(wins),
         "losses": len(losses),
+        "breakevens": len(closed) - len(wins) - len(losses),
         "open": len(trades) - len(closed),
         "winRate": len(wins) / len(closed) * 100 if closed else None,
         # None when there is no loss yet (profit factor would be infinite).
@@ -329,8 +393,9 @@ def stats(trades: list[dict]) -> dict:
     }
 
 
-def run(candles: list[dict], kind: str, params: dict) -> dict:
-    """Run one strategy over closed candles."""
+def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]] = None) -> dict:
+    """Run one strategy over closed candles. `states` is the market state of
+    every candle (needed when the market-state rule is on)."""
     strategy = STRATEGIES[kind]
     data = Candles(
         opens=[c["open"] for c in candles],
@@ -339,7 +404,10 @@ def run(candles: list[dict], kind: str, params: dict) -> dict:
         closes=[c["close"] for c in candles],
         volumes=[c.get("volume", 0.0) for c in candles],
     )
-    trades, pending = simulate(candles, strategy.signals(data, params))
+    signals = strategy.signals(data, params)
+    if params.get("state_filter") and states is not None:
+        signals = [sig for sig in signals if allowed_by_state(sig, states[sig.index], strategy.states)]
+    trades, pending = simulate(candles, signals, params.get("breakeven", 0), int(params.get("max_candles", 0)))
     return {
         "strategy": kind,
         "name": strategy.name,

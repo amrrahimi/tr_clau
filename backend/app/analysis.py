@@ -78,12 +78,14 @@ def run_strategy(
     timeframe: str,
     kind: str,
     params: dict,
+    trading_mode: str = "daily",
     now: Optional[float] = None,
     returned_points: int = RETURNED_POINTS,
 ) -> dict:
     """One strategy on closed candles: its trades, summary, and the lines it reads."""
     closed = closed_only(candles, timeframe, time.time() if now is None else now)
-    result = strategies.run(closed, kind, params)
+    states, _ = detect(closed, trading_mode)
+    result = strategies.run(closed, kind, params, states)
     lines = result.pop("lines")
     result["indicators"] = compute_instances(closed, parse_instances(lines), returned_points)
     result["firstTime"] = closed[0]["time"] if closed else None
@@ -96,16 +98,18 @@ def strategy_overview(
     timeframe: str,
     settings: dict[str, dict],
     active: Optional[str],
+    trading_mode: str = "daily",
     now: Optional[float] = None,
 ) -> dict:
     """Summary of every strategy on this chart (the screen's table), plus the
     trades of the active one (drawn as arrows and boxes). `settings` holds
     checked settings per strategy type."""
     closed = closed_only(candles, timeframe, time.time() if now is None else now)
+    states, reading = detect(closed, trading_mode)
     rows = []
     active_result = None
     for kind in strategies.STRATEGIES:
-        result = strategies.run(closed, kind, settings[kind])
+        result = strategies.run(closed, kind, settings[kind], states)
         result.pop("lines")
         trades = result.pop("trades")
         rows.append(result)
@@ -114,6 +118,8 @@ def strategy_overview(
     return {
         "rows": rows,
         "active": active_result,
+        "marketState": reading.state,
+        "candles": len(closed),
         "firstTime": closed[0]["time"] if closed else None,
         "lastClosedTime": closed[-1]["time"] if closed else None,
     }

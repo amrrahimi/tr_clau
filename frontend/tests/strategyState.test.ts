@@ -22,7 +22,7 @@ const empty: StrategyState = { active: null, settings: {} };
 function trade(over: Partial<Trade>): Trade {
   return {
     side: "long", signalTime: 0, entryTime: 60, entryPrice: 100, stopLoss: 99, takeProfit: 102,
-    exitTime: 180, exitPrice: 102, result: "win", pnlPercent: 2, r: 2, ...over,
+    exitTime: 180, exitPrice: 102, exitReason: "target", breakevenTime: null, result: "win", pnlPercent: 2, r: 2, ...over,
   };
 }
 
@@ -70,6 +70,12 @@ test("arrows: entries green up (long) / red down (short), exits yellow with tick
     [420, "arrowUp", "belowBar", COLORS.exit, "✗"],
     [600, "arrowUp", "belowBar", COLORS.long, ""],
   ]);
+});
+
+test("a trade closed at the entry price gets ＝", () => {
+  const [, exit] = tradeMarkers([trade({ result: "breakeven", exitReason: "breakeven", exitPrice: 100, pnlPercent: 0 })]);
+  assert.equal(exit.text, "＝");
+  assert.equal(exit.color, COLORS.exit);
 });
 
 test("boxes: green to take-profit, red to stop-loss; open trades reach the last candle", () => {

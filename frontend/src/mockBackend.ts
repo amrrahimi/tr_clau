@@ -123,6 +123,7 @@ export class MockBackend implements Backend {
           trades: done.length,
           wins: wins.length,
           losses: losses.length,
+          breakevens: 0,
           open: trades.length - done.length,
           winRate: done.length ? (wins.length / done.length) * 100 : null,
           profitFactor: grossLoss > 0 ? wins.reduce((a, b) => a + b, 0) / grossLoss : null,
@@ -138,6 +139,8 @@ export class MockBackend implements Backend {
       active,
       firstTime: closed[0]?.time ?? null,
       lastClosedTime: closed[closed.length - 1]?.time ?? null,
+      marketState: "range",
+      candles: closed.length,
     };
   }
 
@@ -396,7 +399,7 @@ function mockTrades(candles: Candle[], fastLen: number, slowLen: number, reward:
       if (stop || target) {
         const exit = stop ? open.stopLoss : open.takeProfit;
         const move = (exit - open.entryPrice) * (long ? 1 : -1);
-        open = { ...open, exitTime: c.time, exitPrice: exit, result: stop ? "loss" : "win",
+        open = { ...open, exitTime: c.time, exitPrice: exit, result: stop ? "loss" : "win", exitReason: stop ? "stop" : "target",
           pnlPercent: (move / open.entryPrice) * 100, r: move / Math.abs(open.entryPrice - open.stopLoss) };
         trades.push(open);
         open = null;
@@ -415,7 +418,7 @@ function mockTrades(candles: Candle[], fastLen: number, slowLen: number, reward:
     const dir = up ? 1 : -1;
     open = { side, signalTime: c.time, entryTime: candles[i + 1].time, entryPrice: entry,
       stopLoss: entry - dir * risk, takeProfit: entry + dir * risk * reward,
-      exitTime: null, exitPrice: null, result: "open", pnlPercent: null, r: null };
+      exitTime: null, exitPrice: null, exitReason: null, breakevenTime: null, result: "open", pnlPercent: null, r: null };
     // The entry candle (i + 1) is checked for stop and target on the next pass.
   }
   if (open) trades.push(open);
