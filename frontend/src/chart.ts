@@ -126,7 +126,17 @@ export class ChartView {
   setCandles(candles: Candle[]): void {
     this.setPrecisionFor(candles[candles.length - 1]?.close);
     this.series.setData(candles.map(toBar));
-    const count = candles.length;
+    this.resetView(candles.length);
+  }
+
+  /**
+   * Price axes back to automatic and the newest candles in view. Dragging a
+   * price axis turns its automatic scaling off; without this reset the next
+   * coin could be drawn outside the visible price range (an "empty" chart).
+   */
+  resetView(count: number): void {
+    this.series.priceScale().applyOptions({ autoScale: true });
+    for (const series of this.indicatorSeries.values()) series.priceScale().applyOptions({ autoScale: true });
     this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, count - INITIAL_VISIBLE), to: count + 5 });
   }
 

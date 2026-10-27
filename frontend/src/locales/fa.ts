@@ -23,6 +23,7 @@ export const fa: Record<MessageKey, string> = {
   "error.liveStopped": "به‌روزرسانی زنده متوقف شد: {detail}",
   "error.generic": "خطایی رخ داد: {detail}",
   "action.retry": "تلاش دوباره",
+  "action.refresh": "بارگذاری دوباره‌ی نمودار",
   "settings.auto": "خودکار",
   "settings.manual": "دستی",
   "settings.autoHint": "ربات تنظیمات اندیکاتورها را بر اساس حالت بازار انتخاب می‌کند",

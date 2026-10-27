@@ -21,6 +21,7 @@ export const en = {
   "error.liveStopped": "Live updates stopped: {detail}",
   "error.generic": "Something went wrong: {detail}",
   "action.retry": "Retry",
+  "action.refresh": "Reload the chart",
   "settings.auto": "Auto",
   "settings.manual": "Manual",
   "settings.autoHint": "The bot picks indicator settings from the market state",

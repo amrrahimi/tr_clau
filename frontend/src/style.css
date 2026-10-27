@@ -93,7 +93,7 @@ button:hover { background: var(--border); }
 .body { flex: 1; display: flex; min-height: 0; }
 
 .watchlist {
-  width: 290px;
+  width: 320px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -326,7 +326,12 @@ button:hover { background: var(--border); }
   padding-bottom: 6px;
 }
 .section-title { padding: 8px 10px 4px; font-weight: 700; }
-.strategy-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+.strategy-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+/* Fixed number columns; the name column takes the rest and shortens with "…" if needed. */
+.strategy-table th:nth-child(2) { width: 42px; }
+.strategy-table th:nth-child(3) { width: 30px; }
+.strategy-table th:nth-child(4) { width: 38px; }
+.strategy-table th:nth-child(5) { width: 56px; }
 .strategy-table th {
   color: var(--muted);
   font-weight: 400;

@@ -312,6 +312,7 @@ export class App {
     }, SEARCH_DELAY_MS);
   }
 
+  /** The ⟳ button and the error banner's retry: load everything for this chart again. */
   private retry(): void {
     this.clearError();
     if (!this.options) void this.loadOptions();
@@ -343,6 +344,7 @@ export class App {
           <div class="timeframes" data-el="timeframes"></div>
           <div class="spacer"></div>
           <span class="live-status" data-el="liveStatus"></span>
+          <button class="icon-button" data-el="refresh"></button>
           <button class="icon-button" data-el="watchlistToggle"></button>
           <button class="lang-button" data-el="language"></button>
         </header>
@@ -382,6 +384,7 @@ export class App {
     this.chart = new ChartView(this.els.chart, () => void this.loadOlder());
     this.els.language.addEventListener("click", () => this.setLanguage(this.language === "fa" ? "en" : "fa"));
     this.els.retry.addEventListener("click", () => this.retry());
+    this.els.refresh.addEventListener("click", () => this.retry());
     this.els.search.addEventListener("input", (e) => this.onSearchInput((e.target as HTMLInputElement).value));
     this.chart.setTimeZone(this.zone);
     this.els.tzButton.addEventListener("click", () => this.toggleZoneMenu());
@@ -428,6 +431,8 @@ export class App {
     this.els.watchlistToggle.title = this.t("watchlist.toggle");
     (this.els.search as HTMLInputElement).placeholder = this.t("watchlist.searchPlaceholder");
     this.els.retry.textContent = this.t("action.retry");
+    this.els.refresh.textContent = "⟳";
+    this.els.refresh.title = this.t("action.refresh");
     this.indicators.closeModal();
     this.indicators.render();
     this.els.tzMenu.hidden = true;
