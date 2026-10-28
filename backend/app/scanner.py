@@ -27,7 +27,7 @@ from .analysis import strategy_overview
 from .strategies import MIN_TRADES, STRATEGIES, Fees
 
 TOP_ROWS = 10
-SIGNAL_LOG = 20
+SIGNAL_LOG = 40  # the screen shows 20 (all, or only the reliable ones)
 PARALLEL = 8  # coins fetched at the same time (ccxt still keeps to the exchange's speed limit)
 
 

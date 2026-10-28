@@ -17,6 +17,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type ISeriesPrimitive,
+  type Logical,
   type LogicalRange,
   type SeriesAttachedParameter,
   type Time,
@@ -227,9 +228,18 @@ export class ChartView {
    * Draw a strategy's trades: arrows on the candles and take-profit / stop-loss
    * boxes. An empty list removes them.
    */
-  setTrades(trades: Trade[], lastTime: number | null, labels?: MarkerLabels): void {
-    this.markers.setMarkers(tradeMarkers(trades, labels).map((m) => ({ ...m, time: m.time as UTCTimestamp })));
-    this.boxes.setBoxes(tradeBoxes(trades, lastTime));
+  setTrades(trades: Trade[], lastTime: number | null, labels?: MarkerLabels,
+    signal?: { trade: Trade; labels: MarkerLabels } | null): void {
+    const markers = tradeMarkers(trades, labels);
+    const boxes = tradeBoxes(trades, lastTime);
+    if (signal) {
+      // The fresh signal: its own words ("long signal") and boxes on the forming candle.
+      markers.push(...tradeMarkers([signal.trade], signal.labels));
+      markers.sort((a, b) => a.time - b.time);
+      boxes.push(...tradeBoxes([signal.trade], signal.trade.entryTime).map((b) => ({ ...b, minBars: 6 })));
+    }
+    this.markers.setMarkers(markers.map((m) => ({ ...m, time: m.time as UTCTimestamp })));
+    this.boxes.setBoxes(boxes);
   }
 
   /** Update the latest candle, or add a new one. */
@@ -279,7 +289,10 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
             const y2 = series.priceToCoordinate(box.bottom);
             if (x1 === null || x2 === null || y1 === null || y2 === null) continue; // not on the loaded candles
             const left = Math.round(Math.min(x1, x2) * hr);
-            const width = Math.max(Math.round(Math.abs(x2 - x1) * hr), Math.round(6 * hr));
+            // Current width of one candle (changes with zoom).
+            const barSpacing = Math.abs((timeScale.logicalToCoordinate(1 as Logical) ?? 0) - (timeScale.logicalToCoordinate(0 as Logical) ?? 0));
+            const minWidth = Math.max(6, (box.minBars ?? 0) * barSpacing);
+            const width = Math.max(Math.round(Math.abs(x2 - x1) * hr), Math.round(minWidth * hr));
             const top = Math.round(Math.min(y1, y2) * vr);
             const height = Math.max(Math.round(Math.abs(y2 - y1) * vr), 1);
             context.fillStyle = box.color;

@@ -95,7 +95,7 @@ class EngineTest(unittest.TestCase):
         params = st.parse_params("donchian", {"state_filter": 0})
         result = st.run(rows, "donchian", params)
         s = result["signal"]
-        self.assertEqual((s["side"], s["time"], s["entry"]), (LONG, 1500, 103))
+        self.assertEqual((s["side"], s["time"], s["entry"], s["confirmedAt"]), (LONG, 1500, 103, 1560))
         atr = (2 * 13 + 3.5) / 14
         self.assertAlmostEqual(s["stopLoss"], 103 - 2 * atr)
         self.assertAlmostEqual(s["takeProfit"], 103 + 2 * 2 * atr)
@@ -231,6 +231,24 @@ class FeesTest(unittest.TestCase):
         self.assertTrue(s["feesIncluded"])
         self.assertAlmostEqual(s["feePercent"], 0.202)
         self.assertFalse(st.stats(st.simulate(rows, self.long)[0])["feesIncluded"])
+
+
+class FeeRatioTest(unittest.TestCase):
+    """Entry 100, stop 99 (1% risk); taker 0.1% -> round trip 0.2% = a fifth of the risk."""
+
+    def setUp(self):
+        self.rows = [bar(0, 100, 100, 100, 100), bar(60, 100, 100.5, 99.5, 100)]
+        self.long = [Signal(0, LONG, stop_distance=1, reward=2)]
+
+    def test_rule(self):
+        fees = st.Fees(0.075, 0.1)
+        self.assertTrue(st.fee_ok(100, 99, fees, 0.33))      # 0.2 <= 0.33
+        self.assertFalse(st.fee_ok(100, 99.5, fees, 0.33))   # risk 0.5%: 0.2 > 0.165
+        self.assertTrue(st.fee_ok(100, 99.9, fees, 0))       # 0 = off
+        self.assertEqual(len(st.simulate(self.rows, self.long, fees=fees, fee_ratio=0.33)[0]), 1)
+        tight = [Signal(0, LONG, stop_distance=0.3, reward=2)]
+        self.assertEqual(st.simulate(self.rows, tight, fees=fees, fee_ratio=0.33)[0], [])
+        self.assertEqual(len(st.simulate(self.rows, tight, fees=fees, fee_ratio=0)[0]), 1)
 
 
 class HandExamplesTest(unittest.TestCase):

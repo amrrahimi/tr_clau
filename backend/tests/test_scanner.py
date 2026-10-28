@@ -42,16 +42,16 @@ def sig(base, kind, t, rel, side="long"):
 
 
 class SignalLogTest(unittest.TestCase):
-    def test_newest_first_once_each_and_at_most_twenty(self):
+    def test_newest_first_once_each_and_at_most_forty(self):
         old = [sig("BTC", "ema_cross", 60, False), sig("ETH", "donchian", 60, True)]
         new = [sig("BTC", "ema_cross", 60, False),             # same signal again: listed once
                sig("SOL", "supertrend", 120, False), sig("XRP", "macd_ema", 120, True)]
         log = sc.merge_log(old, new)
         self.assertEqual([(e["base"], e["signal"]["time"]) for e in log],
                          [("XRP", 120), ("SOL", 120), ("ETH", 60), ("BTC", 60)])   # reliable first within a candle
-        many = [sig(f"C{i}", "ema_cross", i, False) for i in range(30)]
-        self.assertEqual(len(sc.merge_log([], many)), 20)
-        self.assertEqual(sc.merge_log([], many)[0]["signal"]["time"], 29)
+        many = [sig(f"C{i}", "ema_cross", i, False) for i in range(50)]
+        self.assertEqual(len(sc.merge_log([], many)), 40)
+        self.assertEqual(sc.merge_log([], many)[0]["signal"]["time"], 49)
 
     def test_reliable_means_the_cautious_conditions(self):
         self.assertTrue(sc.reliable(entry("A", "ema_cross", 2.0, 12, 1.5, "trend_up")))

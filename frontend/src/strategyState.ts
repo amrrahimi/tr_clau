@@ -7,7 +7,7 @@
 //   each trade  = green box entry→take-profit, red box entry→stop-loss,
 //                 from the entry candle to the exit candle (or the last candle while open)
 
-import type { Mode, StrategyCard, Trade } from "./types.ts";
+import type { Mode, StrategyCard, Trade, TradeSignal } from "./types.ts";
 
 export const COLORS = {
   long: "#089981",
@@ -134,6 +134,20 @@ export interface MarkerLabels {
 }
 
 /**
+ * A fresh signal as a trade that opens at the candle now forming, so it can be
+ * drawn like the others (it is not in the past trades yet: its entry candle
+ * has not closed). Null when that candle is not on the chart yet.
+ */
+export function signalAsTrade(signal: TradeSignal, formingCandleTime: number | null): Trade | null {
+  if (formingCandleTime === null || formingCandleTime < signal.confirmedAt) return null;
+  return {
+    side: signal.side, signalTime: signal.time, entryTime: signal.confirmedAt, entryPrice: signal.entry,
+    stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, exitTime: null, exitPrice: null,
+    exitReason: null, breakevenTime: null, result: "open", pnlPercent: null, grossPercent: null, feePercent: null, r: null,
+  };
+}
+
+/**
  * Arrows for the trades, sorted by time (the chart library needs that order).
  * Entries say "long"/"short"; exits show ✓/✗/＝ with the trade's result, so an
  * exit is never mistaken for a new trade.
@@ -166,6 +180,7 @@ export interface Box {
   top: number; // price
   bottom: number; // price
   color: string;
+  minBars?: number; // drawn at least this many candles wide (a fresh signal has no length yet)
 }
 
 /** Two boxes per trade: take-profit side (green) and stop-loss side (red). */

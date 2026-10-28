@@ -9,6 +9,7 @@ import {
   loadStrategyState,
   saveStrategyState,
   setAuto,
+  signalAsTrade,
   setParams,
   toggleActive,
   tradeBoxes,
@@ -104,4 +105,14 @@ test("percent format", () => {
   assert.equal(formatPercent(-1.06), "−1.1%");
   assert.equal(formatPercent(0.01), "0.0%");
   assert.equal(formatPercent(null), "—");
+});
+
+test("a fresh signal is drawn on the forming candle, only once that candle exists", () => {
+  const signal = { side: "short" as const, time: 600, entry: 100, stopLoss: 101, takeProfit: 98, confirmedAt: 660 };
+  const t = signalAsTrade(signal, 660)!;
+  assert.equal(t.entryTime, 660);
+  assert.equal(t.result, "open");
+  assert.deepEqual([t.entryPrice, t.stopLoss, t.takeProfit], [100, 101, 98]);
+  assert.equal(signalAsTrade(signal, 600), null);   // the entry candle is not on the chart yet
+  assert.equal(signalAsTrade(signal, null), null);
 });

@@ -190,6 +190,10 @@ export const fa: Record<MessageKey, string> = {
   "scanner.noSignals": "هنوز سیگنالی نیامده؛ بعد از بسته شدن هر کندل بررسی می‌شود",
   "scanner.reliable": "قابل اعتماد: شرط‌های محتاط را دارد",
   "scanner.unreliable": "سابقه‌ی ضعیف: معامله‌ی کم یا بدون سود",
+  "strategies.signalLong": "سیگنال لانگ",
+  "strategies.signalShort": "سیگنال شورت",
+  "param.fee_ratio": "حداکثر سهم کارمزد از ریسک (۰ = خاموش)",
+  "scanner.reliableOnly": "فقط قابل اعتماد",
   "language.switch": "EN",
   "language.switchLabel": "تغییر به انگلیسی",
 };

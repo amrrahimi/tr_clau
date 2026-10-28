@@ -23,6 +23,12 @@ export interface ScannerHost {
 export interface ScannerSwitches {
   history: boolean;
   signals: boolean;
+  reliableOnly: boolean; // signals table: hide signals of combinations with a weak history
+}
+
+/** Signals shown: newest first, at most 20, only reliable ones when asked. */
+export function shownSignals(all: ScanSignal[], reliableOnly: boolean): ScanSignal[] {
+  return (reliableOnly ? all.filter((s) => s.reliable) : all).slice(0, 20);
 }
 
 const STORAGE_KEY = "trading-bot.scanner";
@@ -30,9 +36,9 @@ const STORAGE_KEY = "trading-bot.scanner";
 export function loadSwitches(storage: Pick<Storage, "getItem"> | null = safeStorage()): ScannerSwitches {
   try {
     const data = JSON.parse(storage?.getItem(STORAGE_KEY) ?? "{}") as Partial<ScannerSwitches>;
-    return { history: data.history === true, signals: data.signals === true };
+    return { history: data.history === true, signals: data.signals === true, reliableOnly: data.reliableOnly !== false };
   } catch {
-    return { history: false, signals: false };
+    return { history: false, signals: false, reliableOnly: true };
   }
 }
 
@@ -75,7 +81,7 @@ export class ScannerPanel {
     this.render();
   }
 
-  private toggle(part: keyof ScannerSwitches): void {
+  private toggle(part: "history" | "signals"): void {
     this.switches = { ...this.switches, [part]: !this.switches[part] };
     saveSwitches(this.switches);
     this.render();
@@ -122,7 +128,10 @@ export class ScannerPanel {
     );
     const signals = document.createElement("div");
     signals.className = "scanner-part signals" + (this.switches.signals ? "" : " paused");
-    signals.append(this.partHead("scanner.signals", "signals"), this.signalsTable(r?.signals ?? []));
+    signals.append(
+      this.partHead("scanner.signals", "signals"),
+      this.signalsTable(shownSignals(r?.signals ?? [], this.switches.reliableOnly)),
+    );
     tables.append(history, signals);
 
     const note = document.createElement("div");
@@ -132,7 +141,7 @@ export class ScannerPanel {
   }
 
   /** Title of a part with its Start / Stop button. */
-  private partHead(titleKey: MessageKey, part: keyof ScannerSwitches): HTMLElement {
+  private partHead(titleKey: MessageKey, part: "history" | "signals"): HTMLElement {
     const t = this.host.t;
     const row = document.createElement("div");
     row.className = "scanner-part-head";
@@ -146,7 +155,23 @@ export class ScannerPanel {
     button.className = "scanner-switch" + (on ? " on" : "");
     button.textContent = on ? t("scanner.stop") : t("scanner.start");
     button.addEventListener("click", () => this.toggle(part));
-    row.append(title, button);
+    row.append(title);
+    if (part === "signals") {
+      // Only a filter on the screen: no new scan is needed.
+      const label = document.createElement("label");
+      label.className = "scanner-filter";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = this.switches.reliableOnly;
+      box.addEventListener("change", () => {
+        this.switches = { ...this.switches, reliableOnly: box.checked };
+        saveSwitches(this.switches);
+        this.render();
+      });
+      label.append(box, document.createTextNode(` ${t("scanner.reliableOnly")}`));
+      row.append(label);
+    }
+    row.append(button);
     return row;
   }
 
@@ -240,7 +265,7 @@ export class ScannerPanel {
       tr.className = e.reliable ? "reliable" : "weak";
       tr.title = `${t(e.reliable ? "scanner.reliable" : "scanner.unreliable")}\n${t("scanner.openHint")}`;
       tr.append(
-        this.cell(formatClock(s.time * 1000, this.host.zone()).slice(0, 5), "num", true),
+        this.cell(formatClock(s.confirmedAt * 1000, this.host.zone()).slice(0, 5), "num", true),
         this.cell(e.base, "name coin"),
         this.cell(t(`strat.${e.strategy}` as MessageKey), "name"),
         this.cell(t(s.side === "long" ? "strategies.long" : "strategies.short"), `side ${s.side}`),

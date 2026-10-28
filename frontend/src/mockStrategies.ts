@@ -77,6 +77,13 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0,
         "max": 1000,
         "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       }
     ],
     "modeDefaults": {
@@ -160,6 +167,13 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0,
         "max": 1000,
         "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       }
     ],
     "modeDefaults": {
@@ -251,6 +265,13 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0,
         "max": 1000,
         "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       }
     ],
     "modeDefaults": {
@@ -304,6 +325,13 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0,
         "max": 1000,
         "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       }
     ],
     "modeDefaults": {}
@@ -368,6 +396,13 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0,
         "max": 1000,
         "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       }
     ],
     "modeDefaults": {
@@ -437,6 +472,13 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
         "min": 0,
         "max": 1000,
         "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       }
     ],
     "modeDefaults": {}

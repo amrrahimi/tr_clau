@@ -146,6 +146,7 @@ export interface StrategyRow {
   params: Record<string, number>;
   stats: StrategyStats;
   nextSignal: Side | null;
+  signal?: TradeSignal | null; // details of nextSignal
 }
 
 export interface StrategyOverview {
@@ -177,6 +178,7 @@ export interface TradeSignal {
   entry: number; // about the next candle's open
   stopLoss: number;
   takeProfit: number;
+  confirmedAt: number; // when the signal candle closed; the trade opens then
 }
 
 export interface ScanSignal extends ScanEntry {

@@ -24,6 +24,9 @@ Three extra rules, each with an on/off setting on every strategy (owner's choice
   where the trade, after both fees, ends with neither profit nor loss.
 - Time limit: after N candles, a trade that is in profit is closed at the
   candle's close. A trade in loss is not forced out (that would lock in the loss).
+- Fee vs risk: a trade is skipped when the round-trip fee is more than a
+  part (a third by default) of the distance to the stop-loss; with such a
+  tight stop the fee alone decides the result.
 
 Each rule below is written for long trades; short trades are the mirror image.
 """
@@ -93,6 +96,7 @@ COMMON_PARAMS = (
     Param("state_filter", 1, 0, 1),
     Param("breakeven", 0.5, 0, 0.95, 0.05),   # part of the way to the take-profit
     Param("max_candles", 48, 0, 1000),        # candles before a trade in profit is closed
+    Param("fee_ratio", 0.33, 0, 1, 0.01),     # most of the stop distance the fees may take
 )
 
 # Settings shared by several strategies.
@@ -328,12 +332,22 @@ def net_percent(side: str, entry: float, exit_: float, exit_fee: float, fees: Fe
     return (move - paid) / entry * 100
 
 
+def fee_ok(entry: float, stop: float, fees: Fees, ratio: float) -> bool:
+    """Fee-vs-risk rule: the round-trip fee (taker in and out) may take at most
+    `ratio` of the distance to the stop. 0 turns the rule off."""
+    if not ratio:
+        return True
+    risk = abs(entry - stop) / entry * 100
+    return 2 * fees.taker <= ratio * risk
+
+
 def simulate(
     candles: list[dict],
     signals: list[Signal],
     breakeven: float = 0,
     max_candles: int = 0,
     fees: Fees = NO_FEES,
+    fee_ratio: float = 0,
 ) -> tuple[list[dict], Optional[str]]:
     """Walk the candles and turn signals into trades under the common rules.
 
@@ -350,7 +364,7 @@ def simulate(
         sig = by_index.get(i - 1)
         if pos is None and sig is not None:
             levels = _levels(sig, c["open"])
-            if levels is not None:
+            if levels is not None and fee_ok(c["open"], levels[0], fees, fee_ratio):
                 pos = {"side": sig.side, "entryTime": c["time"], "entryPrice": c["open"],
                        "stopLoss": levels[0], "takeProfit": levels[1], "signalTime": candles[i - 1]["time"],
                        "breakevenTime": None, "_stop": levels[0], "_entryIndex": i}
@@ -453,16 +467,21 @@ def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]
     signals = strategy.signals(data, params)
     if params.get("state_filter") and states is not None:
         signals = [sig for sig in signals if allowed_by_state(sig, states[sig.index], strategy.states)]
-    trades, pending = simulate(candles, signals, params.get("breakeven", 0), int(params.get("max_candles", 0)), fees)
+    fee_ratio = params.get("fee_ratio", 0)
+    trades, pending = simulate(candles, signals, params.get("breakeven", 0), int(params.get("max_candles", 0)),
+                               fees, fee_ratio)
     # A signal on the last closed candle: the trade the bot would open at the next candle.
     signal = None
     if pending is not None:
         sig = signals[-1]
         entry = candles[-1]["close"]  # the next candle opens at (about) this price
         levels = _levels(sig, entry)
-        if levels is not None:
+        if levels is not None and fee_ok(entry, levels[0], fees, fee_ratio):
+            step = candles[-1]["time"] - candles[-2]["time"] if len(candles) > 1 else 0
             signal = {"side": sig.side, "time": candles[-1]["time"], "entry": entry,
-                      "stopLoss": levels[0], "takeProfit": levels[1]}
+                      "stopLoss": levels[0], "takeProfit": levels[1],
+                      # The signal is certain once its candle has closed; the trade opens then.
+                      "confirmedAt": candles[-1]["time"] + step}
     return {
         "strategy": kind,
         "name": strategy.name,

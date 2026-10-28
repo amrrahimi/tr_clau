@@ -22,7 +22,7 @@ import {
 import type { MarketType, Mode, ParamSpec, StrategyCard, StrategyOverview, StrategyRow } from "./types.ts";
 
 /** Settings every strategy has (the extra rules); shown under their own heading. */
-const COMMON = new Set(["state_filter", "breakeven", "max_candles"]);
+const COMMON = new Set(["state_filter", "breakeven", "max_candles", "fee_ratio"]);
 
 /** A 0/1 setting is shown as a tick box. */
 function isSwitch(p: ParamSpec): boolean {

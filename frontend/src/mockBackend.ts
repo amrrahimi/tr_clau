@@ -120,7 +120,7 @@ export class MockBackend implements Backend {
       const long = i % 2 === 0;
       return { ...e, reliable: e.stats.trades >= 10 && e.stats.netPercent > 0, signal: {
         side: long ? "long" : "short", time: last - (i % 3) * step, entry: price,
-        stopLoss: price * (long ? 0.99 : 1.01), takeProfit: price * (long ? 1.02 : 0.98) } };
+        stopLoss: price * (long ? 0.99 : 1.01), takeProfit: price * (long ? 1.02 : 0.98), confirmedAt: last - (i % 3) * step + step } };
     });
     return {
       running: false, done: coins.length, total: coins.length, failed: [], error: null,
@@ -169,6 +169,12 @@ export class MockBackend implements Backend {
           feesIncluded: false,
         },
         nextSignal: null,
+        // Preview only: the active strategy pretends to signal on the last closed candle.
+        signal: card.type === request.active && closed.length > 1 && !trades.some((t) => t.result === "open") ? {
+          side: "long", time: closed[closed.length - 1].time, entry: closed[closed.length - 1].close,
+          stopLoss: closed[closed.length - 1].close * 0.995, takeProfit: closed[closed.length - 1].close * 1.01,
+          confirmedAt: closed[closed.length - 1].time + step,
+        } : null,
       });
       if (card.type === request.active) active = { strategy: card.type, trades };
       allTrades.set(card.type, trades);

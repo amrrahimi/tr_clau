@@ -13,6 +13,7 @@ import type { MessageKey } from "./locales/en.ts";
 import { effectiveFees, loadFees, saveFees, setFees, type FeeOverrides } from "./fees.ts";
 import { ScannerPanel } from "./scannerPanel.ts";
 import { StrategyPanel } from "./strategyPanel.ts";
+import { signalAsTrade } from "./strategyState.ts";
 import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
 import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
 
@@ -260,8 +261,12 @@ export class App {
       // Ignore answers for an older chart or older choices.
       if (id !== this.strategyId || chartId !== this.requestId) return;
       this.strategies.showOverview(overview);
+      const fresh = overview.rows.find((r) => r.strategy === overview.active?.strategy)?.signal ?? null;
+      const forming = this.candles.length ? this.candles[this.candles.length - 1].time : null;
+      const signalTrade = fresh ? signalAsTrade(fresh, forming) : null;
       this.chart.setTrades(overview.active?.trades ?? [], overview.lastClosedTime,
-        { long: this.t("strategies.long"), short: this.t("strategies.short") });
+        { long: this.t("strategies.long"), short: this.t("strategies.short") },
+        signalTrade && { trade: signalTrade, labels: { long: this.t("strategies.signalLong"), short: this.t("strategies.signalShort") } });
     } catch (error) {
       if (id !== this.strategyId) return;
       this.strategies.setError();

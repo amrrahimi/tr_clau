@@ -188,6 +188,10 @@ export const en = {
   "scanner.noSignals": "No signal yet; checked after every closed candle",
   "scanner.reliable": "Reliable: meets the cautious conditions",
   "scanner.unreliable": "Weak history: few trades or not profitable",
+  "strategies.signalLong": "Long signal",
+  "strategies.signalShort": "Short signal",
+  "param.fee_ratio": "Max fee share of the risk (0 = off)",
+  "scanner.reliableOnly": "Reliable only",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;
