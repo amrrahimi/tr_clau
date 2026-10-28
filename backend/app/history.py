@@ -15,7 +15,7 @@ from . import config
 STRATEGY_CANDLES = 5000
 PAGE = config.MAX_CANDLE_LIMIT
 # Keep at most this many charts in memory (oldest used is dropped first).
-MAX_CHARTS = 20
+MAX_CHARTS = 60  # the scanner alone needs 50
 
 Fetch = Callable[[int, Optional[int]], Awaitable[list[dict]]]  # (limit, before) -> candles
 

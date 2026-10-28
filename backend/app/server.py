@@ -18,6 +18,7 @@ from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
+from .scanner import Scanner, run_scan
 from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
 from .live import watch_candles
@@ -42,6 +43,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
     services: dict[str, MarketService] = {}
     services_lock = asyncio.Lock()
     history = HistoryCache()  # long candle history for the strategies table
+    scanner = Scanner()
 
     async def get_service(market_type: str) -> MarketService:
         if market_type not in config.MARKET_TYPES:
@@ -179,6 +181,49 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         result = strategy_overview(rows, timeframe, checked, active or None, trading_mode,
                                    auto_rule=auto_rule or None, fees=fees)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
+
+    @app.get("/api/scanner")
+    async def scan(
+        timeframe: str,
+        market_type: str = "spot",
+        trading_mode: str = "daily",
+        settings: str = "{}",            # same as /api/strategies/overview
+        maker_fee: float | None = None,
+        taker_fee: float | None = None,
+    ):
+        """Every strategy on every coin of the top list. Starts a scan in the
+        background (or a new one after a candle closed) and answers at once
+        with its progress; ask again until `running` is false."""
+        if trading_mode not in MODE_EMAS:
+            raise HTTPException(400, f"trading_mode must be one of {list(MODE_EMAS)}")
+        if timeframe not in config.ALL_TIMEFRAMES:
+            raise HTTPException(400, f"Unsupported timeframe: {timeframe}")
+        fees = fees_for(market_type, maker_fee, taker_fee)
+        try:
+            given = json.loads(settings)
+            if not isinstance(given, dict):
+                raise ValueError("settings must be an object")
+            unknown = set(given) - set(STRATEGIES)
+            if unknown:
+                raise ValueError(f"unknown strategy: {sorted(unknown)[0]}")
+            checked = {kind: parse_params(kind, given.get(kind), trading_mode) for kind in STRATEGIES}
+        except (ValueError, json.JSONDecodeError) as error:
+            raise HTTPException(400, f"settings: {error}")
+        service = await get_service(market_type)
+
+        async def coins():
+            return [(m.symbol, m.base) for m in await service.top_markets()]
+
+        async def candles(symbol):
+            return await history.get(
+                (market_type, symbol, timeframe),
+                lambda limit, before: service.fetch_candles(symbol, timeframe, limit, before=before),
+            )
+
+        key = Scanner.key(market_type, timeframe, trading_mode, checked, fees)
+        current = scanner.get_or_start(
+            key, timeframe, lambda job: run_scan(job, coins, candles, timeframe, trading_mode, checked, fees))
+        return {"marketType": market_type, "timeframe": timeframe, **current.public()}
 
     @app.get("/api/markets")
     async def markets(market_type: str = "spot", query: str = ""):

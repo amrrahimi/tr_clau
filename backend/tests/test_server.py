@@ -82,6 +82,26 @@ class ServerTest(unittest.TestCase):
         for bad_params in ({"active": "nope"}, {"auto_rule": "best"}, {"taker_fee": "5"}, {"settings": '{"nope": {}}'}, {"settings": '{"ema_cross": {"fast": 0}}'}):
             self.assertEqual(client.get("/api/strategies/overview", params={**base, **bad_params}).status_code, 400)
 
+    def test_scanner_runs_in_the_background(self):
+        import time as clock
+        rows = [[i * 60_000, 100 + i % 7, 102 + i % 7, 99 + i % 7, 101 + i % 5, 1] for i in range(400)]
+        # Each coin: one page of candles, then an empty page (no older history).
+        exchange = FakeExchange(candles=[rows, []] * 10)
+        client = self.client(lambda market_type: MarketService(exchange, market_type))
+        params = {"timeframe": "1m", "trading_mode": "scalping", "settings": json.dumps({"ema_cross": {"state_filter": 0}})}
+        body = client.get("/api/scanner", params=params).json()
+        deadline = clock.time() + 10
+        while body["running"] and clock.time() < deadline:
+            clock.sleep(0.05)
+            body = client.get("/api/scanner", params=params).json()
+        self.assertFalse(body["running"])
+        self.assertEqual(body["total"], 4)        # BTC, DOGE, ETH, WBTC (spot, USDT, active)
+        self.assertEqual(body["done"], 4)
+        self.assertIn("maxProfit", body)
+        self.assertIn("cautious", body)
+        bad = client.get("/api/scanner", params={**params, "timeframe": "7m"})
+        self.assertEqual(bad.status_code, 400)
+
     def test_catalog_endpoint(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
         body = client.get("/api/indicators/catalog").json()

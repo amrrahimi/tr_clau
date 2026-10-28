@@ -8,6 +8,7 @@ This is not part of the normal tests, because those must work offline.
 import asyncio
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -16,7 +17,8 @@ from app.catalog import SPECS, parse_instances  # noqa: E402
 from app.exchange import MarketService, create_exchange  # noqa: E402
 from app import config  # noqa: E402
 from app.strategies import STRATEGIES, Fees, parse_params  # noqa: E402
-from app.history import STRATEGY_CANDLES, fetch_history  # noqa: E402
+from app.history import STRATEGY_CANDLES, HistoryCache, fetch_history  # noqa: E402
+from app.scanner import Scan, run_scan  # noqa: E402
 
 
 async def check(market_type: str) -> None:
@@ -101,6 +103,31 @@ async def check(market_type: str) -> None:
             pf = f"{s['profitFactor']:.2f}" if s["profitFactor"] is not None else "-"
             print(f"  strategy {kind:<13} trades {s['trades']:>3}  win {rate:>4}  PF {pf:>5}  "
                   f"total {s['netPercent']:+.1f}% after fees ({s['feePercent']:.1f}% paid)")
+
+        # Scanner: every strategy on all 50 coins, timed.
+        cache = HistoryCache()
+
+        async def coins():
+            return [(m.symbol, m.base) for m in await service.top_markets()]
+
+        async def candles(sym):
+            return await cache.get((market_type, sym, "15m"),
+                                   lambda limit, before: service.fetch_candles(sym, "15m", limit, before=before))
+
+        settings = {k: parse_params(k, {}, "daily") for k in STRATEGIES}
+        job = Scan(key="live", period=0)
+        started = time.time()
+        await run_scan(job, coins, candles, "15m", "daily", settings, Fees(**config.DEFAULT_FEES[market_type]))
+        took = time.time() - started
+        assert job.error is None, f"{market_type}: scan failed: {job.error}"
+        assert job.done == job.total >= 40, f"{market_type}: scanned {job.done} of {job.total}"
+        assert len(job.failed) <= 5, f"{market_type}: {len(job.failed)} coins failed: {job.failed}"
+        tables = job.public()
+        best = ", ".join(f"{e['base']} {e['strategy']} {e['stats']['netPercent']:+.1f}%" for e in tables["maxProfit"][:3])
+        print(f"  scanner: {job.total} coins in {took:.1f}s, failed {job.failed}; best: {best}; "
+              f"cautious rows {len(tables['cautious'])}")
+        print(f"::notice title=Scanner {market_type}::{job.total} coins in {took:.1f}s; failed {len(job.failed)}; "
+              f"max-profit rows {len(tables['maxProfit'])}, cautious rows {len(tables['cautious'])}")
     finally:
         await service.close()
 
