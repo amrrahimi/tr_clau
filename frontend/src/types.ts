@@ -197,3 +197,81 @@ export interface ScanResult {
   cautious: ScanEntry[];
   signals: ScanSignal[]; // latest 20, newest first
 }
+
+// ---------- paper trading bot (match backend/app/paper.py) ----------
+
+export interface PaperPosition {
+  id: number;
+  symbol: string;
+  base: string;
+  timeframe: string;
+  strategy: string;
+  side: Side;
+  entryTime: number; // seconds
+  entryPrice: number;
+  entryCandle: number; // start time of the candle the trade opened in
+  stopLoss: number; // the original stop (for the red box)
+  stop: number; // the current stop (moves to break-even)
+  takeProfit: number;
+  quantity: number;
+  notional: number; // position value, USDT
+  leverage: number;
+  margin: number; // USDT set aside
+  risk: number; // USDT lost at the stop, fees included
+  liquidation: number;
+  breakevenAt: number | null;
+  history: { trades: number; winRate: number | null; profitFactor: number | null };
+  lastPrice?: number | null; // open positions
+  openPnl?: number | null;
+}
+
+export interface PaperTrade extends PaperPosition {
+  exitPrice: number;
+  exitTime: number;
+  exitReason: "target" | "stop" | "breakeven";
+  pnl: number; // USDT after fees
+  fees: number;
+  pnlPercent: number; // of the margin
+}
+
+export interface PaperEvent {
+  time: number;
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error";
+  symbol?: string;
+  side?: Side;
+  timeframe?: string;
+  strategy?: string;
+  leverage?: number;
+  reason?: string;
+  pnl?: number;
+  capital?: number;
+  message?: string;
+}
+
+export interface PaperState {
+  capital: number;
+  balance: number;
+  equity: number;
+  status: "stopped" | "running" | "halted";
+  pausedToday: boolean;
+  mode: "auto" | "manual";
+  strategies: string[];
+  positions: PaperPosition[];
+  closed: PaperTrade[]; // newest first
+  events: PaperEvent[]; // newest first
+  stats: {
+    trades: number;
+    wins: number;
+    winRate: number | null;
+    netPnl: number;
+    netPercent: number;
+    todayPnl: number;
+    fees: number;
+    maxDrawdown: number; // percent
+  };
+  scanning: string | null; // timeframe being scanned now
+  lastScan: Record<string, { period: number; time: number }>;
+  timeframes: string[];
+  rules: { risk: number; maxOpen: number; maxLeverage: number; dailyStop: number; totalStop: number;
+    fees: { maker: number; taker: number } };
+}

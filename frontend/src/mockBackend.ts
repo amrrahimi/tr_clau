@@ -1,12 +1,14 @@
 // A pretend backend with made-up prices, for the preview and for working on
 // the screen without the Python backend. Prices are random walks, NOT real data.
 
-import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers, ScanRequest, StrategyRequest } from "./api.ts";
+import type {
+  AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers, PaperAction, ScanRequest, StrategyRequest,
+} from "./api.ts";
 import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
-  ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade,
+  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade,
 } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
@@ -94,6 +96,72 @@ export class MockBackend implements Backend {
 
   async getCatalog(): Promise<CatalogSpec[]> {
     return MOCK_CATALOG;
+  }
+
+  private paper: PaperState | null = null;
+
+  /** Preview only: a pretend bot account; starting it shows a few made-up trades. */
+  async getPaper(): Promise<PaperState> {
+    if (!this.paper) this.paper = this.emptyPaper(100);
+    return this.paper;
+  }
+
+  async paperAction(action: PaperAction): Promise<PaperState> {
+    const state = await this.getPaper();
+    if (action.kind === "reset") this.paper = this.emptyPaper(action.capital);
+    else if (action.kind === "stop") state.status = "stopped";
+    else if (action.kind === "mode") {
+      state.mode = action.mode;
+      state.strategies = action.mode === "auto" ? MOCK_STRATEGIES.map((c) => c.type) : action.strategies;
+    } else if (action.kind === "start") {
+      state.status = "running";
+      if (!state.positions.length && !state.closed.length) await this.sampleTrades(state);
+    }
+    return this.paper!;
+  }
+
+  private emptyPaper(capital: number): PaperState {
+    return {
+      capital, balance: capital, equity: capital, status: "stopped", pausedToday: false, mode: "auto",
+      strategies: MOCK_STRATEGIES.map((c) => c.type), positions: [], closed: [], events: [],
+      stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
+      scanning: null, lastScan: {}, timeframes: ["1m", "3m", "5m", "15m", "1h"],
+      rules: { risk: 1, maxOpen: 3, maxLeverage: 10, dailyStop: 5, totalStop: 30, fees: { maker: 0.02, taker: 0.06 } },
+    };
+  }
+
+  private async sampleTrades(state: PaperState): Promise<void> {
+    const candles = this.history({ marketType: "futures", symbol: "BTC/USDT:USDT", timeframe: "5m" });
+    const at = (n: number) => candles[candles.length - n];
+    const base = (n: number, side: "long" | "short", id: number): PaperPosition => {
+      const c = at(n);
+      const stop = side === "long" ? c.open * 0.995 : c.open * 1.005;
+      const target = side === "long" ? c.open * 1.01 : c.open * 0.99;
+      return { id, symbol: "BTC/USDT:USDT", base: "BTC", timeframe: "5m", strategy: "supertrend", side,
+        entryTime: c.time + 5, entryPrice: c.open, entryCandle: c.time, stopLoss: stop, stop, takeProfit: target,
+        quantity: 0.002, notional: c.open * 0.002, leverage: 3, margin: (c.open * 0.002) / 3, risk: 1,
+        liquidation: c.open * (side === "long" ? 0.67 : 1.33), breakevenAt: null,
+        history: { trades: 24, winRate: 46, profitFactor: 1.6 } };
+    };
+    const closedTrade = (p: PaperPosition, n: number, win: boolean): PaperTrade => ({
+      ...p, exitPrice: win ? p.takeProfit : p.stopLoss, exitTime: at(n).time + 60, exitReason: win ? "target" : "stop",
+      pnl: win ? 1.8 : -1, fees: 0.15, pnlPercent: win ? 9 : -5,
+    });
+    const open = base(6, "long", 3);
+    open.lastPrice = at(1).close;
+    open.openPnl = (at(1).close - open.entryPrice) * open.quantity;
+    state.positions = [open];
+    state.closed = [closedTrade(base(30, "short", 2), 20, true), closedTrade(base(60, "long", 1), 50, false)];
+    state.balance = state.capital + 0.8;
+    state.equity = state.balance + (open.openPnl ?? 0);
+    state.stats = { trades: 2, wins: 1, winRate: 50, netPnl: state.equity - state.capital,
+      netPercent: ((state.equity - state.capital) / state.capital) * 100, todayPnl: 0.8, fees: 0.3, maxDrawdown: 1 };
+    const now = this.now();
+    state.events = [
+      { time: now - 30, kind: "open", symbol: "BTC", side: "long", timeframe: "5m", strategy: "supertrend", leverage: 3 },
+      { time: now - 900, kind: "close", symbol: "BTC", reason: "target", pnl: 1.8 },
+      { time: now - 2000, kind: "start" },
+    ];
   }
 
   /** Preview only: the scanner over the first 12 coins, with the made-up strategy results. */

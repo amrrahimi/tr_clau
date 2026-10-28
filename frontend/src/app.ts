@@ -66,7 +66,7 @@ export class App {
   private chart!: ChartView;
   private els!: Record<string, HTMLElement>;
 
-  constructor(root: HTMLElement, private readonly backend: Backend) {
+  constructor(root: HTMLElement, private readonly backend: Backend, private readonly onAuto?: () => void) {
     this.root = root;
   }
 
@@ -383,6 +383,7 @@ export class App {
     this.root.innerHTML = `
       <div class="app">
         <header class="topbar">
+          <div class="segmented" data-el="view"></div>
           <div class="segmented" data-el="marketTypes"></div>
           <div class="symbol-info">
             <span class="symbol" data-el="symbol">—</span>
@@ -507,6 +508,12 @@ export class App {
     this.els.watchlistToggle.title = this.t("watchlist.toggle");
     (this.els.search as HTMLInputElement).placeholder = this.t("watchlist.searchPlaceholder");
     this.els.retry.textContent = this.t("action.retry");
+    // Automatic (the bot screen) | Semi-automatic (this screen).
+    this.renderSegmented(this.els.view, [
+      { label: this.t("view.auto"), active: false, onClick: () => this.onAuto?.() },
+      { label: this.t("view.semi"), active: true, onClick: () => undefined },
+    ]);
+    this.els.view.hidden = !this.onAuto;
     this.els.refresh.textContent = "⟳";
     this.els.refresh.title = this.t("action.refresh");
     this.indicators.closeModal();

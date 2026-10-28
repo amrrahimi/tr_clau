@@ -1,10 +1,10 @@
 // Entry point for the sample-data preview: the real screen with the pretend backend.
-import { App } from "./app.ts";
+import { startShell } from "./shell.ts";
 import { MockBackend } from "./mockBackend.ts";
 
 const root = document.getElementById("app");
 if (root) {
-  void new App(root, new MockBackend()).start().then(() => {
+  void startShell(root, new MockBackend()).then(() => {
     const badge = document.createElement("span");
     badge.className = "sample-badge";
     badge.textContent = "Sample data · داده‌ی نمونه";

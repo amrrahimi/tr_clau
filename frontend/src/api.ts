@@ -2,7 +2,7 @@
 // The real app uses HttpBackend; the preview uses a fake one with sample data.
 
 import type {
-  Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options, ScanResult, StrategyCard,
+  Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
   StrategyOverview,
 } from "./types.ts";
 
@@ -27,6 +27,12 @@ export interface StrategyRequest {
 
 /** The scanner works on the whole coin list, so no symbol and no active strategy. */
 export type ScanRequest = Omit<StrategyRequest, "symbol" | "active" | "autoRule">;
+
+export type PaperAction =
+  | { kind: "start" }
+  | { kind: "stop" }
+  | { kind: "reset"; capital: number }
+  | { kind: "mode"; mode: "auto" | "manual"; strategies: string[] };
 
 export interface CandleRequest {
   marketType: MarketType;
@@ -53,6 +59,9 @@ export interface Backend {
   getStrategyCatalog(): Promise<StrategyCard[]>;
   getStrategyOverview(request: StrategyRequest): Promise<StrategyOverview>;
   getScan(request: ScanRequest): Promise<ScanResult>;
+  getPaper(): Promise<PaperState>;
+  /** Bot buttons: start, stop, reset (with capital), mode (auto/manual with strategies). */
+  paperAction(action: PaperAction): Promise<PaperState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
 
@@ -139,6 +148,27 @@ export class HttpBackend implements Backend {
       maker_fee: request.fees?.maker,
       taker_fee: request.fees?.taker,
     });
+  }
+
+  async getPaper(): Promise<PaperState> {
+    return this.getJson<PaperState>("/api/paper", {});
+  }
+
+  async paperAction(action: PaperAction): Promise<PaperState> {
+    const { kind, ...body } = action;
+    let response: Response;
+    try {
+      response = await fetch(new URL(`/api/paper/${kind}`, this.baseUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new BackendError("Backend is not reachable", true);
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new BackendError(typeof data.detail === "string" ? data.detail : `HTTP ${response.status}`);
+    return data as PaperState;
   }
 
   async getScan(request: ScanRequest): Promise<ScanResult> {
