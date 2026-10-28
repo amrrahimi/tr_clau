@@ -1,12 +1,12 @@
 // A pretend backend with made-up prices, for the preview and for working on
 // the screen without the Python backend. Prices are random walks, NOT real data.
 
-import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers, StrategyRequest } from "./api.ts";
+import type { AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers, ScanRequest, StrategyRequest } from "./api.ts";
 import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
-  StrategyCard, StrategyOverview, StrategyRow, Trade,
+  ScanEntry, ScanResult, StrategyCard, StrategyOverview, StrategyRow, Trade,
 } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
@@ -94,6 +94,30 @@ export class MockBackend implements Backend {
 
   async getCatalog(): Promise<CatalogSpec[]> {
     return MOCK_CATALOG;
+  }
+
+  /** Preview only: the scanner over the first 12 coins, with the made-up strategy results. */
+  async getScan(request: ScanRequest): Promise<ScanResult> {
+    const coins = (await this.getMarkets(request.marketType)).slice(0, 12);
+    const entries: ScanEntry[] = [];
+    for (const coin of coins) {
+      const overview = await this.getStrategyOverview({ ...request, symbol: coin.symbol, active: null, autoRule: null });
+      for (const row of overview.rows) {
+        entries.push({ symbol: coin.symbol, base: coin.base, strategy: row.strategy, marketState: overview.marketState, stats: row.stats });
+      }
+    }
+    const best = (list: ScanEntry[], score: (e: ScanEntry) => number) => {
+      const perCoin = new Map<string, ScanEntry>();
+      for (const e of list) if (!perCoin.has(e.symbol) || score(e) > score(perCoin.get(e.symbol)!)) perCoin.set(e.symbol, e);
+      return [...perCoin.values()].sort((a, b) => score(b) - score(a)).slice(0, 10);
+    };
+    const winners = entries.filter((e) => e.stats.trades > 0 && e.stats.netPercent > 0);
+    return {
+      running: false, done: coins.length, total: coins.length, failed: [], error: null,
+      finishedAt: this.now(),
+      maxProfit: best(winners, (e) => e.stats.netPercent),
+      cautious: best(winners.filter((e) => e.stats.trades >= 10 && (e.stats.profitFactor ?? Infinity) > 1), (e) => e.stats.profitFactor ?? Infinity),
+    };
   }
 
   async getStrategyCatalog(): Promise<StrategyCard[]> {

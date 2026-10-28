@@ -55,6 +55,13 @@ export class StrategyPanel {
     this.render();
   }
 
+  /** From the scanner: switch to Manual with this strategy on. */
+  useManually(kind: string): void {
+    this.state = { ...this.state, auto: false, active: kind };
+    saveStrategyState(this.state);
+    this.render();
+  }
+
   /** Automatic: the bot picks with this rule; null = manual. */
   get autoRule(): AutoRule | null {
     return this.state.auto ? this.state.rule : null;

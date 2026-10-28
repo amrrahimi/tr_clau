@@ -2,7 +2,8 @@
 // The real app uses HttpBackend; the preview uses a fake one with sample data.
 
 import type {
-  Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options, StrategyCard, StrategyOverview,
+  Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options, ScanResult, StrategyCard,
+  StrategyOverview,
 } from "./types.ts";
 
 export interface AnalysisRequest {
@@ -23,6 +24,9 @@ export interface StrategyRequest {
   autoRule: "cautious" | "max_profit" | null; // set = the bot picks the strategy
   fees: { maker: number; taker: number } | null; // percent; null = the backend's defaults
 }
+
+/** The scanner works on the whole coin list, so no symbol and no active strategy. */
+export type ScanRequest = Omit<StrategyRequest, "symbol" | "active" | "autoRule">;
 
 export interface CandleRequest {
   marketType: MarketType;
@@ -48,6 +52,7 @@ export interface Backend {
   getCatalog(): Promise<CatalogSpec[]>;
   getStrategyCatalog(): Promise<StrategyCard[]>;
   getStrategyOverview(request: StrategyRequest): Promise<StrategyOverview>;
+  getScan(request: ScanRequest): Promise<ScanResult>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
 
@@ -131,6 +136,17 @@ export class HttpBackend implements Backend {
       settings: JSON.stringify(request.settings),
       active: request.active ?? "",
       auto_rule: request.autoRule ?? "",
+      maker_fee: request.fees?.maker,
+      taker_fee: request.fees?.taker,
+    });
+  }
+
+  async getScan(request: ScanRequest): Promise<ScanResult> {
+    return this.getJson<ScanResult>("/api/scanner", {
+      market_type: request.marketType,
+      timeframe: request.timeframe,
+      trading_mode: request.tradingMode,
+      settings: JSON.stringify(request.settings),
       maker_fee: request.fees?.maker,
       taker_fee: request.fees?.taker,
     });

@@ -11,6 +11,7 @@ import { IndicatorController } from "./indicatorController.ts";
 import type { BotMode } from "./indicatorList.ts";
 import type { MessageKey } from "./locales/en.ts";
 import { effectiveFees, loadFees, saveFees, setFees, type FeeOverrides } from "./fees.ts";
+import { ScannerPanel } from "./scannerPanel.ts";
 import { StrategyPanel } from "./strategyPanel.ts";
 import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
 import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
@@ -21,6 +22,8 @@ const DEFAULT_TIMEFRAME: Record<Mode, string> = { scalping: "5m", daily: "1h" };
 const SEARCH_DELAY_MS = 300;
 /** Wait after a candle closes before asking for indicators, so the exchange has the final price. */
 const ANALYSIS_DELAY_MS = 2000;
+/** While a scan runs, its progress is asked for this often. */
+const SCAN_POLL_MS = 1000;
 
 export class App {
   private language: Language = loadLanguage();
@@ -53,6 +56,10 @@ export class App {
   private strategies!: StrategyPanel;
   private strategyId = 0;
   private fees: FeeOverrides = loadFees(); // the user's own fee rates, per market type
+  // Scanner: every strategy on every coin, under the chart.
+  private scanner!: ScannerPanel;
+  private scanId = 0;
+  private scanTimer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly root: HTMLElement;
   private chart!: ChartView;
@@ -161,6 +168,7 @@ export class App {
       this.startLive(id);
       void this.loadAnalysis();
       void this.loadStrategies();
+      void this.loadScan();
     } catch (error) {
       if (id !== this.requestId) return;
       this.setChartMessage(null);
@@ -199,6 +207,7 @@ export class App {
     this.analysisTimer = setTimeout(() => {
       void this.loadAnalysis();
       void this.loadStrategies();
+      void this.loadScan();
     }, ANALYSIS_DELAY_MS);
   }
 
@@ -257,6 +266,37 @@ export class App {
       this.strategies.setError();
       if (error instanceof BackendError && error.unreachable) this.showError(error);
     }
+  }
+
+  /**
+   * Ask for the scanner's tables. The backend scans in the background; while
+   * it runs we ask again every second to show the progress.
+   */
+  private async loadScan(): Promise<void> {
+    if (!this.options) return;
+    clearTimeout(this.scanTimer);
+    const id = ++this.scanId;
+    try {
+      const result = await this.backend.getScan({
+        marketType: this.marketType,
+        timeframe: this.timeframe,
+        tradingMode: this.mode,
+        settings: this.strategies.settings,
+        fees: effectiveFees(this.options.fees, this.fees, this.marketType),
+      });
+      if (id !== this.scanId) return; // the choices changed meanwhile
+      this.scanner.show(result);
+      if (result.running) this.scanTimer = setTimeout(() => void this.loadScan(), SCAN_POLL_MS);
+    } catch {
+      if (id === this.scanId) this.scanner.setError();
+    }
+  }
+
+  /** A scanner row: open that coin with that strategy (manual). */
+  private openFromScanner(symbol: string, strategy: string): void {
+    this.strategies.useManually(strategy);
+    if (symbol === this.symbol) void this.loadStrategies();
+    else void this.selectSymbol(symbol);
   }
 
   /** Called by the indicator controller when Auto/Manual/Start changes the mode. */
@@ -365,6 +405,7 @@ export class App {
             </div>
             <section class="strategies" data-el="strategies"></section>
           </aside>
+          <div class="chart-column">
           <section class="chart-area" dir="ltr">
             <div class="chart" data-el="chart"></div>
             <div class="pane-legends" data-el="legends"></div>
@@ -378,6 +419,8 @@ export class App {
             </div>
             <div class="chart-message" data-el="chartMessage" hidden></div>
           </section>
+          <section class="scanner" data-el="scanner"></section>
+          </div>
         </main>
       </div>`;
     this.els = {};
@@ -412,7 +455,10 @@ export class App {
         mode: () => this.mode,
         openWindow: (content) => this.indicators.openModal(content),
         closeWindow: () => this.indicators.closeModal(),
-        onChange: () => void this.loadStrategies(),
+        onChange: () => {
+          void this.loadStrategies();
+          void this.loadScan(); // strategy settings change the scan too
+        },
         fees: () => ({
           market: this.marketType,
           rates: effectiveFees(this.options?.fees, this.fees, this.marketType),
@@ -422,9 +468,18 @@ export class App {
           this.fees = setFees(this.fees, this.marketType, rates, this.options?.fees[this.marketType]);
           saveFees(this.fees);
           void this.loadStrategies();
+          void this.loadScan();
         },
       },
       this.els.strategies,
+    );
+    this.scanner = new ScannerPanel(
+      {
+        t: (key, params) => this.t(key, params),
+        zone: () => this.zone,
+        open: (symbol, strategy) => this.openFromScanner(symbol, strategy),
+      },
+      this.els.scanner,
     );
     // Pane sizes change with the window; legends follow their panes.
     new ResizeObserver(() => this.indicators.render()).observe(this.els.chart);
@@ -455,6 +510,7 @@ export class App {
     this.renderAnalysis();
     this.renderWatchlist();
     this.strategies.render();
+    this.scanner.render();
     this.renderLiveStatus();
     this.renderError();
     this.renderChartMessage();

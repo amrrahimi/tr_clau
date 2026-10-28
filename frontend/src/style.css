@@ -130,7 +130,8 @@ button:hover { background: var(--border); }
 .coin { font-weight: 600; }
 .volume { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.chart-area { position: relative; flex: 1; min-width: 0; }
+.chart-column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chart-area { position: relative; flex: 1; min-width: 0; min-height: 0; }
 .chart { position: absolute; inset: 0; }
 .chart-message {
   position: absolute;
@@ -391,3 +392,33 @@ button:hover { background: var(--border); }
   cursor: pointer;
 }
 .fee-line:hover { color: var(--text); }
+
+/* ---------- scanner (always open, under the chart) ---------- */
+
+.scanner {
+  flex: 0 0 auto;
+  height: 250px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scanner-head { display: flex; align-items: baseline; gap: 12px; padding-inline-end: 10px; }
+.scanner-status { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
+.scanner-bar { display: inline-block; width: 120px; height: 4px; border-radius: 2px; background: var(--panel); overflow: hidden; }
+.scanner-bar span { display: block; height: 100%; background: var(--accent); }
+.scanner-tables { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.scanner-box { overflow-y: auto; min-width: 0; border-inline-end: 1px solid var(--border); }
+.scanner-box:last-child { border-inline-end: none; }
+.scanner-table-title { padding: 4px 10px; font-size: 12px; font-weight: 700; cursor: help; }
+.scanner-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.scanner-table th { color: var(--muted); font-weight: 400; font-size: 11px; padding: 2px 6px; text-align: center; white-space: nowrap; }
+.scanner-table td { padding: 4px 6px; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.scanner-table .name { text-align: start; }
+.scanner-table td.up { color: var(--up); }
+.scanner-table tbody tr:hover { background: var(--panel); }
+.scanner-table td.coin { font-weight: 600; }
+.scanner-table tbody tr { cursor: pointer; }
+.scanner-empty { color: var(--muted); text-align: center !important; padding: 16px !important; cursor: default; }
+@media (max-height: 700px) { .scanner { height: 190px; } }

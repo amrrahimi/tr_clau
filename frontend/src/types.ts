@@ -159,3 +159,24 @@ export interface StrategyOverview {
   firstTime: number | null;
   lastClosedTime: number | null;
 }
+
+// ---------- scanner (match backend/app/scanner.py) ----------
+
+export interface ScanEntry {
+  symbol: string;
+  base: string;
+  strategy: string;
+  marketState: MarketState; // the coin's state now
+  stats: Pick<StrategyStats, "netPercent" | "trades" | "profitFactor">;
+}
+
+export interface ScanResult {
+  running: boolean;
+  done: number;
+  total: number;
+  failed: string[]; // coins that could not be scanned
+  error: string | null;
+  finishedAt: number | null; // seconds; time of the tables shown
+  maxProfit: ScanEntry[];
+  cautious: ScanEntry[];
+}
