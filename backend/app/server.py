@@ -9,15 +9,17 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
+from .paper import MARKET, TIMEFRAMES, PaperBot, Store, default_path
 from .scanner import Scanner, run_scan
 from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
@@ -33,7 +35,8 @@ ALLOWED_ORIGINS = [
 ]
 
 
-def create_app(service_factory: Callable[[str], MarketService] | None = None) -> FastAPI:
+def create_app(service_factory: Callable[[str], MarketService] | None = None,
+               paper_path: Optional[Path] = None, run_bot: bool = True) -> FastAPI:
     """Build the server. Tests can pass a factory that returns a fake exchange."""
 
     def default_factory(market_type: str) -> MarketService:
@@ -59,9 +62,30 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
                     raise HTTPException(500, f"Could not start the exchange connection: {error}")
             return services[market_type]
 
+    # ---- paper trading bot (futures; its own long-history store: 5 timeframes x 100 coins)
+    bot_history = HistoryCache(max_charts=len(TIMEFRAMES) * config.SCANNER_COINS + 20)
+
+    async def bot_coins():
+        service = await get_service(MARKET)
+        return [(m.symbol, m.base) for m in await service.top_markets(config.SCANNER_COINS)]
+
+    async def bot_history_of(symbol: str, timeframe: str):
+        service = await get_service(MARKET)
+        return await bot_history.get((MARKET, symbol, timeframe),
+                                     lambda limit, before: service.fetch_candles(symbol, timeframe, limit, before=before))
+
+    async def bot_recent(symbol: str, timeframe: str):
+        service = await get_service(MARKET)
+        return await service.fetch_candles(symbol, timeframe, 60)
+
+    bot = PaperBot(Store(paper_path or default_path()), bot_coins, bot_history_of, bot_recent)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        task = asyncio.create_task(bot.run_forever()) if run_bot else None
         yield
+        if task:
+            task.cancel()
         for service in services.values():
             await service.close()
 
@@ -69,9 +93,44 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
     app.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    @app.get("/api/paper")
+    async def paper_state():
+        """The paper account: money, open positions, closed trades, results."""
+        return bot.public()
+
+    @app.post("/api/paper/start")
+    async def paper_start():
+        bot.start()
+        return bot.public()
+
+    @app.post("/api/paper/stop")
+    async def paper_stop():
+        bot.stop()
+        return bot.public()
+
+    @app.post("/api/paper/reset")
+    async def paper_reset(capital: float = Body(..., embed=True)):
+        """Start the account again with this much virtual money (USDT)."""
+        if not 10 <= capital <= 1_000_000:
+            raise HTTPException(400, "capital must be between 10 and 1000000")
+        async with bot.lock:
+            bot.reset(capital)
+        return bot.public()
+
+    @app.post("/api/paper/mode")
+    async def paper_mode(mode: str = Body(...), strategies: list[str] = Body(default=[])):
+        """auto: the bot uses every strategy; manual: only the ones listed."""
+        if mode not in ("auto", "manual"):
+            raise HTTPException(400, "mode must be auto or manual")
+        unknown = set(strategies) - set(STRATEGIES)
+        if unknown or (mode == "manual" and not strategies):
+            raise HTTPException(400, "manual mode needs at least one known strategy")
+        bot.set_mode(mode, strategies)
+        return bot.public()
 
     @app.get("/api/health")
     async def health():

@@ -73,7 +73,7 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       },
       {
         "name": "max_candles",
-        "default": 48,
+        "default": 0,
         "min": 0,
         "max": 1000,
         "step": 1
@@ -163,7 +163,7 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       },
       {
         "name": "max_candles",
-        "default": 48,
+        "default": 0,
         "min": 0,
         "max": 1000,
         "step": 1
@@ -261,7 +261,7 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       },
       {
         "name": "max_candles",
-        "default": 48,
+        "default": 0,
         "min": 0,
         "max": 1000,
         "step": 1
@@ -321,7 +321,7 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       },
       {
         "name": "max_candles",
-        "default": 48,
+        "default": 0,
         "min": 0,
         "max": 1000,
         "step": 1
@@ -392,7 +392,7 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       },
       {
         "name": "max_candles",
-        "default": 48,
+        "default": 0,
         "min": 0,
         "max": 1000,
         "step": 1
@@ -468,7 +468,7 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       },
       {
         "name": "max_candles",
-        "default": 48,
+        "default": 0,
         "min": 0,
         "max": 1000,
         "step": 1

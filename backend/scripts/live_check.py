@@ -133,6 +133,49 @@ async def check(market_type: str) -> None:
         await service.close()
 
 
+async def check_paper_bot() -> None:
+    """One full round of the paper bot on real futures data (virtual money, a temporary file)."""
+    import tempfile
+    from pathlib import Path
+    from app.paper import TIMEFRAMES, PaperBot, Store
+
+    service = MarketService(create_exchange("futures"), "futures")
+    cache = HistoryCache(max_charts=600)
+    try:
+        async def coins():
+            return [(m.symbol, m.base) for m in await service.top_markets(config.SCANNER_COINS)]
+
+        async def history_of(sym, tf):
+            return await cache.get(("futures", sym, tf),
+                                   lambda limit, before: service.fetch_candles(sym, tf, limit, before=before))
+
+        async def recent(sym, tf):
+            return await service.fetch_candles(sym, tf, 60)
+
+        with tempfile.TemporaryDirectory() as folder:
+            bot = PaperBot(Store(Path(folder) / "paper.json"), coins, history_of, recent)
+            bot.reset(100)
+            bot.start()
+            started = time.time()
+            await bot.step()
+            took = time.time() - started
+            state = bot.public()
+            errors = [e for e in state["events"] if e["kind"] == "error"]
+            assert not errors, f"paper bot errors: {errors}"
+            assert set(state["lastScan"]) == set(TIMEFRAMES), f"not all timeframes scanned: {state['lastScan']}"
+            for p in state["positions"]:
+                assert p["leverage"] <= 10 and p["risk"] <= 1.0001, f"position too risky: {p}"
+                beyond = p["liquidation"] < p["stopLoss"] if p["side"] == "long" else p["liquidation"] > p["stopLoss"]
+                assert beyond, f"liquidation not beyond the stop: {p}"
+            opened = ", ".join(f"{p['base']} {p['timeframe']} {p['strategy']} {p['side']} x{p['leverage']}"
+                               for p in state["positions"]) or "none"
+            print(f"paper bot: one round in {took:.1f}s, positions opened: {opened}")
+            print(f"::notice title=Paper bot::one round (5 timeframes x {config.SCANNER_COINS} coins) in {took:.1f}s; "
+                  f"opened: {opened}")
+    finally:
+        await service.close()
+
+
 async def main() -> int:
     failed = False
     for market_type in ("spot", "futures"):
@@ -144,6 +187,13 @@ async def main() -> int:
             print(f"FAILED {message}")
             # A line in this form shows up as an error note on GitHub's run page.
             print(f"::error title=Live Toobit check::{message}")
+    try:
+        await check_paper_bot()
+    except Exception as error:
+        failed = True
+        message = f"paper bot: {type(error).__name__}: {error}".replace("\n", " ")[:900]
+        print(f"FAILED {message}")
+        print(f"::error title=Live Toobit check::{message}")
     return 1 if failed else 0
 
 

@@ -8,6 +8,7 @@ kept in memory, and later requests only fetch the newest page and add it on.
 from __future__ import annotations
 
 import time
+from array import array
 from typing import Awaitable, Callable, Optional
 
 from . import config
@@ -41,8 +42,10 @@ async def fetch_history(fetch: Fetch, total: int = STRATEGY_CANDLES) -> list[dic
 
 
 class HistoryCache:
-    def __init__(self, total: int = STRATEGY_CANDLES, clock: Callable[[], float] = time.time):
+    def __init__(self, total: int = STRATEGY_CANDLES, clock: Callable[[], float] = time.time,
+                 max_charts: int = MAX_CHARTS):
         self.total = total
+        self.max_charts = max_charts
         self.clock = clock
         self._charts: dict[tuple, tuple[float, list[dict]]] = {}
 
@@ -54,25 +57,28 @@ class HistoryCache:
             # Only the newest page: it overlaps what we have, so nothing is missed
             # unless the app was away for more than 1000 candles (then start over).
             latest = await fetch(PAGE, None)
-            old = [_unpack(row) for row in cached[1]]
+            old = _unpack(cached[1])
             if latest and old and latest[0]["time"] > old[-1]["time"]:
                 candles = await fetch_history(fetch, self.total)
             else:
                 candles = merge(old, latest, self.total)
-        self._charts[key] = (self.clock(), [_pack(c) for c in candles])
-        if len(self._charts) > MAX_CHARTS:
+        self._charts[key] = (self.clock(), _pack(candles))
+        if len(self._charts) > self.max_charts:
             oldest = min(self._charts, key=lambda k: self._charts[k][0])
             del self._charts[oldest]
         return candles
 
 
-# Kept as plain tuples: about half the memory of a dict per candle (110 charts x 3500 candles).
+# Kept as six number arrays (8 bytes a number): about a tenth of the memory of
+# dicts, which matters with hundreds of charts (the paper bot keeps 500).
 _FIELDS = ("time", "open", "high", "low", "close", "volume")
 
 
-def _pack(candle: dict) -> tuple:
-    return tuple(candle.get(f, 0.0) for f in _FIELDS)
+def _pack(candles: list[dict]) -> tuple:
+    return tuple(array("d", (float(c.get(f, 0.0)) for c in candles)) for f in _FIELDS)
 
 
-def _unpack(row: tuple) -> dict:
-    return dict(zip(_FIELDS, row))
+def _unpack(columns: tuple) -> list[dict]:
+    times = columns[0]
+    return [{"time": int(times[i]), "open": columns[1][i], "high": columns[2][i], "low": columns[3][i],
+             "close": columns[4][i], "volume": columns[5][i]} for i in range(len(times))]

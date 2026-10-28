@@ -95,7 +95,7 @@ def _ready(*values) -> bool:
 COMMON_PARAMS = (
     Param("state_filter", 1, 0, 1),
     Param("breakeven", 0.5, 0, 0.95, 0.05),   # part of the way to the take-profit
-    Param("max_candles", 48, 0, 1000),        # candles before a trade in profit is closed
+    Param("max_candles", 0, 0, 1000),         # candles before a trade in profit is closed (0 = off, owner's choice)
     Param("fee_ratio", 0.33, 0, 1, 0.01),     # most of the stop distance the fees may take
 )
 

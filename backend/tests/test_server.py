@@ -20,8 +20,14 @@ from .fake_exchange import FakeExchange, row
 class ServerTest(unittest.TestCase):
     ORIGIN = {"Origin": "tauri://localhost"}
 
-    def client(self, factory):
-        return TestClient(create_app(factory))
+    def client(self, factory, paper_path=None):
+        import tempfile
+        from pathlib import Path
+        if paper_path is None:
+            self._tmp = tempfile.TemporaryDirectory()
+            self.addCleanup(self._tmp.cleanup)
+            paper_path = Path(self._tmp.name) / "paper.json"
+        return TestClient(create_app(factory, paper_path=paper_path, run_bot=False))
 
     def test_markets_list(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
@@ -101,6 +107,23 @@ class ServerTest(unittest.TestCase):
         self.assertIn("cautious", body)
         bad = client.get("/api/scanner", params={**params, "timeframe": "7m"})
         self.assertEqual(bad.status_code, 400)
+
+    def test_paper_account_buttons(self):
+        client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
+        state = client.get("/api/paper").json()
+        self.assertEqual(state["status"], "stopped")
+        state = client.post("/api/paper/reset", json={"capital": 80}, headers=self.ORIGIN).json()
+        self.assertEqual((state["capital"], state["equity"]), (80, 80))
+        self.assertEqual(client.post("/api/paper/start").json()["status"], "running")
+        self.assertEqual(client.post("/api/paper/stop").json()["status"], "stopped")
+        manual = client.post("/api/paper/mode", json={"mode": "manual", "strategies": ["supertrend"]}).json()
+        self.assertEqual((manual["mode"], manual["strategies"]), ("manual", ["supertrend"]))
+        self.assertEqual(client.post("/api/paper/reset", json={"capital": 1}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/mode", json={"mode": "manual", "strategies": []}).status_code, 400)
+        # The browser asks first whether a POST is allowed (CORS preflight).
+        pre = client.options("/api/paper/start", headers={**self.ORIGIN, "Access-Control-Request-Method": "POST",
+                                                         "Access-Control-Request-Headers": "content-type"})
+        self.assertEqual(pre.status_code, 200)
 
     def test_catalog_endpoint(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
