@@ -24,7 +24,7 @@ import {
 } from "lightweight-charts";
 import { pricePrecision } from "./candles.ts";
 import { formatLocalDateTime, formatLocalTick } from "./format.ts";
-import { tradeBoxes, tradeMarkers, type Box } from "./strategyState.ts";
+import { tradeBoxes, tradeMarkers, type Box, type MarkerLabels } from "./strategyState.ts";
 import type { ZoneId } from "./timezone.ts";
 import type { Candle, IndicatorResult, Trade } from "./types.ts";
 
@@ -227,8 +227,8 @@ export class ChartView {
    * Draw a strategy's trades: arrows on the candles and take-profit / stop-loss
    * boxes. An empty list removes them.
    */
-  setTrades(trades: Trade[], lastTime: number | null): void {
-    this.markers.setMarkers(tradeMarkers(trades).map((m) => ({ ...m, time: m.time as UTCTimestamp })));
+  setTrades(trades: Trade[], lastTime: number | null, labels?: MarkerLabels): void {
+    this.markers.setMarkers(tradeMarkers(trades, labels).map((m) => ({ ...m, time: m.time as UTCTimestamp })));
     this.boxes.setBoxes(tradeBoxes(trades, lastTime));
   }
 

@@ -397,7 +397,7 @@ button:hover { background: var(--border); }
 
 .scanner {
   flex: 0 0 auto;
-  height: 250px;
+  height: 270px;
   border-top: 1px solid var(--border);
   background: var(--bg);
   display: flex;
@@ -409,8 +409,19 @@ button:hover { background: var(--border); }
 .scanner-bar { display: inline-block; width: 120px; height: 4px; border-radius: 2px; background: var(--panel); overflow: hidden; }
 .scanner-bar span { display: block; height: 100%; background: var(--accent); }
 .scanner-tables { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
-.scanner-box { overflow-y: auto; min-width: 0; border-inline-end: 1px solid var(--border); }
-.scanner-box:last-child { border-inline-end: none; }
+.scanner-part { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-inline-end: 1px solid var(--border); }
+.scanner-part:last-child { border-inline-end: none; }
+.scanner-part.paused .scanner-pair, .scanner-part.paused > .scanner-box { opacity: 0.4; }
+.scanner-part-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 10px 2px 0; }
+.scanner-switch { padding: 2px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; }
+.scanner-switch.on { border-color: var(--accent); color: var(--accent); }
+.scanner-pair { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
+.scanner-box { overflow-y: auto; min-width: 0; min-height: 0; }
+.scanner-pair .scanner-box:first-child { border-inline-end: 1px solid var(--border); }
+.scanner-table tr.weak { opacity: 0.5; }
+.scanner-table td.side.long { color: var(--up); }
+.scanner-table td.side.short { color: var(--down); }
+.scanner-table td.loss { color: var(--down); }
 .scanner-table-title { padding: 4px 10px; font-size: 12px; font-weight: 700; cursor: help; }
 .scanner-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .scanner-table th { color: var(--muted); font-weight: 400; font-size: 11px; padding: 2px 6px; text-align: center; white-space: nowrap; }
@@ -422,3 +433,5 @@ button:hover { background: var(--border); }
 .scanner-table tbody tr { cursor: pointer; }
 .scanner-empty { color: var(--muted); text-align: center !important; padding: 16px !important; cursor: default; }
 @media (max-height: 700px) { .scanner { height: 190px; } }
+.scanner-part.signals .scanner-box { overflow-x: auto; }
+.scanner-part.signals .scanner-table th, .scanner-part.signals .scanner-table td { padding: 3px 4px; font-size: 11px; }

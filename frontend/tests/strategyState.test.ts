@@ -68,21 +68,21 @@ test("leaving automatic mode keeps the bot's last pick", () => {
 test("arrows: entries green up (long) / red down (short), exits yellow with tick or cross", () => {
   const markers = tradeMarkers([
     trade({}),
-    trade({ side: "short", entryTime: 300, entryPrice: 100, stopLoss: 101, takeProfit: 98, exitTime: 420, result: "loss" }),
+    trade({ side: "short", entryTime: 300, entryPrice: 100, stopLoss: 101, takeProfit: 98, exitTime: 420, result: "loss", pnlPercent: -1 }),
     trade({ entryTime: 600, exitTime: null, exitPrice: null, result: "open" }),
   ]);
   assert.deepEqual(markers.map((m) => [m.time, m.shape, m.position, m.color, m.text]), [
-    [60, "arrowUp", "belowBar", COLORS.long, ""],
-    [180, "arrowDown", "aboveBar", COLORS.exit, "✓"],
-    [300, "arrowDown", "aboveBar", COLORS.short, ""],
-    [420, "arrowUp", "belowBar", COLORS.exit, "✗"],
-    [600, "arrowUp", "belowBar", COLORS.long, ""],
+    [60, "arrowUp", "belowBar", COLORS.long, "L"],
+    [180, "arrowDown", "aboveBar", COLORS.exit, "✓ +2.0%"],
+    [300, "arrowDown", "aboveBar", COLORS.short, "S"],
+    [420, "arrowUp", "belowBar", COLORS.exit, "✗ −1.0%"],
+    [600, "arrowUp", "belowBar", COLORS.long, "L"],
   ]);
 });
 
 test("a trade closed at the entry price gets ＝", () => {
   const [, exit] = tradeMarkers([trade({ result: "breakeven", exitReason: "breakeven", exitPrice: 100, pnlPercent: 0 })]);
-  assert.equal(exit.text, "＝");
+  assert.equal(exit.text, "＝ 0.0%");
   assert.equal(exit.color, COLORS.exit);
 });
 

@@ -15,7 +15,7 @@ from . import config
 STRATEGY_CANDLES = 5000
 PAGE = config.MAX_CANDLE_LIMIT
 # Keep at most this many charts in memory (oldest used is dropped first).
-MAX_CHARTS = 60  # the scanner alone needs 50
+MAX_CHARTS = 110  # the scanner alone needs 100
 
 Fetch = Callable[[int, Optional[int]], Awaitable[list[dict]]]  # (limit, before) -> candles
 
@@ -54,13 +54,25 @@ class HistoryCache:
             # Only the newest page: it overlaps what we have, so nothing is missed
             # unless the app was away for more than 1000 candles (then start over).
             latest = await fetch(PAGE, None)
-            old = cached[1]
+            old = [_unpack(row) for row in cached[1]]
             if latest and old and latest[0]["time"] > old[-1]["time"]:
                 candles = await fetch_history(fetch, self.total)
             else:
                 candles = merge(old, latest, self.total)
-        self._charts[key] = (self.clock(), candles)
+        self._charts[key] = (self.clock(), [_pack(c) for c in candles])
         if len(self._charts) > MAX_CHARTS:
             oldest = min(self._charts, key=lambda k: self._charts[k][0])
             del self._charts[oldest]
-        return list(candles)
+        return candles
+
+
+# Kept as plain tuples: about half the memory of a dict per candle (110 charts x 3500 candles).
+_FIELDS = ("time", "open", "high", "low", "close", "volume")
+
+
+def _pack(candle: dict) -> tuple:
+    return tuple(candle.get(f, 0.0) for f in _FIELDS)
+
+
+def _unpack(row: tuple) -> dict:
+    return dict(zip(_FIELDS, row))

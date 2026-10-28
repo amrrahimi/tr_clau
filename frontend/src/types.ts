@@ -167,7 +167,21 @@ export interface ScanEntry {
   base: string;
   strategy: string;
   marketState: MarketState; // the coin's state now
-  stats: Pick<StrategyStats, "netPercent" | "trades" | "profitFactor">;
+  stats: Pick<StrategyStats, "netPercent" | "trades" | "profitFactor"> & Partial<Pick<StrategyStats, "winRate">>;
+}
+
+/** A strategy's signal on the last closed candle: the trade it would open at the next candle. */
+export interface TradeSignal {
+  side: Side;
+  time: number; // the signal candle
+  entry: number; // about the next candle's open
+  stopLoss: number;
+  takeProfit: number;
+}
+
+export interface ScanSignal extends ScanEntry {
+  signal: TradeSignal;
+  reliable: boolean; // meets the cautious conditions
 }
 
 export interface ScanResult {
@@ -179,4 +193,5 @@ export interface ScanResult {
   finishedAt: number | null; // seconds; time of the tables shown
   maxProfit: ScanEntry[];
   cautious: ScanEntry[];
+  signals: ScanSignal[]; // latest 20, newest first
 }

@@ -127,14 +127,24 @@ export interface Marker {
 /** Arrow size (1 = the chart library's normal size); a bit larger so they stand out. */
 export const ARROW_SIZE = 1.5;
 
-/** Arrows for the trades, sorted by time (the chart library needs that order). */
-export function tradeMarkers(trades: Trade[]): Marker[] {
+/** Words written next to the entry arrows (in the screen's language). */
+export interface MarkerLabels {
+  long: string;
+  short: string;
+}
+
+/**
+ * Arrows for the trades, sorted by time (the chart library needs that order).
+ * Entries say "long"/"short"; exits show ✓/✗/＝ with the trade's result, so an
+ * exit is never mistaken for a new trade.
+ */
+export function tradeMarkers(trades: Trade[], labels: MarkerLabels = { long: "L", short: "S" }): Marker[] {
   const markers: Marker[] = [];
   for (const t of trades) {
     const long = t.side === "long";
     markers.push(long
-      ? { time: t.entryTime, position: "belowBar", shape: "arrowUp", color: COLORS.long, text: "", size: ARROW_SIZE }
-      : { time: t.entryTime, position: "aboveBar", shape: "arrowDown", color: COLORS.short, text: "", size: ARROW_SIZE });
+      ? { time: t.entryTime, position: "belowBar", shape: "arrowUp", color: COLORS.long, text: labels.long, size: ARROW_SIZE }
+      : { time: t.entryTime, position: "aboveBar", shape: "arrowDown", color: COLORS.short, text: labels.short, size: ARROW_SIZE });
     if (t.exitTime !== null && t.result !== "open") {
       // Closing a long sells (arrow down, above); closing a short buys (arrow up, below).
       markers.push({
@@ -142,7 +152,7 @@ export function tradeMarkers(trades: Trade[]): Marker[] {
         position: long ? "aboveBar" : "belowBar",
         shape: long ? "arrowDown" : "arrowUp",
         color: COLORS.exit,
-        text: t.result === "win" ? "✓" : t.result === "breakeven" ? "＝" : "✗",
+        text: `${t.result === "win" ? "✓" : t.result === "breakeven" ? "＝" : "✗"} ${formatPercent(t.pnlPercent)}`,
         size: ARROW_SIZE,
       });
     }

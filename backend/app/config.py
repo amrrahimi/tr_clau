@@ -20,6 +20,7 @@ QUOTE_CURRENCY = "USDT"
 
 # How many coins the default list shows, ranked by 24h volume.
 TOP_MARKETS_LIMIT = 50
+SCANNER_COINS = 100  # the scanner looks at the 100 coins with the highest 24h volume (owner's choice)
 
 # Timeframes the user can pick, grouped by trading mode.
 TIMEFRAME_GROUPS = {

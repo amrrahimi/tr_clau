@@ -260,7 +260,8 @@ export class App {
       // Ignore answers for an older chart or older choices.
       if (id !== this.strategyId || chartId !== this.requestId) return;
       this.strategies.showOverview(overview);
-      this.chart.setTrades(overview.active?.trades ?? [], overview.lastClosedTime);
+      this.chart.setTrades(overview.active?.trades ?? [], overview.lastClosedTime,
+        { long: this.t("strategies.long"), short: this.t("strategies.short") });
     } catch (error) {
       if (id !== this.strategyId) return;
       this.strategies.setError();
@@ -273,9 +274,9 @@ export class App {
    * it runs we ask again every second to show the progress.
    */
   private async loadScan(): Promise<void> {
-    if (!this.options) return;
     clearTimeout(this.scanTimer);
-    const id = ++this.scanId;
+    const id = ++this.scanId; // also drops an answer still on its way after Stop
+    if (!this.options || !this.scanner.active) return; // both parts stopped: no requests
     try {
       const result = await this.backend.getScan({
         marketType: this.marketType,
@@ -478,6 +479,7 @@ export class App {
         t: (key, params) => this.t(key, params),
         zone: () => this.zone,
         open: (symbol, strategy) => this.openFromScanner(symbol, strategy),
+        onToggle: () => void this.loadScan(),
       },
       this.els.scanner,
     );

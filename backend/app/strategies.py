@@ -454,6 +454,15 @@ def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]
     if params.get("state_filter") and states is not None:
         signals = [sig for sig in signals if allowed_by_state(sig, states[sig.index], strategy.states)]
     trades, pending = simulate(candles, signals, params.get("breakeven", 0), int(params.get("max_candles", 0)), fees)
+    # A signal on the last closed candle: the trade the bot would open at the next candle.
+    signal = None
+    if pending is not None:
+        sig = signals[-1]
+        entry = candles[-1]["close"]  # the next candle opens at (about) this price
+        levels = _levels(sig, entry)
+        if levels is not None:
+            signal = {"side": sig.side, "time": candles[-1]["time"], "entry": entry,
+                      "stopLoss": levels[0], "takeProfit": levels[1]}
     return {
         "strategy": kind,
         "name": strategy.name,
@@ -461,6 +470,7 @@ def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]
         "trades": trades,
         "stats": stats(trades),
         "nextSignal": pending,
+        "signal": signal,
         "lines": strategy.lines(params),
     }
 

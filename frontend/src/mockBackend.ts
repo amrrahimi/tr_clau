@@ -6,7 +6,7 @@ import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
-  ScanEntry, ScanResult, StrategyCard, StrategyOverview, StrategyRow, Trade,
+  ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade,
 } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
@@ -112,10 +112,21 @@ export class MockBackend implements Backend {
       return [...perCoin.values()].sort((a, b) => score(b) - score(a)).slice(0, 10);
     };
     const winners = entries.filter((e) => e.stats.trades > 0 && e.stats.netPercent > 0);
+    // Preview only: a few made-up signals at the last closed candle.
+    const step = TIMEFRAME_SECONDS[request.timeframe];
+    const last = Math.floor(this.now() / step) * step - step;
+    const signals: ScanSignal[] = entries.filter((_, i) => i % 9 === 0).slice(0, 8).map((e, i) => {
+      const price = coins.find((c) => c.symbol === e.symbol)?.lastPrice ?? 1;
+      const long = i % 2 === 0;
+      return { ...e, reliable: e.stats.trades >= 10 && e.stats.netPercent > 0, signal: {
+        side: long ? "long" : "short", time: last - (i % 3) * step, entry: price,
+        stopLoss: price * (long ? 0.99 : 1.01), takeProfit: price * (long ? 1.02 : 0.98) } };
+    });
     return {
       running: false, done: coins.length, total: coins.length, failed: [], error: null,
       finishedAt: this.now(),
       maxProfit: best(winners, (e) => e.stats.netPercent),
+      signals,
       cautious: best(winners.filter((e) => e.stats.trades >= 10 && (e.stats.profitFactor ?? Infinity) > 1), (e) => e.stats.profitFactor ?? Infinity),
     };
   }

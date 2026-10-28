@@ -108,7 +108,7 @@ async def check(market_type: str) -> None:
         cache = HistoryCache()
 
         async def coins():
-            return [(m.symbol, m.base) for m in await service.top_markets()]
+            return [(m.symbol, m.base) for m in await service.top_markets(config.SCANNER_COINS)]
 
         async def candles(sym):
             return await cache.get((market_type, sym, "15m"),
@@ -127,7 +127,8 @@ async def check(market_type: str) -> None:
         print(f"  scanner: {job.total} coins in {took:.1f}s, failed {job.failed}; best: {best}; "
               f"cautious rows {len(tables['cautious'])}")
         print(f"::notice title=Scanner {market_type}::{job.total} coins in {took:.1f}s; failed {len(job.failed)}; "
-              f"max-profit rows {len(tables['maxProfit'])}, cautious rows {len(tables['cautious'])}")
+              f"max-profit rows {len(tables['maxProfit'])}, cautious rows {len(tables['cautious'])}, "
+              f"signals {len(tables['signals'])}")
     finally:
         await service.close()
 

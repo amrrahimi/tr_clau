@@ -90,6 +90,17 @@ class EngineTest(unittest.TestCase):
         trades, _ = st.simulate(rows, [Signal(0, LONG, stop_price=99, target_price=100.7)])
         self.assertEqual((trades[0]["result"], trades[0]["exitPrice"]), ("win", 100.7))
 
+    def test_run_describes_a_signal_on_the_last_candle(self):
+        rows = [bar(i * 60, 100, 101, 99, 100) for i in range(25)] + [bar(1500, 100, 103.5, 100, 103)]
+        params = st.parse_params("donchian", {"state_filter": 0})
+        result = st.run(rows, "donchian", params)
+        s = result["signal"]
+        self.assertEqual((s["side"], s["time"], s["entry"]), (LONG, 1500, 103))
+        atr = (2 * 13 + 3.5) / 14
+        self.assertAlmostEqual(s["stopLoss"], 103 - 2 * atr)
+        self.assertAlmostEqual(s["takeProfit"], 103 + 2 * 2 * atr)
+        self.assertIsNone(st.run(rows[:-1], "donchian", params)["signal"])
+
     def test_open_trade_and_signal_on_last_candle(self):
         rows = [self.signal, bar(60, 100, 100.5, 99.5, 100)]
         trades, pending = st.simulate(rows, [Signal(0, LONG, stop_distance=1, reward=2)])

@@ -212,7 +212,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None) ->
         service = await get_service(market_type)
 
         async def coins():
-            return [(m.symbol, m.base) for m in await service.top_markets()]
+            return [(m.symbol, m.base) for m in await service.top_markets(config.SCANNER_COINS)]
 
         async def candles(symbol):
             return await history.get(
