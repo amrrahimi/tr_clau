@@ -70,6 +70,10 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t("bot.evClose", { coin: e.symbol ?? "", result: formatMoney(e.pnl), reason: t(`bot.reason.${e.reason}` as MessageKey) });
     case "halted":
       return t("bot.evHalted");
+    case "skip":
+      return e.reason === "full"
+        ? t("bot.evFull", { tf: e.timeframe ?? "", n: String(e.count ?? 0) })
+        : t("bot.evSkip", { coin: e.symbol ?? "", tf: e.timeframe ?? "", reason: t(`bot.skip.${e.reason}` as MessageKey) });
     case "reset":
       return t("bot.evReset", { capital: String(e.capital ?? "") });
     case "start":

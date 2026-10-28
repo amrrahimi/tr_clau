@@ -142,6 +142,21 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 98.9, 98.9)]
         await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33})
         self.assertEqual(bot.account["positions"], [])
+        self.assertEqual(bot.account["events"][-1]["reason"], "past")
+
+    async def test_stale_signal_is_skipped_with_reason(self):
+        bot = self.bot
+        bot.reset(100)
+        # Signal at 100 with the stop at 99: 100.3 is more than a quarter of the stop distance away.
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.3, 100, 100.3)]
+        await bot._open(cand("A", 2.0, 20), "15m", self.clock[0], {"fee_ratio": 0.33})
+        self.assertEqual(bot.account["positions"], [])
+        self.assertEqual((bot.account["events"][-1]["kind"], bot.account["events"][-1]["reason"]), ("skip", "stale"))
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.2, 100, 100.2)]   # within a quarter: taken
+        await bot._open(cand("A", 2.0, 20), "15m", self.clock[0], {"fee_ratio": 0.33})
+        self.assertEqual(len(bot.account["positions"]), 1)
+        self.assertTrue(pp.is_stale(100, 99.7, 99))
+        self.assertFalse(pp.is_stale(100, 99.8, 99))
 
     async def test_account_is_saved_and_loaded(self):
         self.bot.reset(80)
@@ -159,9 +174,9 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             scanned.append(tf)
         bot._scan_and_open = fake_scan
         await bot.step()
-        self.assertEqual(scanned, pp.TIMEFRAMES)
+        self.assertEqual(scanned, ["1h", "15m", "5m", "3m", "1m"])    # biggest first
         await bot.step()
-        self.assertEqual(scanned, pp.TIMEFRAMES)                     # same candles: no new scan
+        self.assertEqual(len(scanned), 5)                             # same candles: no new scan
         self.clock[0] += 60
         await bot.step()
         self.assertIn("1m", scanned[5:])

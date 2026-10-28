@@ -58,3 +58,11 @@ test("money and diary texts", () => {
     "باز شد: BTC لانگ 5m ×3 (سوپرترند)");
   assert.equal(eventText({ time: 0, kind: "close", symbol: "BTC", reason: "stop", pnl: -1 }, t), "بسته شد: BTC، −1.00 USDT (حد ضرر)");
 });
+
+test("skipped signals say why", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  assert.equal(eventText({ time: 0, kind: "skip", symbol: "LITE", timeframe: "15m", reason: "stale" }, t),
+    "رد شد: LITE 15m، سیگنال کهنه بود، قیمت حرکت کرده بود");
+  assert.equal(eventText({ time: 0, kind: "skip", timeframe: "5m", reason: "full", count: 4 }, t),
+    "5m: 4 سیگنال قابل اعتماد دیگر بود، ولی جای خالی نبود (۳ معامله باز)");
+});

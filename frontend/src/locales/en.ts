@@ -239,6 +239,11 @@ export const en = {
   "bot.colLev": "Lev.",
   "bot.colPrice": "Price / exit",
   "bot.colPnl": "Result (USDT)",
+  "bot.evSkip": "Skipped {coin} {tf}: {reason}",
+  "bot.evFull": "{tf}: {n} more reliable signals, no free place (3 trades open)",
+  "bot.skip.stale": "signal too old, the price had already moved",
+  "bot.skip.fee": "fee too large for the risk",
+  "bot.skip.past": "price already beyond the stop or target",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;

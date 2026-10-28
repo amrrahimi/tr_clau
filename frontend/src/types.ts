@@ -236,7 +236,8 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error";
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip";
+  count?: number; // skip "full": how many signals had no room
   symbol?: string;
   side?: Side;
   timeframe?: string;

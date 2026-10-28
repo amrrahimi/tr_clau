@@ -490,3 +490,4 @@ button:hover { background: var(--border); }
 .bot-table td.loss { color: var(--down); }
 .bot-table td.side.long { color: var(--up); }
 .bot-table td.side.short { color: var(--down); }
+.bot-diary li.skip { color: var(--muted); }

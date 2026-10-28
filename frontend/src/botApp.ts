@@ -320,7 +320,7 @@ export class BotApp {
     // The bot's diary.
     parts.push(el("div", "list-heading", t("bot.diary")));
     const diary = el("ul", "bot-diary");
-    for (const e of s.events.slice(0, 8)) {
+    for (const e of s.events.slice(0, 12)) {
       const li = el("li", e.kind);
       const time = el("span", "time", formatClock(e.time * 1000, this.zone).slice(0, 5));
       time.dir = "ltr";

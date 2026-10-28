@@ -14,6 +14,10 @@ Money rules (agreed with the owner):
   the position is made smaller (so the risk is less than 1%, never more);
 - a 5% loss in one day stops new trades until the next day (UTC);
 - a 30% fall from the starting money switches the bot off.
+A signal is "stale" (skipped) when the price has moved more than a quarter
+of the stop distance since the signal: the stop would then sit closer than
+the strategy meant. Bigger timeframes are checked first, so their signals
+do not wait behind the small ones.
 
 The account is saved to a file, so it survives closing the app.
 Futures funding payments are not counted yet.
@@ -36,6 +40,8 @@ from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params
 
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]
+SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
+STALE_PART = 0.25             # of the stop distance: further than this from the signal price = too late
 MODE_OF = {"1m": "scalping", "3m": "scalping", "5m": "scalping", "15m": "daily", "1h": "daily"}
 MARKET = "futures"            # long and short (spot cannot short)
 RISK = 0.01                   # of the account, per trade
@@ -154,6 +160,12 @@ def _maybe_breakeven(position: dict, extreme: float, when: int) -> None:
     if (extreme >= trigger) if long_ else (extreme <= trigger):
         position["stop"] = position["breakevenPrice"]
         position["breakevenAt"] = when
+
+
+def is_stale(signal_price: float, price: float, stop: float) -> bool:
+    """The price moved more than STALE_PART of the stop distance since the signal."""
+    distance = abs(signal_price - stop)
+    return distance > 0 and abs(price - signal_price) > STALE_PART * distance
 
 
 # ---------------------------------------------------------------- choosing
@@ -339,7 +351,7 @@ class PaperBot:
                 self._event("halted", equity=equity)
                 self.save()
                 return
-            for tf in TIMEFRAMES:
+            for tf in SCAN_ORDER:
                 period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
                 if self.account["lastScan"].get(tf, {}).get("period") == period:
                     continue
@@ -413,8 +425,13 @@ class PaperBot:
         finally:
             self.scanning = None
         open_coins = {p["symbol"] for p in self.account["positions"]}
-        for c in pick(candidates, open_coins, MAX_OPEN - len(self.account["positions"])):
+        free = MAX_OPEN - len(self.account["positions"])
+        chosen = pick(candidates, open_coins, free)
+        for c in chosen:
             await self._open(c, tf, now, settings[c["strategy"]])
+        left = len({c["symbol"] for c in candidates} - open_coins) - len(chosen)
+        if left > 0:
+            self._event("skip", reason="full", timeframe=tf, count=left)
 
     async def _open(self, c: dict, tf: str, now: float, params: dict) -> None:
         recent = await self.recent(c["symbol"], tf)
@@ -424,11 +441,17 @@ class PaperBot:
         s = c["signal"]
         stop, target = s["stopLoss"], s["takeProfit"]
         long_ = s["side"] == LONG
-        # The price may have moved since the signal: skip if it already passed the stop or the target.
+        def skip(reason: str) -> None:
+            self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
+
+        # The price may have moved since the signal: skip if it already passed the stop or the target,
+        # or moved too far for the stop to still be where the strategy meant it.
         if (entry <= stop or entry >= target) if long_ else (entry >= stop or entry <= target):
-            return
+            return skip("past")
+        if is_stale(s["entry"], entry, stop):
+            return skip("stale")
         if not fee_ok(entry, stop, self.fees, params.get("fee_ratio", 0)):
-            return
+            return skip("fee")
         used = sum(p["margin"] for p in self.account["positions"])
         equity = self.equity()
         size = position_size(s["side"], entry, stop, equity, equity - used, self.fees)

@@ -241,6 +241,11 @@ export const fa: Record<MessageKey, string> = {
   "bot.colLev": "اهرم",
   "bot.colPrice": "قیمت / خروج",
   "bot.colPnl": "نتیجه (USDT)",
+  "bot.evSkip": "رد شد: {coin} {tf}، {reason}",
+  "bot.evFull": "{tf}: {n} سیگنال قابل اعتماد دیگر بود، ولی جای خالی نبود (۳ معامله باز)",
+  "bot.skip.stale": "سیگنال کهنه بود، قیمت حرکت کرده بود",
+  "bot.skip.fee": "کارمزد نسبت به ریسک زیاد بود",
+  "bot.skip.past": "قیمت از حد ضرر یا حد سود گذشته بود",
   "language.switch": "EN",
   "language.switchLabel": "تغییر به انگلیسی",
 };
