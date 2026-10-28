@@ -18,16 +18,16 @@ class SizeTest(unittest.TestCase):
         s = pp.position_size(LONG, 100, 99, 100, 100, FEES)       # stop 1% away
         self.assertAlmostEqual(s.risk, 1.0)                         # 1% of 100 USDT, fees included
         self.assertAlmostEqual(s.notional, 1 / 0.0112)
-        self.assertEqual(s.leverage, 3)                             # 89 USDT in a 33 USDT slot
+        self.assertEqual(s.leverage, 6)                             # 89 USDT in a 16.7 USDT slot (6 places)
         self.assertLess(s.liquidation, 99)                          # liquidation beyond the stop
 
     def test_tight_stop_needs_more_leverage_but_never_more_than_ten(self):
-        s = pp.position_size(LONG, 100, 99.8, 100, 100, FEES)     # 0.2%
+        s = pp.position_size(LONG, 100, 99.5, 100, 100, FEES)     # 0.5%: needs 10x in a sixth of the account
         self.assertEqual(s.leverage, 10)
         self.assertAlmostEqual(s.risk, 1.0)
         s = pp.position_size(LONG, 100, 99.9, 100, 100, FEES)     # 0.1%: does not fit
         self.assertEqual(s.leverage, 10)
-        self.assertAlmostEqual(s.notional, 100 / 3 * 10)
+        self.assertAlmostEqual(s.notional, 100 / pp.MAX_OPEN * 10)
         self.assertLess(s.risk, 1.0)                               # smaller position, less risk, never more
 
     def test_wide_stop_lowers_leverage_for_liquidation(self):
@@ -98,6 +98,21 @@ class PickTest(unittest.TestCase):
         self.assertEqual([c["base"] for c in pp.pick(cs, {"C/USDT:USDT"}, 2)], ["B", "A"])
 
 
+class SlotsTest(unittest.TestCase):
+    def test_fast_and_slow_places_are_separate(self):
+        positions = [{"timeframe": "1m", "side": LONG}, {"timeframe": "5m", "side": LONG}, {"timeframe": "3m", "side": SHORT}]
+        self.assertEqual(pp.free_slots(positions, "1m"), 0)       # fast places full
+        self.assertEqual(pp.free_slots(positions, "1h"), 3)       # slow places still free
+        self.assertEqual(pp.side_room(positions), {"long": 2, "short": 3})
+
+    def test_at_most_four_in_one_direction(self):
+        cs = [cand(c, 3.0 - i * 0.1, 20) for i, c in enumerate("ABCDEF")]
+        chosen = pp.pick(cs, set(), 6, {"long": 4, "short": 4})
+        self.assertEqual([c["base"] for c in chosen], ["A", "B", "C", "D"])
+        mixed = cs[:3] + [cand("S", 1.1, 20, SHORT)]
+        self.assertEqual([c["base"] for c in pp.pick(mixed, set(), 3, {"long": 1, "short": 4})], ["A", "S"])
+
+
 class BotTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -124,7 +139,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.reset(100)
         await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
         p = bot.account["positions"][0]
-        self.assertEqual((p["side"], p["leverage"], p["entryPrice"]), (LONG, 3, 100))
+        self.assertEqual((p["side"], p["leverage"], p["entryPrice"]), (LONG, 6, 100))
         self.assertAlmostEqual(p["risk"], 1.0)
         # Next candle reaches the take-profit.
         self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100), bar(1_000_020, 100, 102.5, 99.5, 102)]

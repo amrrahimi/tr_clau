@@ -64,5 +64,5 @@ test("skipped signals say why", () => {
   assert.equal(eventText({ time: 0, kind: "skip", symbol: "LITE", timeframe: "15m", reason: "stale" }, t),
     "رد شد: LITE 15m، سیگنال کهنه بود، قیمت حرکت کرده بود");
   assert.equal(eventText({ time: 0, kind: "skip", timeframe: "5m", reason: "full", count: 4 }, t),
-    "5m: 4 سیگنال قابل اعتماد دیگر بود، ولی جای خالی نبود (۳ معامله باز)");
+    "5m: 4 سیگنال قابل اعتماد دیگر بود، ولی جای خالی نبود");
 });

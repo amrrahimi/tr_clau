@@ -273,6 +273,7 @@ export interface PaperState {
   scanning: string | null; // timeframe being scanned now
   lastScan: Record<string, { period: number; time: number }>;
   timeframes: string[];
-  rules: { risk: number; maxOpen: number; maxLeverage: number; dailyStop: number; totalStop: number;
+  rules: { risk: number; maxOpen: number; maxFast?: number; maxSlow?: number; maxSameSide?: number;
+    maxLeverage: number; dailyStop: number; totalStop: number;
     fees: { maker: number; taker: number } };
 }

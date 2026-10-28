@@ -313,7 +313,8 @@ export class BotApp {
 
     // Rules in one line.
     parts.push(el("div", "bot-hint rules", t("bot.rules", {
-      risk: String(s.rules.risk), open: String(s.rules.maxOpen), lev: String(s.rules.maxLeverage),
+      risk: String(s.rules.risk), open: String(s.rules.maxOpen), fast: String(s.rules.maxFast ?? 3),
+      slow: String(s.rules.maxSlow ?? 3), side: String(s.rules.maxSameSide ?? 4), lev: String(s.rules.maxLeverage),
       daily: String(s.rules.dailyStop), total: String(s.rules.totalStop),
     })));
 

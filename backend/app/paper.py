@@ -8,7 +8,9 @@ position at the take-profit, the stop-loss or the break-even stop.
 
 Money rules (agreed with the owner):
 - risk per trade: 1% of the money in the account (fees included);
-- at most 3 positions at a time, one per coin;
+- separate places for fast and slow trades (owner's choice): at most 3 on
+  1m/3m/5m and 3 on 15m/1h, one per coin, and at most 4 in the same
+  direction (coins tend to move together, so many longs are one big bet);
 - leverage is set by the bot: the lowest that fits, at most 10x, and the
   liquidation price must stay beyond the stop-loss; if that does not fit,
   the position is made smaller (so the risk is less than 1%, never more);
@@ -45,7 +47,10 @@ STALE_PART = 0.25             # of the stop distance: further than this from the
 MODE_OF = {"1m": "scalping", "3m": "scalping", "5m": "scalping", "15m": "daily", "1h": "daily"}
 MARKET = "futures"            # long and short (spot cannot short)
 RISK = 0.01                   # of the account, per trade
-MAX_OPEN = 3
+GROUP = {"1m": "fast", "3m": "fast", "5m": "fast", "15m": "slow", "1h": "slow"}
+GROUP_SLOTS = {"fast": 3, "slow": 3}
+MAX_OPEN = sum(GROUP_SLOTS.values())
+MAX_SAME_SIDE = 4
 MAX_LEVERAGE = 10
 MAINTENANCE = 0.005           # part of the position the exchange keeps as a minimum (liquidation)
 LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liquidation price
@@ -170,20 +175,36 @@ def is_stale(signal_price: float, price: float, stop: float) -> bool:
 
 # ---------------------------------------------------------------- choosing
 
-def pick(candidates: list[dict], open_coins: set[str], slots: int) -> list[dict]:
-    """Best reliable signals first (profit factor, then number of trades), one per coin."""
+def pick(candidates: list[dict], open_coins: set[str], slots: int,
+         side_room: Optional[dict[str, int]] = None) -> list[dict]:
+    """Best reliable signals first (profit factor, then number of trades), one per
+    coin, at most `slots`, and no more per direction than `side_room` allows."""
     def score(c):
         pf = c["stats"]["profitFactor"]
         return (pf if pf is not None else float("inf"), c["stats"]["trades"])
+    room = dict(side_room) if side_room is not None else None
     chosen, coins = [], set(open_coins)
     for c in sorted(candidates, key=score, reverse=True):
         if len(chosen) >= slots:
             break
-        if c["symbol"] in coins:
+        side = c["signal"]["side"]
+        if c["symbol"] in coins or (room is not None and room.get(side, 0) <= 0):
             continue
         chosen.append(c)
         coins.add(c["symbol"])
+        if room is not None:
+            room[side] -= 1
     return chosen
+
+
+def free_slots(positions: list[dict], timeframe: str) -> int:
+    group = GROUP[timeframe]
+    used = sum(1 for p in positions if GROUP.get(p["timeframe"]) == group)
+    return GROUP_SLOTS[group] - used
+
+
+def side_room(positions: list[dict]) -> dict[str, int]:
+    return {side: MAX_SAME_SIDE - sum(1 for p in positions if p["side"] == side) for side in ("long", "short")}
 
 
 # ---------------------------------------------------------------- the account
@@ -289,7 +310,8 @@ class PaperBot:
             "scanning": self.scanning,
             "lastScan": a["lastScan"],
             "timeframes": TIMEFRAMES,
-            "rules": {"risk": RISK * 100, "maxOpen": MAX_OPEN, "maxLeverage": MAX_LEVERAGE,
+            "rules": {"risk": RISK * 100, "maxOpen": MAX_OPEN, "maxFast": GROUP_SLOTS["fast"],
+                      "maxSlow": GROUP_SLOTS["slow"], "maxSameSide": MAX_SAME_SIDE, "maxLeverage": MAX_LEVERAGE,
                       "dailyStop": DAILY_STOP * 100, "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
@@ -356,7 +378,7 @@ class PaperBot:
                 if self.account["lastScan"].get(tf, {}).get("period") == period:
                     continue
                 self.account["lastScan"][tf] = {"period": period, "time": now}
-                if self._daily_stop_hit(self.equity()) or len(self.account["positions"]) >= MAX_OPEN:
+                if self._daily_stop_hit(self.equity()) or free_slots(self.account["positions"], tf) <= 0:
                     continue
                 await self._scan_and_open(tf, now)
             self.save()
@@ -425,8 +447,8 @@ class PaperBot:
         finally:
             self.scanning = None
         open_coins = {p["symbol"] for p in self.account["positions"]}
-        free = MAX_OPEN - len(self.account["positions"])
-        chosen = pick(candidates, open_coins, free)
+        positions = self.account["positions"]
+        chosen = pick(candidates, open_coins, free_slots(positions, tf), side_room(positions))
         for c in chosen:
             await self._open(c, tf, now, settings[c["strategy"]])
         left = len({c["symbol"] for c in candidates} - open_coins) - len(chosen)

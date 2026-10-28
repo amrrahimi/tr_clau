@@ -126,7 +126,7 @@ export class MockBackend implements Backend {
       strategies: MOCK_STRATEGIES.map((c) => c.type), positions: [], closed: [], events: [],
       stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
       scanning: null, lastScan: {}, timeframes: ["1m", "3m", "5m", "15m", "1h"],
-      rules: { risk: 1, maxOpen: 3, maxLeverage: 10, dailyStop: 5, totalStop: 30, fees: { maker: 0.02, taker: 0.06 } },
+      rules: { risk: 1, maxOpen: 6, maxFast: 3, maxSlow: 3, maxSameSide: 4, maxLeverage: 10, dailyStop: 5, totalStop: 30, fees: { maker: 0.02, taker: 0.06 } },
     };
   }
 
