@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey } from "../src/botView.ts";
+import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -88,4 +88,14 @@ test("the brain in the panel and the diary", () => {
   assert.equal(eventText({ time: 0, kind: "pretrain", count: 1200 }, t), "پیش‌آموزش: 1200 سیگنال گذشته از تاریخچه به حافظه اضافه شد");
   assert.equal(eventText({ time: 0, kind: "brain", reason: "promoted", version: 2 }, t),
     "هوش ربات یاد گرفت: مدل جدید شماره‌ی 2 به کار افتاد");
+});
+
+test("break-even trades are grey, not losses", () => {
+  const base = { notional: 100, exitReason: "stop" } as unknown as PaperTrade;
+  assert.equal(tradeOutcome({ ...base, pnl: -1e-9 }), "even");
+  assert.equal(tradeOutcome({ ...base, pnl: -0.02, exitReason: "breakeven" }), "even");
+  assert.equal(tradeOutcome({ ...base, pnl: -0.5 }), "loss");
+  assert.equal(tradeOutcome({ ...base, pnl: 1.05, exitReason: "target" }), "win");
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  assert.equal(eventText({ time: 0, kind: "resume", reason: "recovered" }, t), "مکث زودتر تمام شد: 2 نتیجه‌ی آخر سود بود، معامله ادامه دارد");
 });

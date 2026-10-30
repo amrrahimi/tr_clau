@@ -484,8 +484,14 @@ button:hover { background: var(--border); }
 .bot-diary .time { color: var(--muted); font-variant-numeric: tabular-nums; }
 .bot-diary li.open { color: var(--text); }
 .bot-diary li.error, .bot-diary li.halted { color: var(--down); }
-.bot-trades { flex: 0 0 auto; height: 240px; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
-.bot-table tbody tr.active { background: rgba(41, 98, 255, 0.2); }
+.bot-trades { flex: 0 0 auto; height: max(260px, 42vh); display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.bot-table tbody tr.result-win { background: rgba(38, 166, 154, 0.16); }
+.bot-table tbody tr.result-loss { background: rgba(239, 83, 80, 0.16); }
+.bot-table tbody tr.result-even { background: rgba(140, 145, 160, 0.16); }
+.bot-table tbody tr.active { background: rgba(41, 98, 255, 0.28); }
+.bot-table tbody tr.active.result-win { box-shadow: inset 3px 0 0 #26a69a; }
+.bot-table tbody tr.active.result-loss { box-shadow: inset 3px 0 0 #ef5350; }
+.bot-table tbody tr[class*="result-"]:hover { filter: brightness(1.25); }
 .bot-table td.open-badge { color: var(--accent); font-weight: 600; }
 .bot-table td.loss { color: var(--down); }
 .bot-table td.side.long { color: var(--up); }

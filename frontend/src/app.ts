@@ -15,7 +15,7 @@ import { ScannerPanel } from "./scannerPanel.ts";
 import { StrategyPanel } from "./strategyPanel.ts";
 import { signalAsTrade } from "./strategyState.ts";
 import { ZONES, formatOffset, loadZone, offsetMinutes, saveZone, type ZoneId } from "./timezone.ts";
-import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options } from "./types.ts";
+import type { Analysis, Candle, MarketInfo, MarketType, Mode, Options, StrategyOverview } from "./types.ts";
 
 type LiveStatus = "connecting" | "live" | "stopped";
 
@@ -149,6 +149,7 @@ export class App {
     this.candles = [];
     this.analysis = null;
     this.indicators.clearResults();
+    this.lastOverview = null;
     this.chart.setTrades([], null);
     this.strategies.showOverview(null);
     this.renderAnalysis();
@@ -241,6 +242,20 @@ export class App {
     }
   }
 
+  private lastOverview: StrategyOverview | null = null;
+
+  /** The active strategy's trades on the chart, with labels in the current language. */
+  private drawStrategyTrades(): void {
+    const overview = this.lastOverview;
+    if (!overview) return;
+    const fresh = overview.rows.find((r) => r.strategy === overview.active?.strategy)?.signal ?? null;
+    const forming = this.candles.length ? this.candles[this.candles.length - 1].time : null;
+    const signalTrade = fresh ? signalAsTrade(fresh, forming) : null;
+    this.chart.setTrades(overview.active?.trades ?? [], overview.lastClosedTime,
+      { long: this.t("strategies.long"), short: this.t("strategies.short") },
+      signalTrade && { trade: signalTrade, labels: { long: this.t("strategies.signalLong"), short: this.t("strategies.signalShort") } });
+  }
+
   /** Results of every strategy on this chart, and the trades of the active one. */
   private async loadStrategies(): Promise<void> {
     if (!this.symbol) return;
@@ -261,12 +276,8 @@ export class App {
       // Ignore answers for an older chart or older choices.
       if (id !== this.strategyId || chartId !== this.requestId) return;
       this.strategies.showOverview(overview);
-      const fresh = overview.rows.find((r) => r.strategy === overview.active?.strategy)?.signal ?? null;
-      const forming = this.candles.length ? this.candles[this.candles.length - 1].time : null;
-      const signalTrade = fresh ? signalAsTrade(fresh, forming) : null;
-      this.chart.setTrades(overview.active?.trades ?? [], overview.lastClosedTime,
-        { long: this.t("strategies.long"), short: this.t("strategies.short") },
-        signalTrade && { trade: signalTrade, labels: { long: this.t("strategies.signalLong"), short: this.t("strategies.signalShort") } });
+      this.lastOverview = overview;
+      this.drawStrategyTrades();
     } catch (error) {
       if (id !== this.strategyId) return;
       this.strategies.setError();
@@ -499,6 +510,7 @@ export class App {
 
   /** Re-draw every text in the current language and flip the page direction. */
   private applyLanguage(): void {
+    this.drawStrategyTrades(); // labels on the chart follow the language too
     document.documentElement.lang = this.language;
     document.documentElement.dir = direction(this.language);
     document.title = this.t("app.title");

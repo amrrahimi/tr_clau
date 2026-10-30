@@ -319,6 +319,6 @@ export interface PaperState {
   lastScan: Record<string, { period: number; time: number }>;
   timeframes: string[];
   rules: { risk: number; maxOpen: number; maxFast?: number; maxSlow?: number; maxSameSide?: number;
-    maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; totalStop: number;
+    maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; totalStop: number;
     fees: { maker: number; taker: number } };
 }

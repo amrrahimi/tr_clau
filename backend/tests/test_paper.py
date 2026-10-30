@@ -218,6 +218,55 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(trade for _, trade in scanned))
         self.assertEqual([e["kind"] for e in bot.account["events"]][-2:], ["pause", "resume"])
 
+    async def test_break_even_trades_do_not_count_as_losses(self):
+        bot = self.bot
+        bot.reset(100)
+        base = {"notional": 100, "margin": 10, "exitTime": self.clock[0]}
+        self.assertEqual(pp.trade_outcome({**base, "pnl": -1e-9, "exitReason": "stop"}), "even")   # rounding dust
+        self.assertEqual(pp.trade_outcome({**base, "pnl": -0.02, "exitReason": "breakeven"}), "even")
+        self.assertEqual(pp.trade_outcome({**base, "pnl": -0.5, "exitReason": "stop"}), "loss")
+        bot.account["lossStreak"] = 3
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        p = bot.account["positions"][0]
+        bot._close(p, pp.breakeven_price(p["side"], p["entryPrice"], FEES), "breakeven", self.clock[0])
+        self.assertEqual(bot.account["lossStreak"], 3)          # unchanged: no 4th "loss", no pause
+        self.assertEqual(bot.account["closed"][-1]["outcome"], "even")
+
+    async def test_pause_ends_early_after_two_profits(self):
+        from app.memory import Memory
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+        bot = self.bot
+        bot.memory = memory
+        bot.reset(100)
+        bot.start()
+
+        async def fake_scan(tf, now, trade=True):
+            pass
+        bot._scan_and_open = fake_scan
+        bot.account["lossStreak"] = 4
+        await bot.step()
+        paused_at = self.clock[0]
+        self.assertIsNotNone(bot.account["pausedUntil"])
+        # During the pause: one shadow signal wins, then one loses -> still paused.
+        rows = [("w1", "win", 100), ("l1", "loss", 200)]
+        for key, status, dt in rows:
+            memory.db.execute("INSERT INTO signals (key, strategy, status, exit_time, confirmed_at, reliable, source, taken)"
+                              " VALUES (?, 'ema_cross', ?, ?, ?, 1, 'live', 0)", (key, status, paused_at + dt, paused_at + 10))
+        memory.db.commit()
+        self.clock[0] += 300
+        await bot.step()
+        self.assertIsNotNone(bot.account["pausedUntil"])
+        # A bot trade closes in profit, then a shadow signal wins: two profits in a row -> back to work.
+        bot.account["closed"].append({"exitTime": paused_at + 400, "pnl": 1.0, "notional": 100, "exitReason": "target"})
+        memory.db.execute("INSERT INTO signals (key, strategy, status, exit_time, confirmed_at, reliable, source, taken)"
+                          " VALUES ('w2', 'ema_cross', 'win', ?, ?, 1, 'live', 0)", (paused_at + 500, paused_at + 20))
+        memory.db.commit()
+        self.clock[0] += 300
+        await bot.step()
+        self.assertIsNone(bot.account["pausedUntil"])
+        self.assertEqual(bot.account["events"][-1], {"time": self.clock[0], "kind": "resume", "reason": "recovered"})
+
     async def test_smart_pause_after_five_percent_fall(self):
         bot = self.bot
         bot.reset(100)

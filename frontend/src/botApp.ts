@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView } from "./chart.ts";
-import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey } from "./botView.ts";
+import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -101,6 +101,7 @@ export class BotApp {
       return b;
     }));
     this.render();
+    this.drawTrades(); // labels on the chart follow the language too
   }
 
   // ---------- data ----------
@@ -324,7 +325,7 @@ export class BotApp {
       risk: String(s.rules.risk), open: String(s.rules.maxOpen), fast: String(s.rules.maxFast ?? 3),
       slow: String(s.rules.maxSlow ?? 3), side: String(s.rules.maxSameSide ?? 4), lev: String(s.rules.maxLeverage),
       losses: String(s.rules.pauseLosses ?? 4), fall: String(s.rules.pauseFall ?? 5),
-      hours: String(s.rules.pauseHours ?? 3), total: String(s.rules.totalStop),
+      hours: String(s.rules.pauseHours ?? 3), total: String(s.rules.totalStop), wins: String(s.rules.recoverWins ?? 2),
     })));
 
     // The bot's memory: experience kept forever (not cleared by "start again").
@@ -388,7 +389,9 @@ export class BotApp {
     for (const p of rows) {
       const closed = "exitPrice" in p && (p as PaperTrade).exitPrice !== undefined;
       const tr = document.createElement("tr");
-      if (this.target?.id === p.id) tr.className = "active";
+      // Row colour by result: green profit, red loss, grey break-even (open positions stay plain).
+      const outcome = closed ? tradeOutcome(p as PaperTrade) : null;
+      tr.className = [outcome ? `result-${outcome}` : "", this.target?.id === p.id ? "active" : ""].join(" ").trim();
       const digits = pricePrecision(p.entryPrice);
       const result = closed ? (p as PaperTrade).pnl : p.openPnl ?? null;
       const cells: [string, string][] = [
@@ -402,7 +405,8 @@ export class BotApp {
         [formatPrice(p.stop, digits), "loss"],
         [formatPrice(p.takeProfit, digits), "up"],
         [formatPrice(closed ? (p as PaperTrade).exitPrice : p.lastPrice ?? null, digits), ""],
-        [formatMoney(result), result === null ? "" : result > 0 ? "up" : result < 0 ? "loss" : ""],
+        [outcome === "even" ? "0.00" : formatMoney(result),
+          outcome ? { win: "up", loss: "loss", even: "" }[outcome] : result === null ? "" : result > 0 ? "up" : result < 0 ? "loss" : ""],
         [formatClock(((closed ? (p as PaperTrade).exitTime : p.entryTime)) * 1000, this.zone).slice(0, 5), ""],
       ];
       for (const [text, cls] of cells) {

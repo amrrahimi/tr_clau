@@ -28,12 +28,19 @@ export function paperAsTrade(p: PaperPosition | PaperTrade): Trade {
     exitPrice: t ? t.exitPrice : null,
     exitReason: t ? t.exitReason : null,
     breakevenTime: p.breakevenAt,
-    result: !t ? "open" : t.pnl > 0 ? "win" : t.exitReason === "breakeven" && Math.abs(t.pnl) < p.notional * 1e-4 ? "breakeven" : "loss",
+    result: !t ? "open" : { win: "win", loss: "loss", even: "breakeven" }[tradeOutcome(t)] as Trade["result"],
     pnlPercent: percent,
     grossPercent: null,
     feePercent: null,
     r: null,
   };
+}
+
+/** Result of a closed bot trade: break-even when it closed at the break-even stop or the result is
+ * practically zero (a tiny fraction of the position), else win or loss. Same rule as the backend. */
+export function tradeOutcome(t: PaperTrade): "win" | "loss" | "even" {
+  if (t.exitReason === "breakeven" || Math.abs(t.pnl) < t.notional * 1e-4) return "even";
+  return t.pnl > 0 ? "win" : "loss";
 }
 
 /** What the status line says. */
@@ -81,7 +88,7 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
         left: e.strategies?.length ? t("bot.evBenched", { list: e.strategies.map((k) => t(`strat.${k}` as MessageKey)).join("، ") }) : "",
       });
     case "resume":
-      return t("bot.evResume");
+      return e.reason === "recovered" ? t("bot.evResumeEarly", { n: "2" }) : t("bot.evResume");
     case "pretrain":
       return t("bot.evPretrain", { n: String(e.count ?? 0) });
     case "brain":

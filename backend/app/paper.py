@@ -65,6 +65,7 @@ LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liq
 PAUSE_LOSSES = 4             # losing trades in a row
 PAUSE_FALL = 0.05            # fall since the last pause (or the start)
 PAUSE_SECONDS = 3 * 3600
+RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
 BENCH_SECONDS = 12 * 3600    # strategies that lost lately are left out this long
 BENCH_LOOKBACK = 24 * 3600
 TOTAL_STOP = 0.30
@@ -221,6 +222,17 @@ def side_room(positions: list[dict]) -> dict[str, int]:
 
 # ---------------------------------------------------------------- the account
 
+EVEN_PART = 1e-4    # a result smaller than this share of the position counts as break-even
+
+
+def trade_outcome(trade: dict) -> str:
+    """win / loss / even. A trade closed at the break-even stop (or with a result of practically
+    zero, e.g. a billionth of a dollar from rounding) is "even", not a loss."""
+    if trade.get("exitReason") == "breakeven" or abs(trade["pnl"]) < trade["notional"] * EVEN_PART:
+        return "even"
+    return "win" if trade["pnl"] > 0 else "loss"
+
+
 def new_account(capital: float, now: float) -> dict:
     return {
         "version": 1,
@@ -238,6 +250,7 @@ def new_account(capital: float, now: float) -> dict:
         "dayStartEquity": capital,
         "lossStreak": 0,
         "pausedUntil": None,
+        "pausedAt": None,
         "pauseReason": None,
         "pauseBase": capital,
         "benched": {},
@@ -325,7 +338,7 @@ class PaperBot:
             "mode": a["mode"],
             "strategies": a["strategies"],
             "positions": positions,
-            "closed": list(reversed(closed[-100:])),
+            "closed": list(reversed(closed)),     # the whole kept history (up to KEEP_CLOSED)
             "events": list(reversed(a["events"][-20:])),
             "stats": {
                 "trades": len(closed),
@@ -343,7 +356,7 @@ class PaperBot:
             "rules": {"risk": RISK * 100, "maxOpen": MAX_OPEN, "maxFast": GROUP_SLOTS["fast"],
                       "maxSlow": GROUP_SLOTS["slow"], "maxSameSide": MAX_SAME_SIDE, "maxLeverage": MAX_LEVERAGE,
                       "pauseLosses": PAUSE_LOSSES, "pauseFall": PAUSE_FALL * 100,
-                      "pauseHours": PAUSE_SECONDS / 3600, "totalStop": TOTAL_STOP * 100,
+                      "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
 
@@ -495,14 +508,36 @@ class PaperBot:
         until = self.account["pausedUntil"]
         return until is not None and now < until
 
+    def _recovered(self, now: float) -> bool:
+        """During a pause: did the last RECOVER_WINS results all end in profit? Results are the
+        bot's own trades that closed during the pause plus the reliable signals of the strategies it
+        may use that came during the pause and ended (followed in the memory, no money at risk)."""
+        a = self.account
+        since = a.get("pausedAt")
+        if since is None:
+            return False
+        results = [(t["exitTime"], t.get("outcome") or trade_outcome(t)) for t in a["closed"] if t["exitTime"] >= since]
+        if self.memory is not None:
+            benched = {k for k, until in a["benched"].items() if until > now}
+            allowed = set(a["strategies"]) - benched
+            results += [(when, status) for when, status, kind in self.memory.outcomes_since(since) if kind in allowed]
+        results = sorted(r for r in results if r[1] in ("win", "loss"))
+        last = results[-RECOVER_WINS:]
+        return len(last) == RECOVER_WINS and all(status == "win" for _, status in last)
+
     def _update_pause(self, now: float, equity: float) -> None:
         a = self.account
-        if a["pausedUntil"] is not None and now >= a["pausedUntil"]:
+        early = a["pausedUntil"] is not None and now < a["pausedUntil"] and self._recovered(now)
+        if a["pausedUntil"] is not None and (now >= a["pausedUntil"] or early):
             a["pausedUntil"] = None
+            a["pausedAt"] = None
             a["pauseReason"] = None
             a["lossStreak"] = 0
             a["pauseBase"] = equity
-            self._event("resume")
+            if early:
+                self._event("resume", reason="recovered")
+            else:
+                self._event("resume")
         if a["pausedUntil"] is not None:
             return
         reason = None
@@ -513,6 +548,7 @@ class PaperBot:
         if reason is None:
             return
         a["pausedUntil"] = now + PAUSE_SECONDS
+        a["pausedAt"] = now
         a["pauseReason"] = reason
         benched = []
         if self.memory is not None:
@@ -555,7 +591,13 @@ class PaperBot:
                  "pnlPercent": result / p["margin"] * 100 if p["margin"] else 0}
         self.account["closed"].append(trade)
         del self.account["closed"][:-KEEP_CLOSED]
-        self.account["lossStreak"] = self.account["lossStreak"] + 1 if result < 0 else 0
+        outcome = trade_outcome(trade)
+        trade["outcome"] = outcome
+        if outcome == "loss":
+            self.account["lossStreak"] += 1
+        elif outcome == "win":
+            self.account["lossStreak"] = 0
+        # break-even: neither a loss nor a win, the count stays as it was
         if self.memory is not None:
             self.memory.save_trade(trade, now)
         self._event("close", symbol=p["base"], reason=reason, pnl=result)

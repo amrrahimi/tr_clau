@@ -217,7 +217,7 @@ export const en = {
   "bot.resetHint": "Starting again removes all trades and starts with this amount.",
   "bot.strategies": "Strategies",
   "bot.autoHint": "The bot uses all 6 strategies on {tfs} and picks the best reliable signal.",
-  "bot.rules": "Risk {risk}% per trade · at most {fast} fast (1m–5m) and {slow} slow (15m–1h) trades · at most {side} in one direction · leverage up to {lev}x · {hours}-hour pause after {losses} losses in a row or a {fall}% fall · switches off at {total}% total loss · futures fees",
+  "bot.rules": "Risk {risk}% per trade · at most {fast} fast (1m–5m) and {slow} slow (15m–1h) trades · at most {side} in one direction · leverage up to {lev}x · {hours}-hour pause after {losses} losses in a row or a {fall}% fall (ends early after {wins} profits in a row; break-even is not a loss) · switches off at {total}% total loss · futures fees",
   "bot.diary": "Bot's diary",
   "bot.diaryEmpty": "Nothing yet",
   "bot.evOpen": "Opened {coin} {side} {tf} ×{lev} ({strategy})",
@@ -267,6 +267,7 @@ export const en = {
   "bot.brain.onHistory": "past signals",
   "bot.brain.pretrain": "Pre-training from history: {done} of {total} charts",
   "bot.evPretrain": "Pre-training: {n} past signals added from history",
+  "bot.evResumeEarly": "Pause ended early: the last {n} results were profits, trading again",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;

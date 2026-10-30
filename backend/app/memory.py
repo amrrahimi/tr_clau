@@ -222,6 +222,14 @@ class Memory:
         return {k: v or 0.0 for k, v in rows}
 
     @_locked
+    def outcomes_since(self, since: float) -> list[tuple]:
+        """Live reliable signals that came after a moment, were not traded and have ended:
+        (end time, status, strategy). Used to see if the market fits the strategies again."""
+        return self.db.execute(
+            "SELECT exit_time, status, strategy FROM signals WHERE source = 'live' AND reliable = 1 AND taken = 0"
+            " AND confirmed_at >= ? AND status IN ('win','loss') ORDER BY exit_time", (since,)).fetchall()
+
+    @_locked
     def set_chance(self, key: str, chance: float) -> None:
         self.db.execute("UPDATE signals SET chance = ? WHERE key = ?", (chance, key))
         self.db.commit()
