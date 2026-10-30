@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -66,14 +67,26 @@ def features(entry: dict, overview_extra: dict, fees: Fees) -> dict:
     }
 
 
+def _locked(method):
+    def wrapper(self, *args, **kwargs):
+        with self.lock:
+            return method(self, *args, **kwargs)
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
+
+
 class Memory:
     def __init__(self, path: Path):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(path))
+        # The bot loop and the web requests may use the memory from different threads.
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
+        self.lock = threading.RLock()
         self.db.executescript(SCHEMA)
         self.db.commit()
 
+    @_locked
     def close(self) -> None:
         self.db.close()
 
@@ -81,6 +94,7 @@ class Memory:
     def key(symbol: str, timeframe: str, strategy: str, signal_time: int) -> str:
         return f"{symbol}|{timeframe}|{strategy}|{signal_time}"
 
+    @_locked
     def record(self, entry: dict, timeframe: str, feats: dict, now: float) -> str:
         """Remember a reliable signal (once)."""
         s = entry["signal"]
@@ -93,6 +107,7 @@ class Memory:
         self.db.commit()
         return key
 
+    @_locked
     def mark(self, key: str, taken: bool = False, skip_reason: Optional[str] = None) -> None:
         if taken:
             self.db.execute("UPDATE signals SET taken = 1, skip_reason = NULL WHERE key = ?", (key,))
@@ -100,12 +115,14 @@ class Memory:
             self.db.execute("UPDATE signals SET skip_reason = ? WHERE key = ? AND taken = 0", (skip_reason, key))
         self.db.commit()
 
+    @_locked
     def open_signals(self, symbol: str, timeframe: str) -> list[dict]:
         rows = self.db.execute(
             "SELECT key, strategy, side, signal_time, stop, target FROM signals"
             " WHERE status = 'open' AND symbol = ? AND timeframe = ?", (symbol, timeframe)).fetchall()
         return [dict(zip(("key", "strategy", "side", "signal_time", "stop", "target"), r)) for r in rows]
 
+    @_locked
     def resolve(self, symbol: str, timeframe: str, candles: list[dict], params_of: dict[str, dict],
                 fees: Fees = NO_FEES, now: Optional[float] = None) -> int:
         """Work out the result of open signals of this chart from its closed candles,
@@ -147,10 +164,12 @@ class Memory:
             "UPDATE signals SET status = ?, exit_time = ?, exit_reason = ?, pnl_percent = ?, r = ?, resolved_at = ?"
             " WHERE key = ?", (status, exit_time, reason, pnl, r, now if now is not None else time.time(), key))
 
+    @_locked
     def save_trade(self, trade: dict, now: float) -> None:
         self.db.execute("INSERT INTO trades (closed_at, data) VALUES (?, ?)", (now, json.dumps(trade)))
         self.db.commit()
 
+    @_locked
     def strategy_results(self, since_exit_time: float) -> dict[str, float]:
         """Sum of results (percent) per strategy for signals that ended after a time."""
         rows = self.db.execute(
@@ -158,6 +177,7 @@ class Memory:
             " AND exit_time >= ? GROUP BY strategy", (since_exit_time,)).fetchall()
         return {k: v or 0.0 for k, v in rows}
 
+    @_locked
     def summary(self) -> dict:
         total, open_, wins, losses = self.db.execute(
             "SELECT COUNT(*), SUM(status='open'), SUM(status='win'), SUM(status='loss') FROM signals").fetchone()
