@@ -236,7 +236,7 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain";
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain";
   version?: number; // brain: model number
   until?: number; // pause: until when
   strategies?: string[]; // pause: strategies left out
@@ -271,7 +271,9 @@ export interface BrainState {
     threshold: number;
     on: boolean;
     test: { kept: BrainResults; all: BrainResults }; // on signals it had not seen
+    testedOn?: "live" | "history";
   } | null;
+  pretrain?: { done: number; total: number; running: boolean };
   lastTraining: { time: number; result: string } | null;
   nextTraining: number | null; // seconds
 }
@@ -284,7 +286,19 @@ export interface PaperState {
   pausedUntil: number | null; // smart pause: no new trades until then (seconds)
   pauseReason: "streak" | "fall" | null;
   benched: Record<string, number>; // strategies left out until (seconds)
-  memory: { signals: number; open: number; wins: number; losses: number; ended: number; taken: number; trades: number } | null;
+  memory: {
+    signals: number; // live signals the bot saw
+    reliable?: number;
+    open: number;
+    wins: number;
+    losses: number;
+    ended: number;
+    taken: number;
+    trades: number;
+    history?: number; // past signals rebuilt from the candle history
+    finished?: number;
+    charts?: number;
+  } | null;
   brain?: BrainState | null;
   mode: "auto" | "manual";
   strategies: string[];

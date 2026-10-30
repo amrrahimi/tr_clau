@@ -83,8 +83,9 @@ test("the brain in the panel and the diary", () => {
     test: { kept: { count: 40, sumR: 14, avgR: 0.35, winRate: 45 }, all: { count: 120, sumR: -6, avgR: -0.05, winRate: 30 } },
   };
   assert.equal(brainText({ state: "active", samples: 500, needed: 300, model, lastTraining: null, nextTraining: null }, t),
-    "فیلتر روشن است (مدل شماره‌ی 2). روی سیگنال‌هایی که ندیده بود 40 از 120 را قبول کرد: میانگین +0.35R در برابر −0.05R برای همه، 45٪ برد.");
+    "فیلتر روشن است (مدل شماره‌ی 2). روی سیگنال‌های واقعی‌ای که ندیده بود، از 120 سیگنال قابل اعتماد 40 تا را قبول کرد: میانگین +0.35R در برابر −0.05R برای همه، 45٪ برد.");
   assert.equal(eventText({ time: 0, kind: "skip", timeframe: "1m", reason: "brain", count: 3 }, t), "1m: هوش ربات 3 سیگنال ضعیف را رد کرد");
+  assert.equal(eventText({ time: 0, kind: "pretrain", count: 1200 }, t), "پیش‌آموزش: 1200 سیگنال گذشته از تاریخچه به حافظه اضافه شد");
   assert.equal(eventText({ time: 0, kind: "brain", reason: "promoted", version: 2 }, t),
     "هوش ربات یاد گرفت: مدل جدید شماره‌ی 2 به کار افتاد");
 });

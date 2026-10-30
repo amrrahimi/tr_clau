@@ -44,6 +44,7 @@ from typing import Awaitable, Callable, Optional
 from . import config
 from .analysis import closed_only, strategy_overview
 from .brain import Brain
+from . import pretrain
 from .memory import Memory, features
 from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params
@@ -279,6 +280,8 @@ class PaperBot:
         self.memory = memory
         self.brain = brain                    # the learning signal filter (step B)
         self.training: Optional[asyncio.Task] = None
+        self.pretraining: Optional[asyncio.Task] = None
+        self.pretrain_progress = {"done": 0, "total": 0, "running": False}
         self.coins = coins
         self.history = history
         self.recent = recent
@@ -303,6 +306,7 @@ class PaperBot:
         closed = a["closed"]
         wins = [t for t in closed if t["pnl"] > 0]
         equity = self.equity()
+        summary = self.memory.summary() if self.memory else None
         positions = []
         for p in a["positions"]:
             price = self.prices.get(p["id"])
@@ -316,8 +320,8 @@ class PaperBot:
             "pausedUntil": a["pausedUntil"],
             "pauseReason": a["pauseReason"],
             "benched": {k: v for k, v in a["benched"].items() if v > self.now()},
-            "memory": self.memory.summary() if self.memory else None,
-            "brain": self.brain.public() if self.brain else None,
+            "memory": summary,
+            "brain": {**self.brain.public(summary), "pretrain": self.pretrain_progress} if self.brain else None,
             "mode": a["mode"],
             "strategies": a["strategies"],
             "positions": positions,
@@ -389,7 +393,51 @@ class PaperBot:
             except Exception as error:  # never let one bad answer stop the bot
                 self._event("error", message=str(error)[:200])
             self._maybe_learn()
+            self._maybe_pretrain()
             await asyncio.sleep(POLL_SECONDS)
+
+    def _maybe_pretrain(self) -> None:
+        """Once a day: rebuild past signals of every chart from its history, in the background."""
+        if self.memory is None or self.brain is None:
+            return
+        if self.pretraining is not None and not self.pretraining.done():
+            return
+        last = self.account.get("pretrainedAt")
+        if pretrain.due(last, self.now()):
+            self.pretraining = asyncio.create_task(self.pretrain_round())
+
+    async def pretrain_round(self) -> int:
+        """One round over all charts; charts done in the last day are skipped. Returns new signals."""
+        memory = self.memory
+        coins = await self.coins()
+        progress = self.pretrain_progress
+        progress.update(done=0, total=len(coins) * len(TIMEFRAMES), running=True)
+        added = 0
+        try:
+            for tf in SCAN_ORDER:
+                mode = MODE_OF[tf]
+                settings = {k: parse_params(k, {}, mode) for k in STRATEGIES}
+                for symbol, base in coins:
+                    now = self.now()
+                    if pretrain.due(memory.pretrain_time(symbol, tf), now):
+                        try:
+                            rows = closed_only(await self.history(symbol, tf), tf, now)
+                            found = await asyncio.to_thread(pretrain.history_signals, symbol, base, tf, rows,
+                                                            settings, mode, self.fees)
+                            added += await asyncio.to_thread(memory.record_history, tf, found, now)
+                            memory.set_pretrain_time(symbol, tf, now)
+                        except Exception:
+                            pass  # one bad chart does not stop the round; it is tried again next round
+                    progress["done"] += 1
+        finally:
+            progress["running"] = False
+        self.account["pretrainedAt"] = self.now()
+        if added:
+            self._event("pretrain", count=added)
+            if self.brain is not None and self.brain.champion is None:
+                self.brain.last = None   # learn right away from the new examples
+        self.save()
+        return added
 
     def _maybe_learn(self) -> None:
         """Every few hours the brain learns again, in the background (the bot keeps working)."""
@@ -535,16 +583,18 @@ class PaperBot:
                 for row in overview["rows"]:
                     entry = {"symbol": symbol, "base": base, "strategy": row["strategy"],
                              "marketState": overview["marketState"], "stats": row["stats"], "signal": row.get("signal")}
-                    if not (entry["signal"] and reliable(entry)):
+                    if not entry["signal"]:
                         continue
-                    if memory is not None:  # every reliable signal is remembered, traded or not
+                    ok = reliable(entry)
+                    if memory is not None:  # every signal is remembered (traded or not, reliable or not)
                         feats = features(entry, extra, self.fees)
-                        entry["memoryKey"] = memory.record(entry, tf, feats, now)
-                        if self.brain is not None:
+                        feats["reliable"] = ok
+                        entry["memoryKey"] = memory.record(entry, tf, feats, now, reliable=ok)
+                        if ok and self.brain is not None:
                             entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
                             if entry["chance"] is not None:
                                 memory.set_chance(entry["memoryKey"], entry["chance"])
-                    if row["strategy"] in allowed:
+                    if ok and row["strategy"] in allowed:   # the bot trades reliable signals only
                         candidates.append(entry)
 
         try:

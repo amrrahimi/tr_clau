@@ -93,6 +93,13 @@ class Memory:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(signals)")}
         if "chance" not in columns:  # files from step A
             self.db.execute("ALTER TABLE signals ADD COLUMN chance REAL")  # the brain's chance of profit
+        if "reliable" not in columns:  # before "remember every signal" all remembered signals were reliable
+            self.db.execute("ALTER TABLE signals ADD COLUMN reliable INTEGER DEFAULT 1")
+        if "source" not in columns:    # live: seen by the bot; history: rebuilt from past candles
+            self.db.execute("ALTER TABLE signals ADD COLUMN source TEXT DEFAULT 'live'")
+        self.db.execute("CREATE TABLE IF NOT EXISTS pretrain (chart TEXT PRIMARY KEY, done_at REAL)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS signals_source ON signals(source, status)")
+        self.db.commit()
         self.db.commit()
 
     @_locked
@@ -104,17 +111,45 @@ class Memory:
         return f"{symbol}|{timeframe}|{strategy}|{signal_time}"
 
     @_locked
-    def record(self, entry: dict, timeframe: str, feats: dict, now: float) -> str:
-        """Remember a reliable signal (once)."""
+    def record(self, entry: dict, timeframe: str, feats: dict, now: float, reliable: bool = True) -> str:
+        """Remember a signal the bot saw (once)."""
         s = entry["signal"]
         key = self.key(entry["symbol"], timeframe, entry["strategy"], s["time"])
         self.db.execute(
             "INSERT OR IGNORE INTO signals (key, symbol, base, timeframe, strategy, side, signal_time, confirmed_at,"
-            " seen_at, entry, stop, target, features) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " seen_at, entry, stop, target, features, reliable, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'live')",
             (key, entry["symbol"], entry["base"], timeframe, entry["strategy"], s["side"], s["time"],
-             s.get("confirmedAt"), now, s["entry"], s["stopLoss"], s["takeProfit"], json.dumps(feats)))
+             s.get("confirmedAt"), now, s["entry"], s["stopLoss"], s["takeProfit"], json.dumps(feats), int(reliable)))
         self.db.commit()
         return key
+
+    @_locked
+    def record_history(self, timeframe: str, rows: list[dict], now: float) -> int:
+        """Remember past signals rebuilt from the candle history (already finished).
+        A live record of the same signal always wins. Returns how many were new."""
+        before = self.db.total_changes
+        for row in rows:
+            e, s = row["entry"], row["entry"]["signal"]
+            key = self.key(e["symbol"], timeframe, e["strategy"], s["time"])
+            self.db.execute(
+                "INSERT OR IGNORE INTO signals (key, symbol, base, timeframe, strategy, side, signal_time, confirmed_at,"
+                " seen_at, entry, stop, target, features, reliable, source, status, exit_time, exit_reason,"
+                " pnl_percent, r, resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'history',?,?,?,?,?,?)",
+                (key, e["symbol"], e["base"], timeframe, e["strategy"], s["side"], s["time"], s["confirmedAt"], now,
+                 s["entry"], s["stopLoss"], s["takeProfit"], json.dumps(row["features"]), int(row["reliable"]),
+                 row["result"], row["exitTime"], row["exitReason"], row["pnlPercent"], row["r"], now))
+        self.db.commit()
+        return self.db.total_changes - before
+
+    @_locked
+    def pretrain_time(self, symbol: str, timeframe: str) -> Optional[float]:
+        row = self.db.execute("SELECT done_at FROM pretrain WHERE chart = ?", (f"{symbol}|{timeframe}",)).fetchone()
+        return row[0] if row else None
+
+    @_locked
+    def set_pretrain_time(self, symbol: str, timeframe: str, now: float) -> None:
+        self.db.execute("INSERT OR REPLACE INTO pretrain (chart, done_at) VALUES (?, ?)", (f"{symbol}|{timeframe}", now))
+        self.db.commit()
 
     @_locked
     def mark(self, key: str, taken: bool = False, skip_reason: Optional[str] = None) -> None:
@@ -183,7 +218,7 @@ class Memory:
         """Sum of results (percent) per strategy for signals that ended after a time."""
         rows = self.db.execute(
             "SELECT strategy, SUM(pnl_percent) FROM signals WHERE status IN ('win','loss','breakeven')"
-            " AND exit_time >= ? GROUP BY strategy", (since_exit_time,)).fetchall()
+            " AND source = 'live' AND reliable = 1 AND exit_time >= ? GROUP BY strategy", (since_exit_time,)).fetchall()
         return {k: v or 0.0 for k, v in rows}
 
     @_locked
@@ -193,11 +228,15 @@ class Memory:
 
     @_locked
     def finished_signals(self, limit: int) -> list[dict]:
-        """The newest signals that ended in a result (for learning)."""
-        names = ("signal_time", "strategy", "timeframe", "side", "features", "pnl_percent", "r")
-        rows = self.db.execute(
-            f"SELECT {', '.join(names)} FROM signals WHERE status IN ('win','loss','breakeven')"
-            " ORDER BY signal_time DESC LIMIT ?", (limit,)).fetchall()
+        """Signals that ended in a result (for learning): the newest live ones, then a sample of history."""
+        names = ("signal_time", "strategy", "timeframe", "side", "features", "pnl_percent", "r", "reliable", "source")
+        cols = ", ".join(names)
+        done = "status IN ('win','loss','breakeven')"
+        rows = self.db.execute(f"SELECT {cols} FROM signals WHERE {done} AND source = 'live'"
+                               " ORDER BY signal_time DESC LIMIT ?", (limit,)).fetchall()
+        # Past signals rebuilt from history: a random sample fills the rest (all coins and times mixed).
+        rows += self.db.execute(f"SELECT {cols} FROM signals WHERE {done} AND source = 'history'"
+                                " ORDER BY random() LIMIT ?", (max(0, limit - len(rows)),)).fetchall()
         return [dict(zip(names, r)) for r in rows]
 
     @_locked
@@ -218,10 +257,15 @@ class Memory:
 
     @_locked
     def summary(self) -> dict:
-        total, open_, wins, losses = self.db.execute(
-            "SELECT COUNT(*), SUM(status='open'), SUM(status='win'), SUM(status='loss') FROM signals").fetchone()
-        taken = self.db.execute("SELECT COUNT(*) FROM signals WHERE taken = 1").fetchone()[0]
+        """Live signals (what the bot itself saw) plus how many past ones were rebuilt."""
+        total, reliable, open_, wins, losses, taken = self.db.execute(
+            "SELECT COUNT(*), SUM(reliable = 1), SUM(status='open'), SUM(status='win'), SUM(status='loss'),"
+            " SUM(taken = 1) FROM signals WHERE source = 'live'").fetchone()
+        history = self.db.execute("SELECT COUNT(*) FROM signals WHERE source = 'history'").fetchone()[0]
+        finished = self.db.execute(
+            "SELECT COUNT(*) FROM signals WHERE status IN ('win','loss','breakeven')").fetchone()[0]
         trades = self.db.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-        return {"signals": total or 0, "open": open_ or 0, "wins": wins or 0, "losses": losses or 0,
-                "ended": (total or 0) - (open_ or 0), "taken": taken, "trades": trades,
-                "finished": self.db.execute("SELECT COUNT(*) FROM signals WHERE status IN ('win','loss','breakeven')").fetchone()[0]}
+        charts = self.db.execute("SELECT COUNT(*) FROM pretrain").fetchone()[0]
+        return {"signals": total or 0, "reliable": reliable or 0, "open": open_ or 0, "wins": wins or 0,
+                "losses": losses or 0, "ended": (total or 0) - (open_ or 0), "taken": taken or 0, "trades": trades,
+                "history": history, "finished": finished, "charts": charts}

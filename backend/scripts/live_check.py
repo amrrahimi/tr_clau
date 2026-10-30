@@ -177,6 +177,19 @@ async def check_paper_bot() -> None:
             mem = memory.summary()
             print(f"::notice title=Paper bot::one round (5 timeframes x {config.SCANNER_COINS} coins) in {took:.1f}s; "
                   f"opened: {opened}; memory: {mem['signals']} signals, {mem['ended']} finished; brain: {brain.public()['state']}")
+            # Pre-training from the history the round just loaded, then one learning round.
+            started = time.time()
+            added = await bot.pretrain_round()
+            took = time.time() - started
+            assert added > 0, "pre-training found no past signals"
+            started = time.time()
+            outcome = brain.train()
+            learn = time.time() - started
+            test = outcome.get("test") or outcome.get("challenger") or {}
+            kept, every = test.get("kept", {}), test.get("all", {})
+            print(f"::notice title=Pre-training::{added} past signals from {bot.pretrain_progress['done']} charts "
+                  f"in {took:.1f}s; learning {learn:.1f}s -> {outcome['result']} (tested on {outcome.get('testedOn')}); "
+                  f"kept {kept.get('count')} of {every.get('count')}, avgR {kept.get('avgR')} vs {every.get('avgR')}")
             memory.close()
     finally:
         await service.close()

@@ -290,6 +290,51 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         chance, reason = memory.db.execute("SELECT chance, skip_reason FROM signals").fetchone()
         self.assertEqual((chance, reason), (0.1, "brain"))
 
+    async def test_pretraining_round_fills_the_memory_once_a_day(self):
+        from app.memory import Memory
+        from tests.test_pretrain import walk
+
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+
+        class NoModel:
+            champion = None
+            last = {"result": "few"}
+
+        candles = walk(3000)
+        last_time = candles[-1]["time"]
+        self.clock[0] = last_time + 400
+
+        async def history(symbol, tf):
+            return candles
+
+        bot = self.bot
+        bot.memory, bot.brain, bot.history = memory, NoModel(), history
+        added = await bot.pretrain_round()
+        self.assertGreater(added, 0)
+        self.assertEqual(memory.summary()["history"], added)
+        self.assertEqual(bot.pretrain_progress, {"done": 5, "total": 5, "running": False})
+        self.assertEqual(bot.account["events"][-1]["kind"], "pretrain")
+        self.assertIsNone(bot.brain.last)                 # the brain learns right away
+        self.assertEqual(await bot.pretrain_round(), 0)   # charts done today are skipped
+
+    async def test_every_signal_is_remembered_but_only_reliable_ones_traded(self):
+        from unittest import mock
+        from app.memory import Memory
+
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+        bot = self.bot
+        bot.memory = memory
+        bot.reset(100)
+        weak = cand("A", 0.5, 20)      # profit factor below 1: not reliable
+        overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
+                    "rows": [{"strategy": "ema_cross", "stats": weak["stats"], "signal": weak["signal"]}]}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=True)
+        self.assertEqual(bot.account["positions"], [])
+        self.assertEqual(memory.db.execute("SELECT reliable, skip_reason FROM signals").fetchone(), (0, None))
+
     async def test_brain_learning_round_writes_the_diary(self):
         class Quick:
             def train(self):

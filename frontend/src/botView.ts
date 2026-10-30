@@ -82,6 +82,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       });
     case "resume":
       return t("bot.evResume");
+    case "pretrain":
+      return t("bot.evPretrain", { n: String(e.count ?? 0) });
     case "brain":
       return t(`bot.evLearn.${e.reason}` as MessageKey, { version: String(e.version ?? "") });
     case "reset":
@@ -110,6 +112,7 @@ export function brainText(b: BrainState, t: (key: MessageKey, p?: Record<string,
   const { kept, all } = m.test;
   return t("bot.brain.active", {
     version: String(m.version), kept: String(kept.count), all: String(all.count),
+    on: t(m.testedOn === "history" ? "bot.brain.onHistory" : "bot.brain.onLive"),
     keptR: formatR(kept.avgR), allR: formatR(all.avgR), win: kept.winRate === null ? "—" : kept.winRate.toFixed(0),
   });
 }

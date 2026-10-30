@@ -333,6 +333,7 @@ export class BotApp {
       parts.push(el("div", "bot-hint", t("bot.memoryLine", {
         signals: String(s.memory.signals), ended: String(s.memory.ended), wins: String(s.memory.wins),
         losses: String(s.memory.losses), trades: String(s.memory.trades),
+        reliable: String(s.memory.reliable ?? s.memory.signals), history: String(s.memory.history ?? 0),
       })));
     }
 
@@ -340,6 +341,10 @@ export class BotApp {
     if (s.brain) {
       parts.push(el("div", "list-heading", t("bot.brain")));
       parts.push(el("div", "bot-hint", brainText(s.brain, t)));
+      const pre = s.brain.pretrain;
+      if (pre && pre.total && (pre.running || pre.done < pre.total)) {
+        parts.push(el("div", "bot-hint", t("bot.brain.pretrain", { done: String(pre.done), total: String(pre.total) })));
+      }
       if (s.brain.nextTraining) {
         parts.push(el("div", "bot-hint", t("bot.brain.next", { time: formatClock(s.brain.nextTraining * 1000, this.zone).slice(0, 5) })));
       }

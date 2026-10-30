@@ -39,11 +39,16 @@ MIN_TEST = 60            # unseen signals needed to judge a model
 MIN_KEPT = 10            # a model must let at least this many test signals through
 KEEP_PART = 0.25         # the threshold keeps at least this share of signals
 TRAIN_PART = 0.7
-MAX_ROWS = 20000         # newest finished signals used for learning
-EPOCHS = 200
+MAX_ROWS = 12000         # finished signals used for learning (all live ones first, then a sample of history)
+LIVE_TEST = 200          # from this many finished live signals on, the final test uses live signals only
+EPOCHS = 150
 LEARNING_RATE = 0.5
 L2 = 0.01
 RETRAIN_SECONDS = 6 * 3600
+
+# What the numbers of a signal mean. A model made for other numbers (for example before a
+# new strategy was added) cannot be used and is made again.
+SIGNATURE = "v2|" + ",".join(STATES) + "|" + ",".join(TIMEFRAMES) + "|" + ",".join(STRATEGIES)
 
 NUMERIC = ["adx", "atrRatio", "stopPercent", "rewardRatio", "feeShare", "histTrades",
            "histWinRate", "histProfitFactor", "histNetPercent"]
@@ -59,7 +64,7 @@ def _num(value, low=None, high=None) -> Optional[float]:
     return float(value)
 
 
-def raw_vector(feats: dict, strategy: str, timeframe: str, side: str) -> list[Optional[float]]:
+def raw_vector(feats: dict, strategy: str, timeframe: str, side: str, history: bool = False) -> list[Optional[float]]:
     """Numbers describing one signal (None = unknown, filled with the average later)."""
     stop = _num(feats.get("stopPercent"), 1e-4)
     trades = _num(feats.get("histTrades"), 0)
@@ -82,6 +87,8 @@ def raw_vector(feats: dict, strategy: str, timeframe: str, side: str) -> list[Op
     v += [1.0 if timeframe == t else 0.0 for t in TIMEFRAMES]
     v += [1.0 if strategy == k else 0.0 for k in STRATEGIES]
     v.append(1.0 if side == "long" else 0.0)
+    v.append(1.0 if feats.get("reliable", True) else 0.0)  # passed the cautious conditions
+    v.append(1.0 if history else 0.0)                       # rebuilt from past candles (live signals: 0)
     return v
 
 
@@ -185,10 +192,26 @@ def training_rows(memory, limit: int = MAX_ROWS) -> list[dict]:
             if not stop or row["pnl_percent"] is None:
                 continue
             r = row["pnl_percent"] / stop
-        out.append({"time": row["signal_time"], "r": float(r), "label": 1 if r > 0 else 0,
-                    "raw": raw_vector(feats, row["strategy"], row["timeframe"], row["side"])})
+        reliable_ = bool(row["reliable"]) if row.get("reliable") is not None else True
+        feats.setdefault("reliable", reliable_)
+        history = row.get("source") == "history"
+        out.append({"time": row["signal_time"], "r": float(r), "label": 1 if r > 0 else 0, "reliable": reliable_,
+                    "history": history,
+                    "raw": raw_vector(feats, row["strategy"], row["timeframe"], row["side"], history)})
     out.sort(key=lambda r: r["time"])
     return out
+
+
+def split(rows: list[dict]) -> tuple[list[dict], list[dict], str]:
+    """Learning part and test part. With enough live signals the test is the newest live ones
+    (and nothing from the same period is learned from); before that, the newest part of everything."""
+    live = [r for r in rows if not r["history"]]
+    if len(live) >= LIVE_TEST:
+        test = live[int(len(live) * TRAIN_PART):]
+        start = test[0]["time"]
+        return [r for r in rows if r["time"] < start], test, "live"
+    cut = int(len(rows) * TRAIN_PART)
+    return rows[:cut], rows[cut:], "history"
 
 
 class Brain:
@@ -203,6 +226,8 @@ class Brain:
                 self.champion = Model.from_json(text)
             except (ValueError, KeyError):
                 self.champion = None
+        if self.champion is not None and self.champion.info.get("signature") != SIGNATURE:
+            self.champion = None   # made for other numbers (e.g. before new strategies): learn again
         self.last = memory.last_training()
 
     # ---- the bot asks
@@ -219,7 +244,9 @@ class Brain:
         return not self.active() or chance is None or chance >= self.champion.threshold
 
     def due(self, now: float) -> bool:
-        return self.last is None or now - self.last.get("time", 0) >= RETRAIN_SECONDS
+        return (self.last is None or now - self.last.get("time", 0) >= RETRAIN_SECONDS
+                or (self.champion is None and self.last.get("result") == "few"
+                    and self.memory.summary()["finished"] >= MIN_SAMPLES))
 
     # ---- learning
 
@@ -237,49 +264,57 @@ class Brain:
     def _train(self, rows: list[dict], now: float) -> dict:
         if len(rows) < MIN_SAMPLES:
             return {"result": "few"}
-        cut = int(len(rows) * TRAIN_PART)
-        train, test = rows[:cut], rows[cut:]
-        if len(test) < MIN_TEST or len({r["label"] for r in train}) < 2:
+        train, test, tested_on = split(rows)
+        # The bot trades only reliable signals, so the filter is judged on those.
+        exam = [r for r in test if r["reliable"]]
+        if len(exam) < MIN_TEST or len(train) < MIN_TEST or len({r["label"] for r in train}) < 2:
             return {"result": "few"}
         w, b, mean, std = fit([r["raw"] for r in train], [r["label"] for r in train])
         challenger = Model(w, b, mean, std, 0.0, {})
-        challenger.threshold = best_threshold([challenger.chance_raw(r["raw"]) for r in train], [r["r"] for r in train])
-        mine = judge(challenger, test)
+        pool = [r for r in train if r["reliable"]]
+        if len(pool) < MIN_TEST:
+            pool = train
+        challenger.threshold = best_threshold([challenger.chance_raw(r["raw"]) for r in pool], [r["r"] for r in pool])
+        mine = judge(challenger, exam)
         version = (self.champion.info.get("version", 0) if self.champion else 0) + 1
         challenger.info = {"version": version, "trainedAt": now, "cutoff": train[-1]["time"],
-                           "samples": len(train), "test": mine, "on": True}
+                           "samples": len(train), "test": mine, "testedOn": tested_on, "on": True,
+                           "signature": SIGNATURE}
 
         # Judge the champion only on signals it never learned from.
         old = None
         if self.champion is not None:
-            unseen = [r for r in test if r["time"] > self.champion.info.get("cutoff", 0)]
+            unseen = [r for r in exam if r["time"] > self.champion.info.get("cutoff", 0)]
             if len(unseen) < MIN_TEST:
-                unseen = test
+                unseen = exam
             old = judge(self.champion, unseen)
             mine_same = judge(challenger, unseen)
         beats_all = mine["kept"]["count"] >= MIN_KEPT and mine["kept"]["avgR"] > (mine["all"]["avgR"] or 0)
         if beats_all and (old is None or mine_same["kept"]["sumR"] > old["kept"]["sumR"]):
             self.champion = challenger
-            return {"result": "promoted", "version": version, "test": mine}
+            return {"result": "promoted", "version": version, "test": mine, "testedOn": tested_on}
         if old is not None:
             champion_ok = (old["kept"]["count"] >= MIN_KEPT
                            and old["kept"]["avgR"] is not None and old["kept"]["avgR"] > (old["all"]["avgR"] or 0))
             self.champion.info["on"] = champion_ok
             self.champion.info["recent"] = old
+            self.champion.info["recentOn"] = tested_on
             return {"result": "kept" if champion_ok else "off", "version": self.champion.info.get("version"),
-                    "test": old, "challenger": mine}
-        return {"result": "weak", "challenger": mine}
+                    "test": old, "challenger": mine, "testedOn": tested_on}
+        return {"result": "weak", "challenger": mine, "testedOn": tested_on}
 
     # ---- the screen
 
-    def public(self) -> dict:
-        finished = self.memory.summary()["finished"]
+    def public(self, summary: Optional[dict] = None) -> dict:
+        finished = (summary or self.memory.summary())["finished"]
         c = self.champion
         model = None
         if c is not None:
             test = c.info.get("recent") or c.info.get("test") or {}
+            tested_on = c.info.get("recentOn") if c.info.get("recent") else c.info.get("testedOn")
             model = {"version": c.info.get("version"), "trainedAt": c.info.get("trainedAt"),
-                     "threshold": c.threshold, "on": c.info.get("on", True), "test": test}
+                     "threshold": c.threshold, "on": c.info.get("on", True), "test": test,
+                     "testedOn": tested_on or "live"}
         state = "active" if self.active() else ("off" if c is not None else "collecting")
         last_time = self.last.get("time") if self.last else None
         return {"state": state, "samples": finished, "needed": MIN_SAMPLES, "model": model,

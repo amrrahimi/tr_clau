@@ -78,6 +78,22 @@ def confirm(raw: Sequence[Optional[str]], needed: int = CONFIRM_CANDLES) -> list
     return out
 
 
+def series(candles: Sequence[dict], trading_mode: str) -> tuple[list[str], list[Optional[float]], list[Optional[float]]]:
+    """For every candle: confirmed state, ADX and ATR / its recent average (used to rebuild past conditions)."""
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    closes = [c["close"] for c in candles]
+    fast_len, slow_len = MODE_EMAS[trading_mode]
+    adx = ind.adx(highs, lows, closes, ADX_LENGTH, ADX_LENGTH)
+    fast = ind.ema(closes, fast_len)
+    slow = ind.ema(closes, slow_len)
+    atr = ind.atr(highs, lows, closes, ATR_LENGTH)
+    atr_avg = ind.sma(atr, ATR_AVERAGE)
+    states = confirm([raw_state(adx[i], fast[i], slow[i], atr[i], atr_avg[i]) for i in range(len(candles))])
+    ratio = [atr[i] / atr_avg[i] if atr[i] is not None and atr_avg[i] else None for i in range(len(candles))]
+    return states, adx, ratio
+
+
 def detect(candles: Sequence[dict], trading_mode: str) -> tuple[list[str], StateReading]:
     """Confirmed state for every candle given (all must be closed), plus a summary of the last."""
     highs = [c["high"] for c in candles]
