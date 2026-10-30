@@ -236,7 +236,9 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip";
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume";
+  until?: number; // pause: until when
+  strategies?: string[]; // pause: strategies left out
   count?: number; // skip "full": how many signals had no room
   symbol?: string;
   side?: Side;
@@ -254,7 +256,10 @@ export interface PaperState {
   balance: number;
   equity: number;
   status: "stopped" | "running" | "halted";
-  pausedToday: boolean;
+  pausedUntil: number | null; // smart pause: no new trades until then (seconds)
+  pauseReason: "streak" | "fall" | null;
+  benched: Record<string, number>; // strategies left out until (seconds)
+  memory: { signals: number; open: number; wins: number; losses: number; ended: number; taken: number; trades: number } | null;
   mode: "auto" | "manual";
   strategies: string[];
   positions: PaperPosition[];
@@ -274,6 +279,6 @@ export interface PaperState {
   lastScan: Record<string, { period: number; time: number }>;
   timeframes: string[];
   rules: { risk: number; maxOpen: number; maxFast?: number; maxSlow?: number; maxSameSide?: number;
-    maxLeverage: number; dailyStop: number; totalStop: number;
+    maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; totalStop: number;
     fees: { maker: number; taker: number } };
 }

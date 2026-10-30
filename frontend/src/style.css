@@ -491,3 +491,5 @@ button:hover { background: var(--border); }
 .bot-table td.side.long { color: var(--up); }
 .bot-table td.side.short { color: var(--down); }
 .bot-diary li.skip { color: var(--muted); }
+.bot-diary li.pause { color: #f7c948; }
+.bot-diary li.resume { color: var(--up); }

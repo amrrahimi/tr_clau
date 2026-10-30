@@ -153,7 +153,9 @@ async def check_paper_bot() -> None:
             return await service.fetch_candles(sym, tf, 60)
 
         with tempfile.TemporaryDirectory() as folder:
-            bot = PaperBot(Store(Path(folder) / "paper.json"), coins, history_of, recent)
+            from app.memory import Memory
+            memory = Memory(Path(folder) / "memory.db")
+            bot = PaperBot(Store(Path(folder) / "paper.json"), coins, history_of, recent, memory=memory)
             bot.reset(100)
             bot.start()
             started = time.time()
@@ -170,8 +172,10 @@ async def check_paper_bot() -> None:
             opened = ", ".join(f"{p['base']} {p['timeframe']} {p['strategy']} {p['side']} x{p['leverage']}"
                                for p in state["positions"]) or "none"
             print(f"paper bot: one round in {took:.1f}s, positions opened: {opened}")
+            mem = memory.summary()
             print(f"::notice title=Paper bot::one round (5 timeframes x {config.SCANNER_COINS} coins) in {took:.1f}s; "
-                  f"opened: {opened}")
+                  f"opened: {opened}; memory: {mem['signals']} signals, {mem['ended']} finished")
+            memory.close()
     finally:
         await service.close()
 

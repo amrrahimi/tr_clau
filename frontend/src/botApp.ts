@@ -224,7 +224,15 @@ export class BotApp {
     (power as HTMLButtonElement).disabled = s.status === "halted";
     power.addEventListener("click", () => void this.act({ kind: running ? "stop" : "start" }));
     parts.push(power);
-    parts.push(el("div", `bot-status ${s.status}`, t(statusKey(s), { tf: s.scanning ?? "" })));
+    parts.push(el("div", `bot-status ${s.status}`, t(statusKey(s), {
+      tf: s.scanning ?? "",
+      until: s.pausedUntil ? formatClock(s.pausedUntil * 1000, this.zone).slice(0, 5) : "",
+      reason: s.pauseReason ? t(s.pauseReason === "streak" ? "bot.pause.streak" : "bot.pause.fall") : "",
+    })));
+    const benched = Object.keys(s.benched ?? {});
+    if (benched.length) {
+      parts.push(el("div", "bot-hint", t("bot.benchedNow", { list: benched.map((k) => t(`strat.${k}` as MessageKey)).join("، ") })));
+    }
 
     // Money.
     const money = el("dl", "bot-money");
@@ -315,8 +323,18 @@ export class BotApp {
     parts.push(el("div", "bot-hint rules", t("bot.rules", {
       risk: String(s.rules.risk), open: String(s.rules.maxOpen), fast: String(s.rules.maxFast ?? 3),
       slow: String(s.rules.maxSlow ?? 3), side: String(s.rules.maxSameSide ?? 4), lev: String(s.rules.maxLeverage),
-      daily: String(s.rules.dailyStop), total: String(s.rules.totalStop),
+      losses: String(s.rules.pauseLosses ?? 4), fall: String(s.rules.pauseFall ?? 5),
+      hours: String(s.rules.pauseHours ?? 3), total: String(s.rules.totalStop),
     })));
+
+    // The bot's memory: experience kept forever (not cleared by "start again").
+    if (s.memory) {
+      parts.push(el("div", "list-heading", t("bot.memory")));
+      parts.push(el("div", "bot-hint", t("bot.memoryLine", {
+        signals: String(s.memory.signals), ended: String(s.memory.ended), wins: String(s.memory.wins),
+        losses: String(s.memory.losses), trades: String(s.memory.trades),
+      })));
+    }
 
     // The bot's diary.
     parts.push(el("div", "list-heading", t("bot.diary")));

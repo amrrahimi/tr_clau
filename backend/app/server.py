@@ -19,6 +19,7 @@ from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
+from .memory import Memory
 from .paper import MARKET, TIMEFRAMES, PaperBot, Store, default_path
 from .scanner import Scanner, run_scan
 from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
@@ -78,7 +79,9 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         service = await get_service(MARKET)
         return await service.fetch_candles(symbol, timeframe, 60)
 
-    bot = PaperBot(Store(paper_path or default_path()), bot_coins, bot_history_of, bot_recent)
+    store_path = paper_path or default_path()
+    memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
+    bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

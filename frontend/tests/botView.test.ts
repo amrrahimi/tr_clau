@@ -13,11 +13,11 @@ const position: PaperPosition = {
 
 function state(over: Partial<PaperState> = {}): PaperState {
   return {
-    capital: 100, balance: 100, equity: 100, status: "running", pausedToday: false, mode: "auto", strategies: [],
+    capital: 100, balance: 100, equity: 100, status: "running", pausedUntil: null, pauseReason: null, benched: {}, memory: null, mode: "auto", strategies: [],
     positions: [], closed: [], events: [],
     stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
     scanning: null, lastScan: {}, timeframes: [],
-    rules: { risk: 1, maxOpen: 3, maxLeverage: 10, dailyStop: 5, totalStop: 30, fees: { maker: 0.02, taker: 0.06 } },
+    rules: { risk: 1, maxOpen: 6, maxLeverage: 10, totalStop: 30, fees: { maker: 0.02, taker: 0.06 } },
     ...over,
   };
 }
@@ -38,7 +38,8 @@ test("a bot trade becomes chart arrows and boxes on the right candles", () => {
 test("status line", () => {
   assert.equal(statusKey(state({ status: "stopped" })), "bot.statusStopped");
   assert.equal(statusKey(state({ status: "halted" })), "bot.halted");
-  assert.equal(statusKey(state({ pausedToday: true })), "bot.pausedToday");
+  assert.equal(statusKey(state({ pausedUntil: Date.now() / 1000 + 600, pauseReason: "streak" })), "bot.paused");
+  assert.equal(statusKey(state({ pausedUntil: Date.now() / 1000 - 600 })), "bot.waiting");   // pause over
   assert.equal(statusKey(state({ scanning: "5m" })), "bot.scanning");
   assert.equal(statusKey(state({ positions: [position] })), "bot.watching");
   assert.equal(statusKey(state()), "bot.waiting");
@@ -65,4 +66,10 @@ test("skipped signals say why", () => {
     "رد شد: LITE 15m، سیگنال کهنه بود، قیمت حرکت کرده بود");
   assert.equal(eventText({ time: 0, kind: "skip", timeframe: "5m", reason: "full", count: 4 }, t),
     "5m: 4 سیگنال قابل اعتماد دیگر بود، ولی جای خالی نبود");
+});
+
+test("pause in the diary", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  assert.equal(eventText({ time: 0, kind: "pause", reason: "streak", strategies: ["donchian"] }, t),
+    "مکث ۳ ساعته: ۴ باخت پشت سر هم. کنار گذاشته شد برای ۱۲ ساعت: شکست کانال");
 });

@@ -40,7 +40,7 @@ export function paperAsTrade(p: PaperPosition | PaperTrade): Trade {
 export function statusKey(s: PaperState): MessageKey {
   if (s.status === "halted") return "bot.halted";
   if (s.status === "stopped") return "bot.statusStopped";
-  if (s.pausedToday) return "bot.pausedToday";
+  if (s.pausedUntil !== null && s.pausedUntil > Date.now() / 1000) return "bot.paused";
   if (s.scanning) return "bot.scanning";
   return s.positions.length ? "bot.watching" : "bot.waiting";
 }
@@ -74,6 +74,13 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return e.reason === "full"
         ? t("bot.evFull", { tf: e.timeframe ?? "", n: String(e.count ?? 0) })
         : t("bot.evSkip", { coin: e.symbol ?? "", tf: e.timeframe ?? "", reason: t(`bot.skip.${e.reason}` as MessageKey) });
+    case "pause":
+      return t("bot.evPause", {
+        reason: t(e.reason === "streak" ? "bot.pause.streak" : "bot.pause.fall"),
+        left: e.strategies?.length ? t("bot.evBenched", { list: e.strategies.map((k) => t(`strat.${k}` as MessageKey)).join("، ") }) : "",
+      });
+    case "resume":
+      return t("bot.evResume");
     case "reset":
       return t("bot.evReset", { capital: String(e.capital ?? "") });
     case "start":

@@ -14,8 +14,13 @@ Money rules (agreed with the owner):
 - leverage is set by the bot: the lowest that fits, at most 10x, and the
   liquidation price must stay beyond the stop-loss; if that does not fit,
   the position is made smaller (so the risk is less than 1%, never more);
-- a 5% loss in one day stops new trades until the next day (UTC);
+- smart pause (owner's choice, instead of a daily stop): after 4 losing
+  trades in a row, or a 5% fall since the last pause, no new trades for 3
+  hours; strategies that lost over the last 24 hours (real and shadow
+  trades) are left out for 12 hours;
 - a 30% fall from the starting money switches the bot off.
+The bot keeps scanning while it is switched off too: it then only learns
+(records and follows signals in its memory) and opens nothing.
 A signal is "stale" (skipped) when the price has moved more than a quarter
 of the stop distance since the signal: the stop would then sit closer than
 the strategy meant. Bigger timeframes are checked first, so their signals
@@ -37,7 +42,8 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 from . import config
-from .analysis import strategy_overview
+from .analysis import closed_only, strategy_overview
+from .memory import Memory, features
 from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params
 
@@ -54,7 +60,11 @@ MAX_SAME_SIDE = 4
 MAX_LEVERAGE = 10
 MAINTENANCE = 0.005           # part of the position the exchange keeps as a minimum (liquidation)
 LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liquidation price
-DAILY_STOP = 0.05
+PAUSE_LOSSES = 4             # losing trades in a row
+PAUSE_FALL = 0.05            # fall since the last pause (or the start)
+PAUSE_SECONDS = 3 * 3600
+BENCH_SECONDS = 12 * 3600    # strategies that lost lately are left out this long
+BENCH_LOOKBACK = 24 * 3600
 TOTAL_STOP = 0.30
 POLL_SECONDS = 10
 SCAN_DELAY = 3                # seconds after a candle closes before scanning (final price)
@@ -224,6 +234,11 @@ def new_account(capital: float, now: float) -> dict:
         "maxDrawdown": 0.0,
         "day": time.strftime("%Y-%m-%d", time.gmtime(now)),
         "dayStartEquity": capital,
+        "lossStreak": 0,
+        "pausedUntil": None,
+        "pauseReason": None,
+        "pauseBase": capital,
+        "benched": {},
         "lastScan": {},
         "createdAt": now,
         "nextId": 1,
@@ -257,14 +272,18 @@ Recent = Callable[[str, str], Awaitable[list[dict]]]         # (symbol, timefram
 
 class PaperBot:
     def __init__(self, store: Store, coins: Coins, history: History, recent: Recent,
-                 now: Callable[[], float] = time.time, fees: Optional[Fees] = None):
+                 now: Callable[[], float] = time.time, fees: Optional[Fees] = None,
+                 memory: Optional[Memory] = None):
         self.store = store
+        self.memory = memory
         self.coins = coins
         self.history = history
         self.recent = recent
         self.now = now
         self.fees = fees or Fees(**config.DEFAULT_FEES[MARKET])
         self.account = store.load() or new_account(100.0, now())
+        for k, v in new_account(self.account.get("capital", 100.0), now()).items():
+            self.account.setdefault(k, v)  # files from older versions
         self.prices: dict[str, float] = {}    # last price per position id (for the screen)
         self.scanning: Optional[str] = None   # timeframe being scanned
         self.lock = asyncio.Lock()
@@ -291,7 +310,10 @@ class PaperBot:
             "balance": a["balance"],
             "equity": equity,
             "status": a["status"],
-            "pausedToday": self._daily_stop_hit(equity),
+            "pausedUntil": a["pausedUntil"],
+            "pauseReason": a["pauseReason"],
+            "benched": {k: v for k, v in a["benched"].items() if v > self.now()},
+            "memory": self.memory.summary() if self.memory else None,
             "mode": a["mode"],
             "strategies": a["strategies"],
             "positions": positions,
@@ -312,7 +334,8 @@ class PaperBot:
             "timeframes": TIMEFRAMES,
             "rules": {"risk": RISK * 100, "maxOpen": MAX_OPEN, "maxFast": GROUP_SLOTS["fast"],
                       "maxSlow": GROUP_SLOTS["slow"], "maxSameSide": MAX_SAME_SIDE, "maxLeverage": MAX_LEVERAGE,
-                      "dailyStop": DAILY_STOP * 100, "totalStop": TOTAL_STOP * 100,
+                      "pauseLosses": PAUSE_LOSSES, "pauseFall": PAUSE_FALL * 100,
+                      "pauseHours": PAUSE_SECONDS / 3600, "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
 
@@ -355,6 +378,8 @@ class PaperBot:
             try:
                 if self.account["status"] == "running":
                     await self.step()
+                elif self.memory is not None:
+                    await self.learn_only()
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # never let one bad answer stop the bot
@@ -373,24 +398,68 @@ class PaperBot:
                 self._event("halted", equity=equity)
                 self.save()
                 return
-            for tf in SCAN_ORDER:
-                period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
-                if self.account["lastScan"].get(tf, {}).get("period") == period:
-                    continue
-                self.account["lastScan"][tf] = {"period": period, "time": now}
-                if self._daily_stop_hit(self.equity()) or free_slots(self.account["positions"], tf) <= 0:
-                    continue
-                await self._scan_and_open(tf, now)
+            self._update_pause(now, equity)
+            for tf in self._due_timeframes(now):
+                # Scanned even when there is no free place: the memory still learns from the signals.
+                trade = not self._paused(now) and free_slots(self.account["positions"], tf) > 0
+                await self._scan_and_open(tf, now, trade=trade)
             self.save()
+
+    async def learn_only(self) -> None:
+        """Bot switched off: keep scanning so the memory keeps learning, open nothing."""
+        async with self.lock:
+            now = self.now()
+            for tf in self._due_timeframes(now):
+                await self._scan_and_open(tf, now, trade=False)
+            self.save()
+
+    def _due_timeframes(self, now: float) -> list[str]:
+        due = []
+        for tf in SCAN_ORDER:
+            period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
+            if self.account["lastScan"].get(tf, {}).get("period") != period:
+                self.account["lastScan"][tf] = {"period": period, "time": now}
+                due.append(tf)
+        return due
+
+    # ---- smart pause
+
+    def _paused(self, now: float) -> bool:
+        until = self.account["pausedUntil"]
+        return until is not None and now < until
+
+    def _update_pause(self, now: float, equity: float) -> None:
+        a = self.account
+        if a["pausedUntil"] is not None and now >= a["pausedUntil"]:
+            a["pausedUntil"] = None
+            a["pauseReason"] = None
+            a["lossStreak"] = 0
+            a["pauseBase"] = equity
+            self._event("resume")
+        if a["pausedUntil"] is not None:
+            return
+        reason = None
+        if a["lossStreak"] >= PAUSE_LOSSES:
+            reason = "streak"
+        elif equity <= a["pauseBase"] * (1 - PAUSE_FALL):
+            reason = "fall"
+        if reason is None:
+            return
+        a["pausedUntil"] = now + PAUSE_SECONDS
+        a["pauseReason"] = reason
+        benched = []
+        if self.memory is not None:
+            for kind, result in self.memory.strategy_results(now - BENCH_LOOKBACK).items():
+                if result < 0:
+                    a["benched"][kind] = now + BENCH_SECONDS
+                    benched.append(kind)
+        self._event("pause", reason=reason, until=a["pausedUntil"], strategies=benched)
 
     def _new_day(self, now: float) -> None:
         day = time.strftime("%Y-%m-%d", time.gmtime(now))
         if day != self.account["day"]:
             self.account["day"] = day
             self.account["dayStartEquity"] = self.equity()
-
-    def _daily_stop_hit(self, equity: float) -> bool:
-        return equity <= self.account["dayStartEquity"] * (1 - DAILY_STOP)
 
     def _track_drawdown(self, equity: float) -> None:
         a = self.account
@@ -419,12 +488,17 @@ class PaperBot:
                  "pnlPercent": result / p["margin"] * 100 if p["margin"] else 0}
         self.account["closed"].append(trade)
         del self.account["closed"][:-KEEP_CLOSED]
+        self.account["lossStreak"] = self.account["lossStreak"] + 1 if result < 0 else 0
+        if self.memory is not None:
+            self.memory.save_trade(trade, now)
         self._event("close", symbol=p["base"], reason=reason, pnl=result)
 
-    async def _scan_and_open(self, tf: str, now: float) -> None:
+    async def _scan_and_open(self, tf: str, now: float, trade: bool = True) -> None:
         mode = MODE_OF[tf]
         settings = {k: parse_params(k, {}, mode) for k in STRATEGIES}
-        allowed = set(self.account["strategies"])
+        benched = {k for k, until in self.account["benched"].items() if until > now}
+        allowed = set(self.account["strategies"]) - benched
+        memory = self.memory
         gate = asyncio.Semaphore(8)
         candidates: list[dict] = []
         self.scanning = tf
@@ -434,23 +508,37 @@ class PaperBot:
                 try:
                     rows = await self.history(symbol, tf)
                     overview = strategy_overview(rows, tf, settings, None, mode, now=now, fees=self.fees)
+                    if memory is not None:  # results of earlier signals of this chart
+                        memory.resolve(symbol, tf, closed_only(rows, tf, now), settings, self.fees, now)
                 except Exception:
                     return
+                extra = {"adx": overview.get("adx"), "atrRatio": overview.get("atrRatio")}
                 for row in overview["rows"]:
                     entry = {"symbol": symbol, "base": base, "strategy": row["strategy"],
                              "marketState": overview["marketState"], "stats": row["stats"], "signal": row.get("signal")}
-                    if row["strategy"] in allowed and entry["signal"] and reliable(entry):
+                    if not (entry["signal"] and reliable(entry)):
+                        continue
+                    if memory is not None:  # every reliable signal is remembered, traded or not
+                        entry["memoryKey"] = memory.record(entry, tf, features(entry, extra, self.fees), now)
+                    if row["strategy"] in allowed:
                         candidates.append(entry)
 
         try:
             await asyncio.gather(*(one(s, b) for s, b in await self.coins()))
         finally:
             self.scanning = None
+        if not trade:
+            return
         open_coins = {p["symbol"] for p in self.account["positions"]}
         positions = self.account["positions"]
         chosen = pick(candidates, open_coins, free_slots(positions, tf), side_room(positions))
         for c in chosen:
             await self._open(c, tf, now, settings[c["strategy"]])
+        chosen_keys = {c.get("memoryKey") for c in chosen}
+        if memory is not None:
+            for c in candidates:
+                if c.get("memoryKey") not in chosen_keys:
+                    memory.mark(c["memoryKey"], skip_reason="full")
         left = len({c["symbol"] for c in candidates} - open_coins) - len(chosen)
         if left > 0:
             self._event("skip", reason="full", timeframe=tf, count=left)
@@ -465,6 +553,8 @@ class PaperBot:
         long_ = s["side"] == LONG
         def skip(reason: str) -> None:
             self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
+            if self.memory is not None and c.get("memoryKey"):
+                self.memory.mark(c["memoryKey"], skip_reason=reason)
 
         # The price may have moved since the signal: skip if it already passed the stop or the target,
         # or moved too far for the stop to still be where the strategy meant it.
@@ -498,3 +588,5 @@ class PaperBot:
         self.prices[position["id"]] = entry
         self._event("open", symbol=c["base"], side=s["side"], timeframe=tf, strategy=c["strategy"],
                     leverage=size.leverage)
+        if self.memory is not None and c.get("memoryKey"):
+            self.memory.mark(c["memoryKey"], taken=True)

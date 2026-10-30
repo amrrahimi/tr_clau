@@ -179,29 +179,89 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         again = pp.PaperBot(pp.Store(self.path), None, None, None, now=lambda: self.clock[0], fees=FEES)
         self.assertEqual((again.account["capital"], again.account["status"]), (80, "running"))
 
-    async def test_each_timeframe_scanned_once_per_candle_and_daily_stop(self):
+    async def test_each_timeframe_scanned_once_per_candle(self):
         bot = self.bot
         bot.reset(100)
         bot.start()
         scanned = []
 
-        async def fake_scan(tf, now):
-            scanned.append(tf)
+        async def fake_scan(tf, now, trade=True):
+            scanned.append((tf, trade))
         bot._scan_and_open = fake_scan
         await bot.step()
-        self.assertEqual(scanned, ["1h", "15m", "5m", "3m", "1m"])    # biggest first
+        self.assertEqual([tf for tf, _ in scanned], ["1h", "15m", "5m", "3m", "1m"])   # biggest first
+        self.assertTrue(all(trade for _, trade in scanned))
         await bot.step()
         self.assertEqual(len(scanned), 5)                             # same candles: no new scan
         self.clock[0] += 60
         await bot.step()
-        self.assertIn("1m", scanned[5:])
-        # A 5% loss today: no more scans until tomorrow.
-        bot.account["balance"] = 94
-        self.clock[0] += 3600
+        self.assertIn(("1m", True), scanned[5:])
+
+    async def test_smart_pause_after_four_losses_then_resume(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append((tf, trade))
+        bot._scan_and_open = fake_scan
+        bot.account["lossStreak"] = 4
+        await bot.step()
+        self.assertEqual(bot.public()["pauseReason"], "streak")
+        self.assertTrue(scanned and not any(trade for _, trade in scanned))   # still scans (learning), no trades
+        self.clock[0] += pp.PAUSE_SECONDS + 1
         scanned.clear()
         await bot.step()
-        self.assertEqual(scanned, [])
-        self.assertTrue(bot.public()["pausedToday"])
+        self.assertIsNone(bot.public()["pausedUntil"])
+        self.assertEqual(bot.account["lossStreak"], 0)
+        self.assertTrue(all(trade for _, trade in scanned))
+        self.assertEqual([e["kind"] for e in bot.account["events"]][-2:], ["pause", "resume"])
+
+    async def test_smart_pause_after_five_percent_fall(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+
+        async def fake_scan(tf, now, trade=True):
+            pass
+        bot._scan_and_open = fake_scan
+        bot.account["balance"] = 94.9
+        await bot.step()
+        self.assertEqual(bot.public()["pauseReason"], "fall")
+
+    async def test_losing_strategies_are_benched_at_a_pause(self):
+        from app.memory import Memory
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+        memory.db.execute("INSERT INTO signals (key, strategy, status, exit_time, pnl_percent) VALUES"
+                          " ('a', 'donchian', 'loss', ?, -1.5), ('b', 'supertrend', 'win', ?, 2.0)",
+                          (self.clock[0] - 100, self.clock[0] - 100))
+        memory.db.commit()
+        bot = self.bot
+        bot.memory = memory
+        bot.reset(100)
+        bot.start()
+
+        async def fake_scan(tf, now, trade=True):
+            pass
+        bot._scan_and_open = fake_scan
+        bot.account["lossStreak"] = 4
+        await bot.step()
+        self.assertEqual(list(bot.public()["benched"]), ["donchian"])
+        self.assertEqual(bot.account["events"][-1]["strategies"], ["donchian"])
+
+    async def test_switched_off_bot_still_learns(self):
+        bot = self.bot
+        bot.reset(100)
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append((tf, trade))
+        bot._scan_and_open = fake_scan
+        await bot.learn_only()
+        self.assertEqual(len(scanned), 5)
+        self.assertFalse(any(trade for _, trade in scanned))
 
     async def test_thirty_percent_loss_switches_the_bot_off(self):
         bot = self.bot

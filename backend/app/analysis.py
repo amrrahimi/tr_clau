@@ -125,6 +125,8 @@ def strategy_overview(
         "rows": rows,
         "active": active_result,
         "marketState": reading.state,
+        "adx": reading.adx,
+        "atrRatio": reading.atr_ratio,
         "autoRule": auto_rule,
         "fees": {"maker": fees.maker, "taker": fees.taker},
         "choice": choice,
