@@ -1,7 +1,7 @@
 // Small pieces of the automatic (bot) screen without screen code, so they can be tested.
 
 import type { MessageKey } from "./locales/en.ts";
-import type { PaperEvent, PaperPosition, PaperState, PaperTrade, Trade } from "./types.ts";
+import type { BrainState, PaperEvent, PaperPosition, PaperState, PaperTrade, Trade } from "./types.ts";
 
 export const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "1d": 86400,
@@ -71,6 +71,7 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
     case "halted":
       return t("bot.evHalted");
     case "skip":
+      if (e.reason === "brain") return t("bot.evBrain", { tf: e.timeframe ?? "", n: String(e.count ?? 0) });
       return e.reason === "full"
         ? t("bot.evFull", { tf: e.timeframe ?? "", n: String(e.count ?? 0) })
         : t("bot.evSkip", { coin: e.symbol ?? "", tf: e.timeframe ?? "", reason: t(`bot.skip.${e.reason}` as MessageKey) });
@@ -81,6 +82,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       });
     case "resume":
       return t("bot.evResume");
+    case "brain":
+      return t(`bot.evLearn.${e.reason}` as MessageKey, { version: String(e.version ?? "") });
     case "reset":
       return t("bot.evReset", { capital: String(e.capital ?? "") });
     case "start":
@@ -90,4 +93,23 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
     default:
       return t("bot.evError", { message: e.message ?? "" });
   }
+}
+
+function formatR(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`;
+}
+
+/** The brain's status line. */
+export function brainText(b: BrainState, t: (key: MessageKey, p?: Record<string, string>) => string): string {
+  const m = b.model;
+  if (b.state === "collecting" || !m) {
+    return t("bot.brain.collecting", { samples: String(b.samples), needed: String(b.needed) });
+  }
+  if (b.state === "off") return t("bot.brain.off", { version: String(m.version) });
+  const { kept, all } = m.test;
+  return t("bot.brain.active", {
+    version: String(m.version), kept: String(kept.count), all: String(all.count),
+    keptR: formatR(kept.avgR), allR: formatR(all.avgR), win: kept.winRate === null ? "—" : kept.winRate.toFixed(0),
+  });
 }

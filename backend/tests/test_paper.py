@@ -263,6 +263,44 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(scanned), 5)
         self.assertFalse(any(trade for _, trade in scanned))
 
+    async def test_brain_skips_weak_signals_and_remembers_why(self):
+        from unittest import mock
+        from app.memory import Memory
+
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+
+        class Picky:   # a brain that thinks every signal is weak
+            def chance(self, feats, strategy, tf, side):
+                return 0.1
+
+            def allows(self, chance):
+                return chance is None or chance >= 0.5
+
+        bot = self.bot
+        bot.memory, bot.brain = memory, Picky()
+        bot.reset(100)
+        c = cand("A", 2.0, 20)
+        overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
+                    "rows": [{"strategy": "ema_cross", "stats": c["stats"], "signal": c["signal"]}]}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=True)
+        self.assertEqual(bot.account["positions"], [])
+        self.assertEqual(bot.account["events"][-1]["reason"], "brain")
+        chance, reason = memory.db.execute("SELECT chance, skip_reason FROM signals").fetchone()
+        self.assertEqual((chance, reason), (0.1, "brain"))
+
+    async def test_brain_learning_round_writes_the_diary(self):
+        class Quick:
+            def train(self):
+                return {"result": "promoted", "version": 3}
+
+        self.bot.brain = Quick()
+        outcome = await self.bot.learn()
+        self.assertEqual(outcome["result"], "promoted")
+        self.assertEqual(self.bot.account["events"][-1], {"time": self.clock[0], "kind": "brain",
+                                                          "reason": "promoted", "version": 3})
+
     async def test_thirty_percent_loss_switches_the_bot_off(self):
         bot = self.bot
         bot.reset(100)

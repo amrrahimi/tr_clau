@@ -43,6 +43,7 @@ from typing import Awaitable, Callable, Optional
 
 from . import config
 from .analysis import closed_only, strategy_overview
+from .brain import Brain
 from .memory import Memory, features
 from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params
@@ -273,9 +274,11 @@ Recent = Callable[[str, str], Awaitable[list[dict]]]         # (symbol, timefram
 class PaperBot:
     def __init__(self, store: Store, coins: Coins, history: History, recent: Recent,
                  now: Callable[[], float] = time.time, fees: Optional[Fees] = None,
-                 memory: Optional[Memory] = None):
+                 memory: Optional[Memory] = None, brain: Optional[Brain] = None):
         self.store = store
         self.memory = memory
+        self.brain = brain                    # the learning signal filter (step B)
+        self.training: Optional[asyncio.Task] = None
         self.coins = coins
         self.history = history
         self.recent = recent
@@ -314,6 +317,7 @@ class PaperBot:
             "pauseReason": a["pauseReason"],
             "benched": {k: v for k, v in a["benched"].items() if v > self.now()},
             "memory": self.memory.summary() if self.memory else None,
+            "brain": self.brain.public() if self.brain else None,
             "mode": a["mode"],
             "strategies": a["strategies"],
             "positions": positions,
@@ -384,7 +388,22 @@ class PaperBot:
                 raise
             except Exception as error:  # never let one bad answer stop the bot
                 self._event("error", message=str(error)[:200])
+            self._maybe_learn()
             await asyncio.sleep(POLL_SECONDS)
+
+    def _maybe_learn(self) -> None:
+        """Every few hours the brain learns again, in the background (the bot keeps working)."""
+        if self.brain is None or (self.training is not None and not self.training.done()):
+            return
+        if self.brain.due(self.now()):
+            self.training = asyncio.create_task(self.learn())
+
+    async def learn(self) -> dict:
+        outcome = await asyncio.to_thread(self.brain.train)
+        if outcome["result"] != "few":
+            self._event("brain", reason=outcome["result"], version=outcome.get("version"))
+            self.save()
+        return outcome
 
     async def step(self) -> None:
         async with self.lock:
@@ -519,7 +538,12 @@ class PaperBot:
                     if not (entry["signal"] and reliable(entry)):
                         continue
                     if memory is not None:  # every reliable signal is remembered, traded or not
-                        entry["memoryKey"] = memory.record(entry, tf, features(entry, extra, self.fees), now)
+                        feats = features(entry, extra, self.fees)
+                        entry["memoryKey"] = memory.record(entry, tf, feats, now)
+                        if self.brain is not None:
+                            entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
+                            if entry["chance"] is not None:
+                                memory.set_chance(entry["memoryKey"], entry["chance"])
                     if row["strategy"] in allowed:
                         candidates.append(entry)
 
@@ -529,6 +553,14 @@ class PaperBot:
             self.scanning = None
         if not trade:
             return
+        if self.brain is not None:  # the brain's filter: skip signals with a low chance of profit
+            weak = [c for c in candidates if not self.brain.allows(c.get("chance"))]
+            if weak:
+                candidates = [c for c in candidates if self.brain.allows(c.get("chance"))]
+                for c in weak:
+                    if memory is not None and c.get("memoryKey"):
+                        memory.mark(c["memoryKey"], skip_reason="brain")
+                self._event("skip", reason="brain", timeframe=tf, count=len(weak))
         open_coins = {p["symbol"] for p in self.account["positions"]}
         positions = self.account["positions"]
         chosen = pick(candidates, open_coins, free_slots(positions, tf), side_room(positions))

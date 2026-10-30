@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultTarget, eventText, formatMoney, paperAsTrade, statusKey } from "../src/botView.ts";
+import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -72,4 +72,19 @@ test("pause in the diary", () => {
   const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
   assert.equal(eventText({ time: 0, kind: "pause", reason: "streak", strategies: ["donchian"] }, t),
     "مکث ۳ ساعته: ۴ باخت پشت سر هم. کنار گذاشته شد برای ۱۲ ساعت: شکست کانال");
+});
+
+test("the brain in the panel and the diary", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  assert.equal(brainText({ state: "collecting", samples: 42, needed: 300, model: null, lastTraining: null, nextTraining: null }, t),
+    "در حال جمع کردن تجربه: 42 از 300 سیگنال نتیجه‌دار. فیلتر بعد از آن شروع به کار می‌کند.");
+  const model = {
+    version: 2, trainedAt: 0, threshold: 0.4, on: true,
+    test: { kept: { count: 40, sumR: 14, avgR: 0.35, winRate: 45 }, all: { count: 120, sumR: -6, avgR: -0.05, winRate: 30 } },
+  };
+  assert.equal(brainText({ state: "active", samples: 500, needed: 300, model, lastTraining: null, nextTraining: null }, t),
+    "فیلتر روشن است (مدل شماره‌ی 2). روی سیگنال‌هایی که ندیده بود 40 از 120 را قبول کرد: میانگین +0.35R در برابر −0.05R برای همه، 45٪ برد.");
+  assert.equal(eventText({ time: 0, kind: "skip", timeframe: "1m", reason: "brain", count: 3 }, t), "1m: هوش ربات 3 سیگنال ضعیف را رد کرد");
+  assert.equal(eventText({ time: 0, kind: "brain", reason: "promoted", version: 2 }, t),
+    "هوش ربات یاد گرفت: مدل جدید شماره‌ی 2 به کار افتاد");
 });

@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView } from "./chart.ts";
-import { defaultTarget, eventText, formatMoney, paperAsTrade, statusKey } from "./botView.ts";
+import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -334,6 +334,15 @@ export class BotApp {
         signals: String(s.memory.signals), ended: String(s.memory.ended), wins: String(s.memory.wins),
         losses: String(s.memory.losses), trades: String(s.memory.trades),
       })));
+    }
+
+    // The bot's brain: the learning filter.
+    if (s.brain) {
+      parts.push(el("div", "list-heading", t("bot.brain")));
+      parts.push(el("div", "bot-hint", brainText(s.brain, t)));
+      if (s.brain.nextTraining) {
+        parts.push(el("div", "bot-hint", t("bot.brain.next", { time: formatClock(s.brain.nextTraining * 1000, this.zone).slice(0, 5) })));
+      }
     }
 
     // The bot's diary.

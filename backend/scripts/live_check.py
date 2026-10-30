@@ -154,8 +154,10 @@ async def check_paper_bot() -> None:
 
         with tempfile.TemporaryDirectory() as folder:
             from app.memory import Memory
+            from app.brain import Brain
             memory = Memory(Path(folder) / "memory.db")
-            bot = PaperBot(Store(Path(folder) / "paper.json"), coins, history_of, recent, memory=memory)
+            brain = Brain(memory)
+            bot = PaperBot(Store(Path(folder) / "paper.json"), coins, history_of, recent, memory=memory, brain=brain)
             bot.reset(100)
             bot.start()
             started = time.time()
@@ -174,7 +176,7 @@ async def check_paper_bot() -> None:
             print(f"paper bot: one round in {took:.1f}s, positions opened: {opened}")
             mem = memory.summary()
             print(f"::notice title=Paper bot::one round (5 timeframes x {config.SCANNER_COINS} coins) in {took:.1f}s; "
-                  f"opened: {opened}; memory: {mem['signals']} signals, {mem['ended']} finished")
+                  f"opened: {opened}; memory: {mem['signals']} signals, {mem['ended']} finished; brain: {brain.public()['state']}")
             memory.close()
     finally:
         await service.close()

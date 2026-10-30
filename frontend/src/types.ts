@@ -236,7 +236,8 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume";
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain";
+  version?: number; // brain: model number
   until?: number; // pause: until when
   strategies?: string[]; // pause: strategies left out
   count?: number; // skip "full": how many signals had no room
@@ -251,6 +252,30 @@ export interface PaperEvent {
   message?: string;
 }
 
+/** Results of a set of signals, in R (multiples of the risk). */
+export interface BrainResults {
+  count: number;
+  sumR: number;
+  avgR: number | null;
+  winRate: number | null;
+}
+
+/** The bot's learning filter (step B). */
+export interface BrainState {
+  state: "collecting" | "active" | "off";
+  samples: number; // finished signals in the memory
+  needed: number; // needed before the first model
+  model: {
+    version: number;
+    trainedAt: number;
+    threshold: number;
+    on: boolean;
+    test: { kept: BrainResults; all: BrainResults }; // on signals it had not seen
+  } | null;
+  lastTraining: { time: number; result: string } | null;
+  nextTraining: number | null; // seconds
+}
+
 export interface PaperState {
   capital: number;
   balance: number;
@@ -260,6 +285,7 @@ export interface PaperState {
   pauseReason: "streak" | "fall" | null;
   benched: Record<string, number>; // strategies left out until (seconds)
   memory: { signals: number; open: number; wins: number; losses: number; ended: number; taken: number; trades: number } | null;
+  brain?: BrainState | null;
   mode: "auto" | "manual";
   strategies: string[];
   positions: PaperPosition[];

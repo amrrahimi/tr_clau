@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS signals (
     exit_time INTEGER, exit_reason TEXT, pnl_percent REAL, r REAL, resolved_at REAL
 );
 CREATE INDEX IF NOT EXISTS signals_open ON signals(status, symbol, timeframe);
+CREATE TABLE IF NOT EXISTS training (  -- every learning round of the brain (step B)
+    id INTEGER PRIMARY KEY,
+    time REAL,
+    outcome TEXT,                 -- JSON: result, version, test results
+    champion TEXT                 -- the working model after this round, JSON
+);
 CREATE TABLE IF NOT EXISTS trades (    -- every closed paper trade, kept after "start again"
     id INTEGER PRIMARY KEY,
     closed_at REAL,
@@ -84,6 +90,9 @@ class Memory:
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.lock = threading.RLock()
         self.db.executescript(SCHEMA)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(signals)")}
+        if "chance" not in columns:  # files from step A
+            self.db.execute("ALTER TABLE signals ADD COLUMN chance REAL")  # the brain's chance of profit
         self.db.commit()
 
     @_locked
@@ -178,10 +187,41 @@ class Memory:
         return {k: v or 0.0 for k, v in rows}
 
     @_locked
+    def set_chance(self, key: str, chance: float) -> None:
+        self.db.execute("UPDATE signals SET chance = ? WHERE key = ?", (chance, key))
+        self.db.commit()
+
+    @_locked
+    def finished_signals(self, limit: int) -> list[dict]:
+        """The newest signals that ended in a result (for learning)."""
+        names = ("signal_time", "strategy", "timeframe", "side", "features", "pnl_percent", "r")
+        rows = self.db.execute(
+            f"SELECT {', '.join(names)} FROM signals WHERE status IN ('win','loss','breakeven')"
+            " ORDER BY signal_time DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(zip(names, r)) for r in rows]
+
+    @_locked
+    def save_training(self, outcome: dict, champion: Optional[str]) -> None:
+        self.db.execute("INSERT INTO training (time, outcome, champion) VALUES (?,?,?)",
+                        (outcome.get("time"), json.dumps(outcome), champion))
+        self.db.commit()
+
+    @_locked
+    def last_training(self) -> Optional[dict]:
+        row = self.db.execute("SELECT outcome FROM training ORDER BY id DESC LIMIT 1").fetchone()
+        return json.loads(row[0]) if row else None
+
+    @_locked
+    def load_model(self) -> Optional[str]:
+        row = self.db.execute("SELECT champion FROM training WHERE champion IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
+        return row[0] if row else None
+
+    @_locked
     def summary(self) -> dict:
         total, open_, wins, losses = self.db.execute(
             "SELECT COUNT(*), SUM(status='open'), SUM(status='win'), SUM(status='loss') FROM signals").fetchone()
         taken = self.db.execute("SELECT COUNT(*) FROM signals WHERE taken = 1").fetchone()[0]
         trades = self.db.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
         return {"signals": total or 0, "open": open_ or 0, "wins": wins or 0, "losses": losses or 0,
-                "ended": (total or 0) - (open_ or 0), "taken": taken, "trades": trades}
+                "ended": (total or 0) - (open_ or 0), "taken": taken, "trades": trades,
+                "finished": self.db.execute("SELECT COUNT(*) FROM signals WHERE status IN ('win','loss','breakeven')").fetchone()[0]}
