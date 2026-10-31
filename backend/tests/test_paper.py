@@ -418,6 +418,76 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.reset(50)
         self.assertEqual(bot.account["profitCap"], 0.1)                  # a setting survives "start again"
 
+    async def test_fast_account_follows_every_signal_and_takes_tiny_profits(self):
+        async def coins():
+            return [("A/USDT:USDT", "A")]
+
+        async def history(symbol, tf):
+            return []
+
+        async def recent(symbol, tf):
+            return self.recent_rows.get(symbol, [])
+        fast = pp.PaperBot(pp.Store(Path(self.dir.name) / "fast.json"), coins, history, recent,
+                           now=lambda: self.clock[0], fees=FEES, profile=pp.FAST)
+        self.assertEqual(fast.account["profitCap"], 0.05)
+        weak = {**cand("A", 0.5, 20), "reliable": False}                 # not reliable: fine for this account
+        await fast.follow("1m", [weak], self.clock[0])
+        self.assertEqual(fast.account["positions"], [])                   # switched off: nothing
+        fast.start()
+        await fast.follow("15m", [weak], self.clock[0])
+        self.assertEqual(fast.account["positions"], [])                   # not one of its charts
+        await fast.follow("1m", [weak], self.clock[0])
+        self.assertEqual(len(fast.account["positions"]), 1)
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.2, 100, 100.2)]
+        await fast.step()
+        self.assertEqual(fast.account["closed"][-1]["exitReason"], "cap")
+        self.assertEqual(fast.public()["rules"]["maxOpen"], 10)
+
+    async def test_main_bot_hands_its_signals_to_followers(self):
+        from unittest import mock
+        got = []
+
+        class Follower:
+            async def follow(self, tf, entries, now):
+                got.append((tf, [e["reliable"] for e in entries]))
+        bot = self.bot
+        bot.followers.append(Follower())
+        bot.reset(100)
+        weak = cand("A", 0.5, 20)
+        overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
+                    "rows": [{"strategy": "ema_cross", "stats": weak["stats"], "signal": weak["signal"]}]}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=False)
+        self.assertEqual(got, [("1m", [False])])
+
+    def test_slow_charts_need_a_much_better_record(self):
+        good = cand("A", 2.0, 25)
+        self.assertTrue(pp.strict_ok(good, "1h"))
+        self.assertFalse(pp.strict_ok(cand("A", 1.3, 25), "1h"))      # profit factor too low for 1h
+        self.assertFalse(pp.strict_ok(cand("A", 2.0, 12), "15m"))     # too few trades for 15m
+        self.assertTrue(pp.strict_ok(cand("A", 1.3, 12), "5m"))       # the fast charts keep the normal rule
+
+    async def test_half_way_advice_and_the_owners_answer(self):
+        from unittest import mock
+        bot = self.bot
+        bot.reset(100)
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        p = bot.account["positions"][0]
+        opposite = cand("A", 2.0, 20, side=SHORT)
+        overview = {"marketState": "trend_up", "rows": [{"strategy": "supertrend", "stats": opposite["stats"],
+                                                          "signal": opposite["signal"]}]}
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100.5)]          # not yet half way (101)
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._watch_positions(self.clock[0])
+            self.assertIsNone(p.get("advice"))
+            self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 101.2, 100, 101.2)]
+            await bot._watch_positions(self.clock[0])
+        self.assertEqual((p["advice"]["suggest"], p["advice"]["reason"]), ("close", "opposite"))
+        self.assertEqual(bot.account["events"][-1]["kind"], "advice")
+        self.assertTrue(bot.answer_advice(p["id"], "hold"))
+        self.assertEqual(p["advice"]["answer"], "hold")
+        self.assertEqual(len(bot.account["positions"]), 1)                              # it goes on
+
     async def test_brain_learning_round_writes_the_diary(self):
         class Quick:
             def train(self):

@@ -89,6 +89,9 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       });
     case "resume":
       return e.reason === "recovered" ? t("bot.evResumeEarly", { n: "2" }) : t("bot.evResume");
+    case "advice":
+      return t("bot.evAdvice", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
+        suggest: t(e.suggest === "close" ? "bot.advice.suggest.close" : "bot.advice.suggest.hold") });
     case "pretrain":
       return t("bot.evPretrain", { n: String(e.count ?? 0) });
     case "brain":
@@ -121,5 +124,18 @@ export function brainText(b: BrainState, t: (key: MessageKey, p?: Record<string,
     version: String(m.version), kept: String(kept.count), all: String(all.count),
     on: t(m.testedOn === "history" ? "bot.brain.onHistory" : "bot.brain.onLive"),
     keptR: formatR(kept.avgR), allR: formatR(all.avgR), win: kept.winRate === null ? "—" : kept.winRate.toFixed(0),
+  });
+}
+
+/** The bot's half-way advice for one position, as one line. */
+export function adviceText(p: PaperPosition, t: (key: MessageKey, p?: Record<string, string>) => string): string {
+  const a = p.advice;
+  if (!a) return "";
+  const detail = a.reason === "opposite" ? t(`strat.${a.detail}` as MessageKey)
+    : a.reason === "state" ? t(`state.${a.detail}` as MessageKey) : "";
+  return t("bot.advice.line", {
+    coin: p.base, tf: p.timeframe, pnl: formatMoney(a.pnl),
+    suggest: t(a.suggest === "close" ? "bot.advice.suggest.close" : "bot.advice.suggest.hold"),
+    why: t(`bot.advice.why.${a.reason}` as MessageKey, { detail }),
   });
 }

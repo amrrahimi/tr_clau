@@ -22,7 +22,7 @@ from .history import HistoryCache
 from . import connection
 from .brain import Brain
 from .memory import Memory
-from .paper import MARKET, TIMEFRAMES, PaperBot, Store, default_path
+from .paper import FAST, MARKET, TIMEFRAMES, PaperBot, Store, default_path
 from .scanner import Scanner, run_scan
 from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
@@ -84,12 +84,16 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     store_path = paper_path or default_path()
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
+    # The owner's high-risk test account: its own virtual money, trades the signals the main bot finds.
+    fast = PaperBot(Store(store_path.with_name("paper-fast.json")), bot_coins, bot_history_of, bot_recent,
+                    profile=FAST)
+    bot.followers.append(fast)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        task = asyncio.create_task(bot.run_forever()) if run_bot else None
+        tasks = [asyncio.create_task(b.run_forever()) for b in (bot, fast)] if run_bot else []
         yield
-        if task:
+        for task in tasks:
             task.cancel()
         for service in services.values():
             await service.close()
@@ -102,50 +106,69 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         allow_headers=["*"],
     )
 
-    @app.get("/api/paper")
-    async def paper_state():
-        """The paper account: money, open positions, closed trades, results."""
-        return bot.public()
+    def paper_routes(prefix: str, b: PaperBot) -> None:
+        """The account's buttons: /api/paper (the main bot) and /api/fast (the high-risk account)."""
 
-    @app.post("/api/paper/start")
-    async def paper_start():
-        bot.start()
-        return bot.public()
+        @app.get(f"/api/{prefix}")
+        async def paper_state():
+            """The paper account: money, open positions, closed trades, results."""
+            return b.public()
 
-    @app.post("/api/paper/stop")
-    async def paper_stop():
-        bot.stop()
-        return bot.public()
+        @app.post(f"/api/{prefix}/start")
+        async def paper_start():
+            b.start()
+            return b.public()
 
-    @app.post("/api/paper/reset")
-    async def paper_reset(capital: float = Body(..., embed=True)):
-        """Start the account again with this much virtual money (USDT)."""
-        if not 10 <= capital <= 1_000_000:
-            raise HTTPException(400, "capital must be between 10 and 1000000")
-        async with bot.lock:
-            bot.reset(capital)
-        return bot.public()
+        @app.post(f"/api/{prefix}/stop")
+        async def paper_stop():
+            b.stop()
+            return b.public()
 
-    @app.post("/api/paper/close")
-    async def paper_close(position_id: int = Body(..., embed=True)):
-        """Close one open position now, at the current price."""
-        if not await bot.close_position(position_id):
-            raise HTTPException(404, "no open position with this id")
-        return bot.public()
+        @app.post(f"/api/{prefix}/reset")
+        async def paper_reset(capital: float = Body(..., embed=True)):
+            """Start the account again with this much virtual money (USDT)."""
+            if not 10 <= capital <= 1_000_000:
+                raise HTTPException(400, "capital must be between 10 and 1000000")
+            async with b.lock:
+                b.reset(capital)
+            return b.public()
 
-    @app.post("/api/paper/close-all")
-    async def paper_close_all():
-        """Close every open position now and switch the bot off."""
-        await bot.close_all_and_stop()
-        return bot.public()
+        @app.post(f"/api/{prefix}/close")
+        async def paper_close(position_id: int = Body(..., embed=True)):
+            """Close one open position now, at the current price."""
+            if not await b.close_position(position_id):
+                raise HTTPException(404, "no open position with this id")
+            return b.public()
 
-    @app.post("/api/paper/cap")
-    async def paper_cap(usd: float = Body(..., embed=True)):
-        """Profit cap per position in USDT (0 = off)."""
-        if not 0 <= usd <= 1_000_000:
-            raise HTTPException(400, "usd must be between 0 and 1000000")
-        bot.set_profit_cap(usd)
-        return bot.public()
+        @app.post(f"/api/{prefix}/close-all")
+        async def paper_close_all():
+            """Close every open position now and switch the bot off."""
+            await b.close_all_and_stop()
+            return b.public()
+
+        @app.post(f"/api/{prefix}/cap")
+        async def paper_cap(usd: float = Body(..., embed=True)):
+            """Profit cap per position in USDT (0 = off)."""
+            if not 0 <= usd <= 1_000_000:
+                raise HTTPException(400, "usd must be between 0 and 1000000")
+            b.set_profit_cap(usd)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/advice")
+        async def paper_advice(position_id: int = Body(...), answer: str = Body(...)):
+            """The owner's answer to the bot's half-way advice: hold or close."""
+            if answer not in ("hold", "close"):
+                raise HTTPException(400, "answer must be hold or close")
+            if answer == "close":
+                ok = await b.close_position(position_id)
+            else:
+                ok = b.answer_advice(position_id, "hold")
+            if not ok:
+                raise HTTPException(404, "no open position with advice and this id")
+            return b.public()
+
+    paper_routes("paper", bot)
+    paper_routes("fast", fast)
 
     @app.get("/api/connection")
     async def connection_state():

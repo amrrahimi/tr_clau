@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -98,4 +98,14 @@ test("break-even trades are grey, not losses", () => {
   assert.equal(tradeOutcome({ ...base, pnl: 1.05, exitReason: "target" }), "win");
   const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
   assert.equal(eventText({ time: 0, kind: "resume", reason: "recovered" }, t), "مکث زودتر تمام شد: 2 نتیجه‌ی آخر سود بود، معامله ادامه دارد");
+});
+
+test("half-way advice in plain words", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  const p = { base: "LIT2", timeframe: "3m",
+    advice: { time: 0, suggest: "close", reason: "opposite", detail: "supertrend", pnl: 0.42, answer: null } } as unknown as PaperPosition;
+  assert.equal(adviceText(p, t),
+    "LIT2 3m: به نیمه‌ی راه حد سود رسید (+0.42 USDT). پیشنهاد: بستن. استراتژی «سوپرترند» الان سیگنال قابل اعتماد خلاف جهت داده.");
+  assert.equal(eventText({ time: 0, kind: "advice", symbol: "LIT2", timeframe: "3m", suggest: "hold" }, t),
+    "LIT2 3m به نیمه‌ی راه حد سود رسید؛ پیشنهاد ربات: ادامه");
 });

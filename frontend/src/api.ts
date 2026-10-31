@@ -35,7 +35,12 @@ export type PaperAction =
   | { kind: "mode"; mode: "auto" | "manual"; strategies: string[] }
   | { kind: "close"; position_id: number }
   | { kind: "close-all" }
-  | { kind: "cap"; usd: number };
+  | { kind: "cap"; usd: number }
+  | { kind: "advice"; position_id: number; answer: "hold" | "close" };
+
+/** main: the careful bot. fast: the owner's high-risk test account (its own virtual money). */
+export type BotAccount = "main" | "fast";
+const ACCOUNT_PATH: Record<BotAccount, string> = { main: "/api/paper", fast: "/api/fast" };
 
 export interface CandleRequest {
   marketType: MarketType;
@@ -62,9 +67,9 @@ export interface Backend {
   getStrategyCatalog(): Promise<StrategyCard[]>;
   getStrategyOverview(request: StrategyRequest): Promise<StrategyOverview>;
   getScan(request: ScanRequest): Promise<ScanResult>;
-  getPaper(): Promise<PaperState>;
+  getPaper(account?: BotAccount): Promise<PaperState>;
   /** Bot buttons: start, stop, reset (with capital), mode (auto/manual with strategies). */
-  paperAction(action: PaperAction): Promise<PaperState>;
+  paperAction(action: PaperAction, account?: BotAccount): Promise<PaperState>;
   getConnection(): Promise<ConnectionState>;
   setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
@@ -155,8 +160,8 @@ export class HttpBackend implements Backend {
     });
   }
 
-  async getPaper(): Promise<PaperState> {
-    return this.getJson<PaperState>("/api/paper", {});
+  async getPaper(account: BotAccount = "main"): Promise<PaperState> {
+    return this.getJson<PaperState>(ACCOUNT_PATH[account], {});
   }
 
   async getConnection(): Promise<ConnectionState> {
@@ -167,9 +172,9 @@ export class HttpBackend implements Backend {
     return this.post<ConnectionState>("/api/connection", { proxy });
   }
 
-  async paperAction(action: PaperAction): Promise<PaperState> {
+  async paperAction(action: PaperAction, account: BotAccount = "main"): Promise<PaperState> {
     const { kind, ...body } = action;
-    return this.post<PaperState>(`/api/paper/${kind}`, body);
+    return this.post<PaperState>(`${ACCOUNT_PATH[account]}/${kind}`, body);
   }
 
   private async post<T>(path: string, body: object): Promise<T> {

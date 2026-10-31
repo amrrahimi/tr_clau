@@ -508,3 +508,13 @@ button:hover { background: var(--border); }
   background: transparent; color: var(--muted, #8c91a0); border: 1px solid var(--border); }
 .bot-close:hover { color: #fff; background: var(--down); border-color: var(--down); }
 .bot-table td.even-stop { color: #f5c542; }
+
+.bot-accounts { margin-bottom: 10px; }
+.bot-hint.warn { color: #f5c542; }
+.bot-advice { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 13px; line-height: 1.6; }
+.bot-advice.close { border-color: #f5c542; background: rgba(245, 197, 66, 0.08); }
+.bot-advice.hold { border-color: var(--up, #26a69a); background: rgba(38, 166, 154, 0.08); }
+.bot-advice-buttons { display: flex; gap: 8px; margin-top: 6px; }
+.bot-advice-buttons button { flex: 1; font: inherit; font-size: 12px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  background: transparent; color: inherit; border: 1px solid var(--border); }
+.bot-advice-buttons button.suggested { background: var(--accent, #2962ff); border-color: var(--accent, #2962ff); color: #fff; }

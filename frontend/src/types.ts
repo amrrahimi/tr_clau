@@ -220,6 +220,9 @@ export interface PaperPosition {
   risk: number; // USDT lost at the stop, fees included
   liquidation: number;
   breakevenAt: number | null;
+  /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */
+  advice?: { time: number; suggest: "hold" | "close"; reason: "fine" | "opposite" | "state" | "unknown";
+    detail: string; pnl: number; answer: "hold" | null } | null;
   history: { trades: number; winRate: number | null; profitFactor: number | null };
   lastPrice?: number | null; // open positions
   openPnl?: number | null;
@@ -236,7 +239,9 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain";
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice";
+  suggest?: "hold" | "close"; // advice
+  detail?: string; // advice: the strategy or market state behind it
   version?: number; // brain: model number
   until?: number; // pause: until when
   strategies?: string[]; // pause: strategies left out
@@ -286,6 +291,7 @@ export interface ConnectionState {
 }
 
 export interface PaperState {
+  profile?: "main" | "fast"; // main bot, or the high-risk test account
   capital: number;
   balance: number;
   equity: number;
@@ -327,5 +333,6 @@ export interface PaperState {
   timeframes: string[];
   rules: { risk: number; maxOpen: number; maxFast?: number; maxSlow?: number; maxSameSide?: number;
     maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
+    smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
     fees: { maker: number; taker: number } };
 }

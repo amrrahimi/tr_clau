@@ -3,10 +3,10 @@
 // The bot itself runs in the backend; this screen only shows it and sends
 // the button presses.
 
-import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
+import { BackendError, type Backend, type BotAccount, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView } from "./chart.ts";
-import { brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "./botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -36,6 +36,7 @@ export class BotApp {
   private proxyDraft: string | null = null;
   private confirmCloseAll = false;
   private failures = 0; // polls in a row without an answer from the engine
+  private account: BotAccount = "main"; // which virtual account the screen shows
   private connection: ConnectionState | null = null;
   private polls = 0;
   private error: string | null = null;
@@ -118,7 +119,10 @@ export class BotApp {
 
   private async refresh(): Promise<void> {
     try {
-      this.state = await this.backend.getPaper();
+      const account = this.account;
+      const state = await this.backend.getPaper(account);
+      if (account !== this.account) return; // the owner switched accounts meanwhile
+      this.state = state;
       this.error = null;
       this.failures = 0;
     } catch (error) {
@@ -158,7 +162,7 @@ export class BotApp {
 
   private async act(action: PaperAction): Promise<void> {
     try {
-      this.state = await this.backend.paperAction(action);
+      this.state = await this.backend.paperAction(action, this.account);
       this.error = null;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -245,6 +249,23 @@ export class BotApp {
     };
 
     parts.push(el("div", "section-title", t("bot.title")));
+    // Two accounts: the main bot, and the owner's high-risk test account (its own virtual money).
+    const accounts = el("div", "segmented small bot-accounts");
+    for (const account of ["main", "fast"] as const) {
+      const b = el("button", this.account === account ? "active" : "", t(account === "main" ? "bot.account.main" : "bot.account.fast"));
+      b.addEventListener("click", () => {
+        if (this.account === account) return;
+        this.account = account;
+        this.state = null;
+        this.pinned = false;
+        this.capDraft = null;
+        this.capitalDraft = null;
+        this.render();
+        void this.refresh();
+      });
+      accounts.append(b);
+    }
+    parts.push(accounts);
     // Start / Stop.
     const running = s.status === "running";
     const power = el("button", `bot-power ${running ? "on" : ""}`, t(running ? "bot.stopButton" : "bot.startButton"));
@@ -256,6 +277,23 @@ export class BotApp {
       until: s.pausedUntil ? formatClock(s.pausedUntil * 1000, this.zone).slice(0, 5) : "",
       reason: s.pauseReason ? t(s.pauseReason === "streak" ? "bot.pause.streak" : "bot.pause.fall") : "",
     })));
+    // Half way to the target the bot advises: hold or close. The owner answers with a button.
+    const waiting = s.positions.filter((p) => p.advice && p.advice.answer === null);
+    if (waiting.length) {
+      parts.push(el("div", "list-heading", t("bot.advice.title")));
+      for (const p of waiting) {
+        const card = el("div", `bot-advice ${p.advice!.suggest}`);
+        card.append(el("div", "", adviceText(p, t)));
+        const buttons = el("div", "bot-advice-buttons");
+        for (const answer of ["hold", "close"] as const) {
+          const b = el("button", answer === p.advice!.suggest ? "suggested" : "", t(answer === "hold" ? "bot.advice.hold" : "bot.advice.close"));
+          b.addEventListener("click", () => void this.act({ kind: "advice", position_id: p.id, answer }));
+          buttons.append(b);
+        }
+        card.append(buttons);
+        parts.push(card);
+      }
+    }
     const benched = Object.keys(s.benched ?? {});
     if (benched.length) {
       parts.push(el("div", "bot-hint", t("bot.benchedNow", { list: benched.map((k) => t(`strat.${k}` as MessageKey)).join("، ") })));
@@ -344,6 +382,13 @@ export class BotApp {
       parts.push(list);
     } else {
       parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: s.timeframes.join("، ") })));
+    }
+    if (s.profile === "fast") {
+      parts.push(el("div", "bot-hint warn", t("bot.fastHint", { tfs: s.timeframes.join("، "), open: String(s.rules.maxOpen),
+        cap: String(s.rules.profitCap ?? 0.05) })));
+    } else if (s.rules.strictTrades) {
+      parts.push(el("div", "bot-hint", t("bot.strictHint", { trades: String(s.rules.strictTrades),
+        pf: String(s.rules.strictProfitFactor ?? 1.5) })));
     }
 
     // Profit cap per position (owner's option, 0 = off).

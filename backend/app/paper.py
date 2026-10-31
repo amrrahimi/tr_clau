@@ -60,6 +60,41 @@ GROUP = {"1m": "fast", "3m": "fast", "5m": "fast", "15m": "slow", "1h": "slow"}
 GROUP_SLOTS = {"fast": 3, "slow": 3}
 MAX_OPEN = sum(GROUP_SLOTS.values())
 MAX_SAME_SIDE = 4
+
+# Owner's rule: trades on the slow charts take long and move a lot, so they must be much surer.
+# A signal on 15m / 1h is traded only if its strategy did clearly well on that coin's history.
+STRICT_TIMEFRAMES = ("15m", "1h")
+STRICT_TRADES = 20          # at least this many past trades (10 elsewhere)
+STRICT_PROFIT_FACTOR = 1.5  # wins at least 1.5 times the losses (above 1 elsewhere)
+ADVICE_PART = 0.5           # at this share of the way to the target the bot advises: hold or close
+
+
+@dataclass(frozen=True)
+class Profile:
+    """How an account trades. "main": the careful bot. "fast": the owner's high-risk test account
+    (every signal on the fast charts, many positions at once, closed at a tiny profit)."""
+    name: str = "main"
+    timeframes: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h")
+    group_slots: tuple[tuple[str, int], ...] = (("fast", 3), ("slow", 3))
+    max_same_side: int = MAX_SAME_SIDE
+    all_signals: bool = False     # True: not only reliable signals
+    scans: bool = True            # False: takes the signals the main bot found (no second scan)
+    smart_pause: bool = True
+    advice: bool = True
+    default_cap: float = 0.0
+
+    @property
+    def slots(self) -> dict[str, int]:
+        return dict(self.group_slots)
+
+    @property
+    def max_open(self) -> int:
+        return sum(self.slots.values())
+
+
+MAIN = Profile()
+FAST = Profile(name="fast", timeframes=("1m", "3m", "5m"), group_slots=(("fast", 10), ("slow", 0)),
+               max_same_side=7, all_signals=True, scans=False, smart_pause=False, advice=False, default_cap=0.05)
 MAX_LEVERAGE = 10
 MAINTENANCE = 0.005           # part of the position the exchange keeps as a minimum (liquidation)
 LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liquidation price
@@ -101,7 +136,7 @@ def liquidation_price(side: str, entry: float, leverage: int) -> float:
 
 
 def position_size(side: str, entry: float, stop: float, equity: float, free_margin: float,
-                  fees: Fees) -> Optional[Size]:
+                  fees: Fees, max_open: int = MAX_OPEN) -> Optional[Size]:
     """Size so that the loss at the stop (with both taker fees) is RISK of the account.
 
     Leverage: the lowest that fits the slot (a third of the account), at most
@@ -114,7 +149,7 @@ def position_size(side: str, entry: float, stop: float, equity: float, free_marg
         return None
     loss_frac = stop_frac + 2 * fees.taker / 100           # price move + fees in and out
     notional = equity * RISK / loss_frac
-    slot = min(equity / MAX_OPEN, free_margin)
+    slot = min(equity / max_open, free_margin)
     if slot <= 0:
         return None
     # Highest leverage whose liquidation price is still beyond the stop (with a buffer).
@@ -211,14 +246,24 @@ def pick(candidates: list[dict], open_coins: set[str], slots: int,
     return chosen
 
 
-def free_slots(positions: list[dict], timeframe: str) -> int:
+def free_slots(positions: list[dict], timeframe: str, slots: Optional[dict[str, int]] = None) -> int:
     group = GROUP[timeframe]
     used = sum(1 for p in positions if GROUP.get(p["timeframe"]) == group)
-    return GROUP_SLOTS[group] - used
+    return (slots or GROUP_SLOTS)[group] - used
 
 
-def side_room(positions: list[dict]) -> dict[str, int]:
-    return {side: MAX_SAME_SIDE - sum(1 for p in positions if p["side"] == side) for side in ("long", "short")}
+def side_room(positions: list[dict], max_same_side: int = MAX_SAME_SIDE) -> dict[str, int]:
+    return {side: max_same_side - sum(1 for p in positions if p["side"] == side) for side in ("long", "short")}
+
+
+def strict_ok(entry: dict, timeframe: str) -> bool:
+    """The extra-careful rule for the slow charts (other charts: always True)."""
+    if timeframe not in STRICT_TIMEFRAMES:
+        return True
+    s = entry["stats"]
+    pf = s.get("profitFactor")
+    return (s.get("trades") or 0) >= STRICT_TRADES and (pf is None or pf >= STRICT_PROFIT_FACTOR) \
+        and (s.get("netPercent") or 0) > 0
 
 
 # ---------------------------------------------------------------- the account
@@ -304,8 +349,10 @@ Recent = Callable[[str, str], Awaitable[list[dict]]]         # (symbol, timefram
 class PaperBot:
     def __init__(self, store: Store, coins: Coins, history: History, recent: Recent,
                  now: Callable[[], float] = time.time, fees: Optional[Fees] = None,
-                 memory: Optional[Memory] = None, brain: Optional[Brain] = None):
+                 memory: Optional[Memory] = None, brain: Optional[Brain] = None, profile: Profile = MAIN):
         self.store = store
+        self.profile = profile
+        self.followers: list["PaperBot"] = []   # accounts that trade the signals this bot finds
         self.memory = memory
         self.brain = brain                    # the learning signal filter (step B)
         self.training: Optional[asyncio.Task] = None
@@ -316,7 +363,10 @@ class PaperBot:
         self.recent = recent
         self.now = now
         self.fees = fees or Fees(**config.DEFAULT_FEES[MARKET])
-        self.account = store.load() or new_account(100.0, now())
+        loaded = store.load()
+        self.account = loaded or new_account(100.0, now())
+        if loaded is None:
+            self.account["profitCap"] = profile.default_cap
         for k, v in new_account(self.account.get("capital", 100.0), now()).items():
             self.account.setdefault(k, v)  # files from older versions
         self.prices: dict[str, float] = {}    # last price per position id (for the screen)
@@ -368,9 +418,13 @@ class PaperBot:
             },
             "scanning": self.scanning,
             "lastScan": a["lastScan"],
-            "timeframes": TIMEFRAMES,
-            "rules": {"risk": RISK * 100, "maxOpen": MAX_OPEN, "maxFast": GROUP_SLOTS["fast"],
-                      "maxSlow": GROUP_SLOTS["slow"], "maxSameSide": MAX_SAME_SIDE, "maxLeverage": MAX_LEVERAGE,
+            "timeframes": list(self.profile.timeframes),
+            "profile": self.profile.name,
+            "rules": {"risk": RISK * 100, "maxOpen": self.profile.max_open, "maxFast": self.profile.slots["fast"],
+                      "maxSlow": self.profile.slots["slow"], "maxSameSide": self.profile.max_same_side,
+                      "maxLeverage": MAX_LEVERAGE, "smartPause": self.profile.smart_pause,
+                      "allSignals": self.profile.all_signals,
+                      "strictTrades": STRICT_TRADES, "strictProfitFactor": STRICT_PROFIT_FACTOR,
                       "pauseLosses": PAUSE_LOSSES, "pauseFall": PAUSE_FALL * 100,
                       "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
@@ -523,15 +577,33 @@ class PaperBot:
                 self._event("halted", equity=equity)
                 self.save()
                 return
-            self._update_pause(now, equity)
-            for tf in self._due_timeframes(now):
-                # Scanned even when there is no free place: the memory still learns from the signals.
-                trade = not self._paused(now) and free_slots(self.account["positions"], tf) > 0
-                await self._scan_and_open(tf, now, trade=trade)
+            if self.profile.smart_pause:
+                self._update_pause(now, equity)
+            if self.profile.scans:
+                for tf in self._due_timeframes(now):
+                    # Scanned even when there is no free place: the memory still learns from the signals.
+                    trade = not self._paused(now) and free_slots(self.account["positions"], tf, self.profile.slots) > 0
+                    await self._scan_and_open(tf, now, trade=trade)
+            self.save()
+
+    async def follow(self, tf: str, entries: list[dict], now: float) -> None:
+        """A follower account (no scan of its own) trades the signals the main bot just found."""
+        if self.account["status"] != "running" or tf not in self.profile.timeframes:
+            return
+        async with self.lock:
+            usable = [e for e in entries if self.profile.all_signals or e.get("reliable")]
+            positions = self.account["positions"]
+            open_coins = {p["symbol"] for p in positions}
+            chosen = pick(usable, open_coins, free_slots(positions, tf, self.profile.slots),
+                          side_room(positions, self.profile.max_same_side))
+            for c in chosen:
+                await self._open(c, tf, now, bot_settings(tf)[c["strategy"]])
             self.save()
 
     async def learn_only(self) -> None:
         """Bot switched off: keep scanning so the memory keeps learning, open nothing."""
+        if not self.profile.scans:
+            return
         async with self.lock:
             now = self.now()
             for tf in self._due_timeframes(now):
@@ -629,6 +701,52 @@ class PaperBot:
                 hit = (last, "cap")   # owner's profit cap: take the small profit now
             if hit:
                 self._close(p, hit[0], hit[1], now)
+            elif self.profile.advice and p.get("advice") is None and self._half_way(p, last):
+                await self._advise(p, now)
+
+    @staticmethod
+    def _half_way(p: dict, price: float) -> bool:
+        trigger = p["entryPrice"] + (p["takeProfit"] - p["entryPrice"]) * ADVICE_PART
+        return price >= trigger if p["side"] == LONG else price <= trigger
+
+    async def _advise(self, p: dict, now: float) -> None:
+        """Half way to the target: look at the chart again and advise the owner to hold or to close.
+        close: another strategy now gives a reliable signal the other way, or the market state no
+        longer suits the strategy (or turned against the trade). The owner answers with a button;
+        without an answer the position simply goes on."""
+        tf = p["timeframe"]
+        suggest, reason, detail = "hold", "fine", ""
+        try:
+            rows = await self.history(p["symbol"], tf)
+            overview = await asyncio.to_thread(strategy_overview, rows, tf, bot_settings(tf), None, MODE_OF[tf],
+                                               now=now, fees=self.fees)
+            state = overview["marketState"]
+            for row in overview["rows"]:
+                sig = row.get("signal")
+                e = {"strategy": row["strategy"], "marketState": state, "stats": row["stats"]}
+                if sig and sig["side"] != p["side"] and reliable(e):
+                    suggest, reason, detail = "close", "opposite", row["strategy"]
+                    break
+            if suggest == "hold":
+                suited = STRATEGIES[p["strategy"]].states
+                against = (state == "trend_up" and p["side"] != LONG) or (state == "trend_down" and p["side"] == LONG)
+                if state not in suited or against:
+                    suggest, reason, detail = "close", "state", state
+        except Exception:
+            suggest, reason = "hold", "unknown"
+        open_pnl = pnl(p, self.prices.get(p["id"], p["entryPrice"]), self.fees.taker)[0]
+        p["advice"] = {"time": now, "suggest": suggest, "reason": reason, "detail": detail, "pnl": open_pnl,
+                       "answer": None}
+        self._event("advice", symbol=p["base"], timeframe=tf, reason=reason, suggest=suggest, detail=detail)
+
+    def answer_advice(self, position_id: int, answer: str) -> bool:
+        """Owner's answer "hold" (the position goes on). "close" goes through close_position."""
+        p = next((p for p in self.account["positions"] if p["id"] == position_id), None)
+        if p is None or not p.get("advice"):
+            return False
+        p["advice"]["answer"] = answer
+        self.save()
+        return True
 
     def _close(self, p: dict, price: float, reason: str, now: float) -> None:
         if p not in self.account["positions"]:
@@ -663,6 +781,7 @@ class PaperBot:
         memory = self.memory
         gate = asyncio.Semaphore(8)
         candidates: list[dict] = []
+        seen: list[dict] = []    # every signal of this round (for the follower accounts)
         self.scanning = tf
 
         def work(symbol: str, base: str, rows: list[dict]) -> None:
@@ -685,7 +804,10 @@ class PaperBot:
                         entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
                         if entry["chance"] is not None:
                             memory.set_chance(entry["memoryKey"], entry["chance"])
-                if ok and row["strategy"] in allowed:   # the bot trades reliable signals only
+                entry["reliable"] = ok
+                seen.append(entry)
+                # The bot trades reliable signals only, and on the slow charts only very sure ones.
+                if ok and row["strategy"] in allowed and strict_ok(entry, tf):
                     candidates.append(entry)
 
         async def one(symbol: str, base: str) -> None:
@@ -700,6 +822,11 @@ class PaperBot:
             await asyncio.gather(*(one(s, b) for s, b in await self.coins()))
         finally:
             self.scanning = None
+        for follower in self.followers:
+            try:
+                await follower.follow(tf, seen, now)
+            except Exception:
+                logging.getLogger("trading_bot").warning("follower failed", exc_info=True)
         if not trade:
             return
         if self.brain is not None:  # the brain's filter: skip signals with a low chance of profit
@@ -712,7 +839,8 @@ class PaperBot:
                 self._event("skip", reason="brain", timeframe=tf, count=len(weak))
         open_coins = {p["symbol"] for p in self.account["positions"]}
         positions = self.account["positions"]
-        chosen = pick(candidates, open_coins, free_slots(positions, tf), side_room(positions))
+        chosen = pick(candidates, open_coins, free_slots(positions, tf, self.profile.slots),
+                      side_room(positions, self.profile.max_same_side))
         for c in chosen:
             await self._open(c, tf, now, settings[c["strategy"]])
         chosen_keys = {c.get("memoryKey") for c in chosen}
@@ -733,7 +861,8 @@ class PaperBot:
         stop, target = s["stopLoss"], s["takeProfit"]
         long_ = s["side"] == LONG
         def skip(reason: str) -> None:
-            self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
+            if self.profile.scans:   # the barrage account would fill the diary with these
+                self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
             if self.memory is not None and c.get("memoryKey"):
                 self.memory.mark(c["memoryKey"], skip_reason=reason)
 
@@ -747,7 +876,7 @@ class PaperBot:
             return skip("fee")
         used = sum(p["margin"] for p in self.account["positions"])
         equity = self.equity()
-        size = position_size(s["side"], entry, stop, equity, equity - used, self.fees)
+        size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.max_open)
         if size is None or size.notional <= 0:
             return
         a = self.account

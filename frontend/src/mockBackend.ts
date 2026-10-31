@@ -2,7 +2,7 @@
 // the screen without the Python backend. Prices are random walks, NOT real data.
 
 import type {
-  AnalysisRequest, Backend, CandleRequest, LiveConnection, LiveHandlers, PaperAction, ScanRequest, StrategyRequest,
+  AnalysisRequest, Backend, BotAccount, CandleRequest, LiveConnection, LiveHandlers, PaperAction, ScanRequest, StrategyRequest,
 } from "./api.ts";
 import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
@@ -98,17 +98,22 @@ export class MockBackend implements Backend {
     return MOCK_CATALOG;
   }
 
-  private paper: PaperState | null = null;
+  private papers: Partial<Record<BotAccount, PaperState>> = {};
 
-  /** Preview only: a pretend bot account; starting it shows a few made-up trades. */
-  async getPaper(): Promise<PaperState> {
-    if (!this.paper) this.paper = this.emptyPaper(100);
-    return this.paper;
+  /** Preview only: pretend bot accounts; starting one shows a few made-up trades. */
+  async getPaper(account: BotAccount = "main"): Promise<PaperState> {
+    if (!this.papers[account]) this.papers[account] = this.emptyPaper(100, account);
+    return this.papers[account]!;
   }
 
-  async paperAction(action: PaperAction): Promise<PaperState> {
-    const state = await this.getPaper();
-    if (action.kind === "reset") this.paper = this.emptyPaper(action.capital);
+  async paperAction(action: PaperAction, account: BotAccount = "main"): Promise<PaperState> {
+    const state = await this.getPaper(account);
+    if (action.kind === "reset") this.papers[account] = this.emptyPaper(action.capital, account);
+    else if (action.kind === "advice") {
+      const p = state.positions.find((x) => x.id === action.position_id);
+      if (p?.advice) p.advice.answer = "hold";
+      if (p && action.answer === "close") return this.paperAction({ kind: "close", position_id: p.id }, account);
+    }
     else if (action.kind === "stop") state.status = "stopped";
     else if (action.kind === "mode") {
       state.mode = action.mode;
@@ -131,7 +136,7 @@ export class MockBackend implements Backend {
       state.status = "running";
       if (!state.positions.length && !state.closed.length) await this.sampleTrades(state);
     }
-    return this.paper!;
+    return this.papers[account]!;
   }
 
   private connection: ConnectionState = { proxy: null, source: "direct", typed: "" };
@@ -147,17 +152,21 @@ export class MockBackend implements Backend {
     return this.connection;
   }
 
-  private emptyPaper(capital: number): PaperState {
+  private emptyPaper(capital: number, account: BotAccount = "main"): PaperState {
+    const fast = account === "fast";
     return {
+      profile: account,
       capital, balance: capital, equity: capital, status: "stopped", pausedUntil: null, pauseReason: null, benched: {},
-      memory: { signals: 0, reliable: 0, open: 0, wins: 0, losses: 0, ended: 0, taken: 0, trades: 0, history: 0, finished: 0, charts: 0 },
-      brain: { state: "collecting", samples: 0, needed: 300, model: null, lastTraining: null, nextTraining: null,
+      memory: fast ? null : { signals: 0, reliable: 0, open: 0, wins: 0, losses: 0, ended: 0, taken: 0, trades: 0, history: 0, finished: 0, charts: 0 },
+      brain: fast ? null : { state: "collecting", samples: 0, needed: 300, model: null, lastTraining: null, nextTraining: null,
         pretrain: { done: 0, total: 500, running: true } },
       mode: "auto",
       strategies: MOCK_STRATEGIES.map((c) => c.type), positions: [], closed: [], events: [],
       stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
-      scanning: null, lastScan: {}, timeframes: ["1m", "3m", "5m", "15m", "1h"],
-      rules: { risk: 1, maxOpen: 6, maxFast: 3, maxSlow: 3, maxSameSide: 4, maxLeverage: 10, pauseLosses: 4, pauseFall: 5, pauseHours: 3, totalStop: 30, fees: { maker: 0.02, taker: 0.06 } },
+      scanning: null, lastScan: {}, timeframes: fast ? ["1m", "3m", "5m"] : ["1m", "3m", "5m", "15m", "1h"],
+      rules: { risk: 1, maxOpen: fast ? 10 : 6, maxFast: fast ? 10 : 3, maxSlow: fast ? 0 : 3, maxSameSide: fast ? 7 : 4,
+        maxLeverage: 10, pauseLosses: 4, pauseFall: 5, pauseHours: 3, totalStop: 30, profitCap: fast ? 0.05 : 0,
+        smartPause: !fast, allSignals: fast, strictTrades: 20, strictProfitFactor: 1.5, fees: { maker: 0.02, taker: 0.06 } },
     };
   }
 
