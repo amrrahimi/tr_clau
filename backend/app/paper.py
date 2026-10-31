@@ -48,7 +48,8 @@ from .brain import Brain
 from . import pretrain
 from .memory import Memory, features
 from .scanner import reliable
-from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params
+from . import scalp
+from .strategies import LONG, STRATEGIES, Fees, _levels, breakeven_price, fee_ok, parse_params
 
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
@@ -78,10 +79,11 @@ class Profile:
     group_slots: tuple[tuple[str, int], ...] = (("fast", 3), ("slow", 3))
     max_same_side: int = MAX_SAME_SIDE
     all_signals: bool = False     # True: not only reliable signals
-    scans: bool = True            # False: takes the signals the main bot found (no second scan)
+    barrage: bool = False         # True: its own 1-minute scan with the scalp signals and loose rules
     smart_pause: bool = True
     advice: bool = True
     default_cap: float = 0.0
+    size_slots: int = MAX_OPEN    # sizing: one position may use at most equity / size_slots as margin
 
     @property
     def slots(self) -> dict[str, int]:
@@ -93,8 +95,13 @@ class Profile:
 
 
 MAIN = Profile()
-FAST = Profile(name="fast", timeframes=("1m", "3m", "5m"), group_slots=(("fast", 10), ("slow", 0)),
-               max_same_side=7, all_signals=True, scans=False, smart_pause=False, advice=False, default_cap=0.05)
+# Owner: no limit on open positions here (one per coin still; it stops when the free margin runs out).
+UNLIMITED = 1000
+FAST = Profile(name="fast", timeframes=("1m",), group_slots=(("fast", UNLIMITED), ("slow", 0)),
+               max_same_side=UNLIMITED, all_signals=True, barrage=True, smart_pause=False, advice=False,
+               default_cap=0.05, size_slots=25)   # margin per position at most 1/25 of the money
+FLOW_SECONDS = 600          # the screen's counter: what happened to the signals in the last 10 minutes
+NO_FEE_RULE = {"fee_ratio": 0, "breakeven": 0, "max_candles": 0}
 MAX_LEVERAGE = 10
 MAINTENANCE = 0.005           # part of the position the exchange keeps as a minimum (liquidation)
 LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liquidation price
@@ -352,7 +359,7 @@ class PaperBot:
                  memory: Optional[Memory] = None, brain: Optional[Brain] = None, profile: Profile = MAIN):
         self.store = store
         self.profile = profile
-        self.followers: list["PaperBot"] = []   # accounts that trade the signals this bot finds
+        self.flow: list[tuple[float, str]] = []  # (time, "seen" | "opened" | skip reason) for the counter
         self.memory = memory
         self.brain = brain                    # the learning signal filter (step B)
         self.training: Optional[asyncio.Task] = None
@@ -420,6 +427,7 @@ class PaperBot:
             "lastScan": a["lastScan"],
             "timeframes": list(self.profile.timeframes),
             "profile": self.profile.name,
+            "flow": self.flow_summary(),
             "rules": {"risk": RISK * 100, "maxOpen": self.profile.max_open, "maxFast": self.profile.slots["fast"],
                       "maxSlow": self.profile.slots["slow"], "maxSameSide": self.profile.max_same_side,
                       "maxLeverage": MAX_LEVERAGE, "smartPause": self.profile.smart_pause,
@@ -579,31 +587,85 @@ class PaperBot:
                 return
             if self.profile.smart_pause:
                 self._update_pause(now, equity)
-            if self.profile.scans:
-                for tf in self._due_timeframes(now):
-                    # Scanned even when there is no free place: the memory still learns from the signals.
-                    trade = not self._paused(now) and free_slots(self.account["positions"], tf, self.profile.slots) > 0
-                    await self._scan_and_open(tf, now, trade=trade)
+            for tf in self._due_timeframes(now):
+                if self.profile.barrage:
+                    await self._barrage_scan(tf, now)
+                    continue
+                # Scanned even when there is no free place: the memory still learns from the signals.
+                trade = not self._paused(now) and free_slots(self.account["positions"], tf, self.profile.slots) > 0
+                await self._scan_and_open(tf, now, trade=trade)
             self.save()
 
-    async def follow(self, tf: str, entries: list[dict], now: float) -> None:
-        """A follower account (no scan of its own) trades the signals the main bot just found."""
-        if self.account["status"] != "running" or tf not in self.profile.timeframes:
-            return
-        async with self.lock:
-            usable = [e for e in entries if self.profile.all_signals or e.get("reliable")]
-            positions = self.account["positions"]
-            open_coins = {p["symbol"] for p in positions}
-            chosen = pick(usable, open_coins, free_slots(positions, tf, self.profile.slots),
-                          side_room(positions, self.profile.max_same_side))
-            for c in chosen:
-                await self._open(c, tf, now, bot_settings(tf)[c["strategy"]])
-            self.save()
+    def _count(self, kind: str, n: int = 1) -> None:
+        now = self.now()
+        self.flow.extend([(now, kind)] * n)
+        self.flow = [f for f in self.flow if f[0] >= now - FLOW_SECONDS]
+
+    def flow_summary(self) -> dict:
+        now = self.now()
+        recent = [k for t, k in self.flow if t >= now - FLOW_SECONDS]
+        skipped: dict[str, int] = {}
+        for k in recent:
+            if k not in ("seen", "opened"):
+                skipped[k] = skipped.get(k, 0) + 1
+        return {"minutes": FLOW_SECONDS // 60, "seen": recent.count("seen"), "opened": recent.count("opened"),
+                "skipped": skipped}
+
+    async def _barrage_scan(self, tf: str, now: float) -> None:
+        """The barrage account's own scan: scalp patterns plus the main strategies with loose rules,
+        on every coin's newest closed candles; as many positions as there is room for."""
+        mode = MODE_OF[tf]
+        settings = bot_settings(tf)
+        found: list[dict] = []
+        gate = asyncio.Semaphore(8)
+        self.scanning = tf
+
+        def work(symbol: str, base: str, rows: list[dict]) -> None:
+            closed = closed_only(rows, tf, now)[-600:]
+            if len(closed) < 60:
+                return
+            signals = scalp.scalp_signals(closed) + scalp.loose_signals(closed, settings, mode)
+            step = closed[-1]["time"] - closed[-2]["time"]
+            for kind, sig in signals:
+                c = closed[sig.index]
+                levels = _levels(sig, c["close"])
+                if levels is None:
+                    continue
+                found.append({"symbol": symbol, "base": base, "strategy": kind, "marketState": None,
+                              "stats": {"profitFactor": None, "trades": 0},
+                              "signal": {"side": sig.side, "time": c["time"], "entry": c["close"],
+                                         "stopLoss": levels[0], "takeProfit": levels[1],
+                                         "confirmedAt": c["time"] + step}})
+
+        async def one(symbol: str, base: str) -> None:
+            async with gate:
+                try:
+                    rows = await self.history(symbol, tf)
+                    await asyncio.to_thread(work, symbol, base, rows)
+                except Exception:
+                    return
+
+        try:
+            await asyncio.gather(*(one(s, b) for s, b in await self.coins()))
+        finally:
+            self.scanning = None
+        self._count("seen", len(found))
+        positions = self.account["positions"]
+        open_coins = {p["symbol"] for p in positions}
+        # Newest signals first; one per coin.
+        found.sort(key=lambda e: e["signal"]["time"], reverse=True)
+        chosen = pick(found, open_coins, free_slots(positions, tf, self.profile.slots),
+                      side_room(positions, self.profile.max_same_side))
+        coins_left = len({e["symbol"] for e in found} - open_coins) - len(chosen)
+        if coins_left > 0:
+            self._count("full", coins_left)
+        for c in chosen:
+            await self._open(c, tf, now, NO_FEE_RULE)
 
     async def learn_only(self) -> None:
         """Bot switched off: keep scanning so the memory keeps learning, open nothing."""
-        if not self.profile.scans:
-            return
+        if self.profile.barrage:
+            return   # the barrage account learns nothing and opens nothing while off
         async with self.lock:
             now = self.now()
             for tf in self._due_timeframes(now):
@@ -612,7 +674,7 @@ class PaperBot:
 
     def _due_timeframes(self, now: float) -> list[str]:
         due = []
-        for tf in SCAN_ORDER:
+        for tf in [t for t in SCAN_ORDER if t in self.profile.timeframes]:
             period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
             if self.account["lastScan"].get(tf, {}).get("period") != period:
                 self.account["lastScan"][tf] = {"period": period, "time": now}
@@ -781,7 +843,6 @@ class PaperBot:
         memory = self.memory
         gate = asyncio.Semaphore(8)
         candidates: list[dict] = []
-        seen: list[dict] = []    # every signal of this round (for the follower accounts)
         self.scanning = tf
 
         def work(symbol: str, base: str, rows: list[dict]) -> None:
@@ -805,7 +866,6 @@ class PaperBot:
                         if entry["chance"] is not None:
                             memory.set_chance(entry["memoryKey"], entry["chance"])
                 entry["reliable"] = ok
-                seen.append(entry)
                 # The bot trades reliable signals only, and on the slow charts only very sure ones.
                 if ok and row["strategy"] in allowed and strict_ok(entry, tf):
                     candidates.append(entry)
@@ -822,11 +882,6 @@ class PaperBot:
             await asyncio.gather(*(one(s, b) for s, b in await self.coins()))
         finally:
             self.scanning = None
-        for follower in self.followers:
-            try:
-                await follower.follow(tf, seen, now)
-            except Exception:
-                logging.getLogger("trading_bot").warning("follower failed", exc_info=True)
         if not trade:
             return
         if self.brain is not None:  # the brain's filter: skip signals with a low chance of profit
@@ -861,7 +916,8 @@ class PaperBot:
         stop, target = s["stopLoss"], s["takeProfit"]
         long_ = s["side"] == LONG
         def skip(reason: str) -> None:
-            if self.profile.scans:   # the barrage account would fill the diary with these
+            self._count(reason)
+            if not self.profile.barrage:   # the barrage account would fill the diary with these
                 self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
             if self.memory is not None and c.get("memoryKey"):
                 self.memory.mark(c["memoryKey"], skip_reason=reason)
@@ -876,7 +932,9 @@ class PaperBot:
             return skip("fee")
         used = sum(p["margin"] for p in self.account["positions"])
         equity = self.equity()
-        size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.max_open)
+        size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.size_slots)
+        if size is None and self.profile.barrage:
+            return skip("margin")   # no free money left for another position
         if size is None or size.notional <= 0:
             return
         a = self.account
@@ -896,6 +954,7 @@ class PaperBot:
         a["nextId"] += 1
         a["positions"].append(position)
         self.prices[position["id"]] = entry
+        self._count("opened")
         self._event("open", symbol=c["base"], side=s["side"], timeframe=tf, strategy=c["strategy"],
                     leverage=size.leverage)
         if self.memory is not None and c.get("memoryKey"):

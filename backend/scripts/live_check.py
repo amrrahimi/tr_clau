@@ -190,6 +190,16 @@ async def check_paper_bot() -> None:
             print(f"::notice title=Pre-training::{added} past signals from {bot.pretrain_progress['done']} charts "
                   f"in {took:.1f}s; learning {learn:.1f}s -> {outcome['result']} (tested on {outcome.get('testedOn')}); "
                   f"kept {kept.get('count')} of {every.get('count')}, avgR {kept.get('avgR')} vs {every.get('avgR')}")
+            # The barrage account: one 1-minute round on real data.
+            from app.paper import FAST
+            fast = PaperBot(Store(Path(folder) / "paper-fast.json"), coins, history_of, recent, profile=FAST)
+            fast.start()
+            started = time.time()
+            await fast.step()
+            flow = fast.public()["flow"]
+            assert not [e for e in fast.public()["events"] if e["kind"] == "error"], "barrage errors"
+            print(f"::notice title=Barrage::one 1m round in {time.time() - started:.1f}s; signals {flow['seen']}, "
+                  f"opened {flow['opened']}, skipped {flow['skipped']}")
             # Owner's questions: break-even off / at 50% / at 80%, and the "+$0.1 profit cap", per timeframe.
             from app.research import add, compare_exits
             from app.paper import MODE_OF, SCAN_ORDER

@@ -156,6 +156,7 @@ export class MockBackend implements Backend {
     const fast = account === "fast";
     return {
       profile: account,
+      flow: { minutes: 10, seen: 0, opened: 0, skipped: {} },
       capital, balance: capital, equity: capital, status: "stopped", pausedUntil: null, pauseReason: null, benched: {},
       memory: fast ? null : { signals: 0, reliable: 0, open: 0, wins: 0, losses: 0, ended: 0, taken: 0, trades: 0, history: 0, finished: 0, charts: 0 },
       brain: fast ? null : { state: "collecting", samples: 0, needed: 300, model: null, lastTraining: null, nextTraining: null,
@@ -163,8 +164,8 @@ export class MockBackend implements Backend {
       mode: "auto",
       strategies: MOCK_STRATEGIES.map((c) => c.type), positions: [], closed: [], events: [],
       stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
-      scanning: null, lastScan: {}, timeframes: fast ? ["1m", "3m", "5m"] : ["1m", "3m", "5m", "15m", "1h"],
-      rules: { risk: 1, maxOpen: fast ? 10 : 6, maxFast: fast ? 10 : 3, maxSlow: fast ? 0 : 3, maxSameSide: fast ? 7 : 4,
+      scanning: null, lastScan: {}, timeframes: fast ? ["1m"] : ["1m", "3m", "5m", "15m", "1h"],
+      rules: { risk: 1, maxOpen: fast ? 1000 : 6, maxFast: fast ? 1000 : 3, maxSlow: fast ? 0 : 3, maxSameSide: fast ? 1000 : 4,
         maxLeverage: 10, pauseLosses: 4, pauseFall: 5, pauseHours: 3, totalStop: 30, profitCap: fast ? 0.05 : 0,
         smartPause: !fast, allSignals: fast, strictTrades: 20, strictProfitFactor: 1.5, fees: { maker: 0.02, taker: 0.06 } },
     };

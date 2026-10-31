@@ -84,10 +84,9 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     store_path = paper_path or default_path()
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
-    # The owner's high-risk test account: its own virtual money, trades the signals the main bot finds.
+    # The owner's high-risk test account: its own virtual money, its own 1-minute barrage scan.
     fast = PaperBot(Store(store_path.with_name("paper-fast.json")), bot_coins, bot_history_of, bot_recent,
                     profile=FAST)
-    bot.followers.append(fast)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

@@ -292,6 +292,8 @@ export interface ConnectionState {
 
 export interface PaperState {
   profile?: "main" | "fast"; // main bot, or the high-risk test account
+  /** What happened to the signals in the last minutes (skipped: reason -> count). */
+  flow?: { minutes: number; seen: number; opened: number; skipped: Record<string, number> };
   capital: number;
   balance: number;
   equity: number;

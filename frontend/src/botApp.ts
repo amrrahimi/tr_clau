@@ -294,6 +294,16 @@ export class BotApp {
         parts.push(card);
       }
     }
+    // What happened to the signals lately (most useful for the barrage account).
+    if (s.flow) {
+      parts.push(el("div", "bot-hint", t("bot.flow", { seen: String(s.flow.seen), opened: String(s.flow.opened) })));
+      const skipped = Object.entries(s.flow.skipped);
+      if (skipped.length) {
+        parts.push(el("div", "bot-hint", t("bot.flowSkipped", {
+          list: skipped.map(([reason, n]) => `${t(`bot.skip.${reason}` as MessageKey)} (${n})`).join("، "),
+        })));
+      }
+    }
     const benched = Object.keys(s.benched ?? {});
     if (benched.length) {
       parts.push(el("div", "bot-hint", t("bot.benchedNow", { list: benched.map((k) => t(`strat.${k}` as MessageKey)).join("، ") })));
@@ -384,8 +394,7 @@ export class BotApp {
       parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: s.timeframes.join("، ") })));
     }
     if (s.profile === "fast") {
-      parts.push(el("div", "bot-hint warn", t("bot.fastHint", { tfs: s.timeframes.join("، "), open: String(s.rules.maxOpen),
-        cap: String(s.rules.profitCap ?? 0.05) })));
+      parts.push(el("div", "bot-hint warn", t("bot.fastHint", { cap: String(s.rules.profitCap ?? 0.05) })));
     } else if (s.rules.strictTrades) {
       parts.push(el("div", "bot-hint", t("bot.strictHint", { trades: String(s.rules.strictTrades),
         pf: String(s.rules.strictProfitFactor ?? 1.5) })));

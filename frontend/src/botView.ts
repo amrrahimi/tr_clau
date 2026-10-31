@@ -49,6 +49,7 @@ export function statusKey(s: PaperState): MessageKey {
   if (s.status === "stopped") return "bot.statusStopped";
   if (s.pausedUntil !== null && s.pausedUntil > Date.now() / 1000) return "bot.paused";
   if (s.scanning) return "bot.scanning";
+  if (s.profile === "fast") return "bot.fastWaiting";
   return s.positions.length ? "bot.watching" : "bot.waiting";
 }
 

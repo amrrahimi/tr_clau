@@ -418,47 +418,34 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.reset(50)
         self.assertEqual(bot.account["profitCap"], 0.1)                  # a setting survives "start again"
 
-    async def test_fast_account_follows_every_signal_and_takes_tiny_profits(self):
+    async def test_barrage_account_opens_many_and_counts_what_happened(self):
+        from unittest import mock
+        from app.strategies import Signal
+        coins_list = [(f"C{i}/USDT:USDT", f"C{i}") for i in range(12)]
+        candles = [bar(1_000_000 - 60 * (80 - k), 100, 100.1, 99.9, 100) for k in range(80)]
+        self.clock[0] = candles[-1]["time"] + 60 + 30        # the last candle has closed
+
         async def coins():
-            return [("A/USDT:USDT", "A")]
+            return coins_list
 
         async def history(symbol, tf):
-            return []
+            return candles
 
         async def recent(symbol, tf):
-            return self.recent_rows.get(symbol, [])
+            return candles[-1:]
         fast = pp.PaperBot(pp.Store(Path(self.dir.name) / "fast.json"), coins, history, recent,
                            now=lambda: self.clock[0], fees=FEES, profile=pp.FAST)
-        self.assertEqual(fast.account["profitCap"], 0.05)
-        weak = {**cand("A", 0.5, 20), "reliable": False}                 # not reliable: fine for this account
-        await fast.follow("1m", [weak], self.clock[0])
-        self.assertEqual(fast.account["positions"], [])                   # switched off: nothing
+        self.assertEqual((fast.account["profitCap"], fast.profile.timeframes), (0.05, ("1m",)))
         fast.start()
-        await fast.follow("15m", [weak], self.clock[0])
-        self.assertEqual(fast.account["positions"], [])                   # not one of its charts
-        await fast.follow("1m", [weak], self.clock[0])
-        self.assertEqual(len(fast.account["positions"]), 1)
-        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.2, 100, 100.2)]
-        await fast.step()
-        self.assertEqual(fast.account["closed"][-1]["exitReason"], "cap")
-        self.assertEqual(fast.public()["rules"]["maxOpen"], 10)
-
-    async def test_main_bot_hands_its_signals_to_followers(self):
-        from unittest import mock
-        got = []
-
-        class Follower:
-            async def follow(self, tf, entries, now):
-                got.append((tf, [e["reliable"] for e in entries]))
-        bot = self.bot
-        bot.followers.append(Follower())
-        bot.reset(100)
-        weak = cand("A", 0.5, 20)
-        overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
-                    "rows": [{"strategy": "ema_cross", "stats": weak["stats"], "signal": weak["signal"]}]}
-        with mock.patch.object(pp, "strategy_overview", return_value=overview):
-            await bot._scan_and_open("1m", self.clock[0], trade=False)
-        self.assertEqual(got, [("1m", [False])])
+        signal = [("scalp_bb", Signal(79, LONG, stop_distance=0.5, reward=1.0))]
+        with mock.patch.object(pp.scalp, "scalp_signals", return_value=signal), \
+                mock.patch.object(pp.scalp, "loose_signals", return_value=[]):
+            await fast.step()
+        self.assertEqual(len(fast.account["positions"]), 12)               # one per coin, no limit
+        self.assertEqual({p["strategy"] for p in fast.account["positions"]}, {"scalp_bb"})
+        flow = fast.public()["flow"]
+        self.assertEqual((flow["seen"], flow["opened"], flow["skipped"]), (12, 12, {}))
+        self.assertEqual(fast.public()["timeframes"], ["1m"])
 
     def test_slow_charts_need_a_much_better_record(self):
         good = cand("A", 2.0, 25)
