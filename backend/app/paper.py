@@ -289,6 +289,7 @@ def bot_settings(tf: str) -> dict[str, dict]:
     return settings
 
 
+STRATEGY_SET = str(len(STRATEGIES))   # changes when strategies are added
 EVEN_PART = 1e-4    # a result smaller than this share of the position counts as break-even
 
 
@@ -552,13 +553,14 @@ class PaperBot:
                 settings = bot_settings(tf)
                 for symbol, base in coins:
                     now = self.now()
-                    if pretrain.due(memory.pretrain_time(symbol, tf), now):
+                    chart_tf = f"{tf}#{STRATEGY_SET}"   # new strategies: every chart is rebuilt once
+                    if pretrain.due(memory.pretrain_time(symbol, chart_tf), now):
                         try:
                             rows = closed_only(await self.history(symbol, tf), tf, now)
                             found = await asyncio.to_thread(pretrain.history_signals, symbol, base, tf, rows,
                                                             settings, mode, self.fees)
                             added += await asyncio.to_thread(memory.record_history, tf, found, now)
-                            memory.set_pretrain_time(symbol, tf, now)
+                            memory.set_pretrain_time(symbol, chart_tf, now)
                         except Exception:
                             pass  # one bad chart does not stop the round; it is tried again next round
                     progress["done"] += 1

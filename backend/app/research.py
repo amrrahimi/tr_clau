@@ -69,3 +69,20 @@ def add(total: dict, part: dict) -> None:
         t = total.setdefault(v, {"count": 0, "sumR": 0.0, "wins": 0})
         for k in ("count", "sumR", "wins"):
             t[k] += r[k]
+
+
+def strategy_results(candles: list[dict], settings: dict[str, dict], mode: str, fees: Fees) -> dict[str, dict]:
+    """{strategy: {"count", "sumR", "wins"}}: every strategy on one chart, as the bot runs it."""
+    from .strategies import run
+    out = {k: {"count": 0, "sumR": 0.0, "wins": 0} for k in STRATEGIES}
+    if len(candles) < 300:
+        return out
+    states, _, _ = series(candles, mode)
+    for kind in STRATEGIES:
+        for t in run(candles, kind, settings[kind], states, fees)["trades"]:
+            if t["result"] == "open" or t["r"] is None:
+                continue
+            out[kind]["count"] += 1
+            out[kind]["sumR"] += t["r"]
+            out[kind]["wins"] += t["r"] > 0
+    return out

@@ -482,5 +482,438 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       }
     ],
     "modeDefaults": {}
+  },
+  {
+    "type": "liquidity_sweep",
+    "name": "Liquidity Sweep",
+    "states": [
+      "trend_up",
+      "trend_down",
+      "range",
+      "volatile"
+    ],
+    "uses": [
+      "Price action",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "length",
+        "default": 20,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "buffer",
+        "default": 0.2,
+        "min": 0,
+        "max": 5,
+        "step": 0.05
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
+  },
+  {
+    "type": "fvg_retest",
+    "name": "FVG Retest",
+    "states": [
+      "trend_up",
+      "trend_down"
+    ],
+    "uses": [
+      "Price action",
+      "EMA"
+    ],
+    "params": [
+      {
+        "name": "trend",
+        "default": 200,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "max_wait",
+        "default": 30,
+        "min": 1,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "buffer",
+        "default": 0.2,
+        "min": 0,
+        "max": 5,
+        "step": 0.05
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {
+      "trend": {
+        "scalping": 50,
+        "daily": 200
+      }
+    }
+  },
+  {
+    "type": "order_block",
+    "name": "Order Block",
+    "states": [
+      "trend_up",
+      "trend_down"
+    ],
+    "uses": [
+      "Price action",
+      "EMA"
+    ],
+    "params": [
+      {
+        "name": "swing",
+        "default": 10,
+        "min": 2,
+        "max": 200,
+        "step": 1
+      },
+      {
+        "name": "trend",
+        "default": 200,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "max_wait",
+        "default": 30,
+        "min": 1,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "buffer",
+        "default": 0.2,
+        "min": 0,
+        "max": 5,
+        "step": 0.05
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {
+      "trend": {
+        "scalping": 50,
+        "daily": 200
+      }
+    }
+  },
+  {
+    "type": "sd_zone",
+    "name": "Supply & Demand (RTM)",
+    "states": [
+      "trend_up",
+      "trend_down",
+      "range",
+      "volatile"
+    ],
+    "uses": [
+      "Price action",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "leg",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "max_wait",
+        "default": 50,
+        "min": 1,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "buffer",
+        "default": 0.2,
+        "min": 0,
+        "max": 5,
+        "step": 0.05
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
+  },
+  {
+    "type": "squeeze",
+    "name": "Squeeze Breakout",
+    "states": [
+      "range",
+      "volatile"
+    ],
+    "uses": [
+      "BB",
+      "Keltner",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "length",
+        "default": 20,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "kc_mult",
+        "default": 1.5,
+        "min": 0.1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "min_quiet",
+        "default": 5,
+        "min": 1,
+        "max": 200,
+        "step": 1
+      },
+      {
+        "name": "atr_mult",
+        "default": 1.5,
+        "min": 0.1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
+  },
+  {
+    "type": "vwap_reversion",
+    "name": "VWAP Reversion",
+    "states": [
+      "range"
+    ],
+    "uses": [
+      "VWAP",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "length",
+        "default": 96,
+        "min": 5,
+        "max": 2000,
+        "step": 1
+      },
+      {
+        "name": "band",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
   }
 ];

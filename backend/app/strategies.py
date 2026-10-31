@@ -207,6 +207,204 @@ def _donchian(c: Candles, p: dict) -> list[Signal]:
     return out
 
 
+# ---------- owner's step 3: Smart Money / ICT / RTM, squeeze, VWAP ----------
+# Stops get a small buffer beyond the zone (part of an ATR), so a touch of the exact edge
+# does not count as a loss.
+
+BUFFER = Param("buffer", 0.2, 0, 5, 0.05)        # x ATR beyond the zone / wick
+MAX_WAIT = Param("max_wait", 30, 1, 500)          # candles a zone or gap waits for the price to come back
+
+
+# 7. Liquidity sweep: the candle's wick runs past the high/low of the last N candles (the stops
+#    sitting there are taken) and the candle closes back inside -> trade the way back.
+def _liquidity_sweep(c: Candles, p: dict) -> list[Signal]:
+    high, low = ind.highest(c.highs, p["length"]), ind.lowest(c.lows, p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(high[i - 1], low[i - 1], atr[i]):
+            continue
+        buf = p["buffer"] * atr[i]
+        if c.lows[i] < low[i - 1] < c.closes[i]:
+            out.append(Signal(i, LONG, stop_price=c.lows[i] - buf, reward=p["reward"]))
+        elif c.highs[i] > high[i - 1] > c.closes[i]:
+            out.append(Signal(i, SHORT, stop_price=c.highs[i] + buf, reward=p["reward"]))
+    return out
+
+
+# 8. Fair value gap retest: three candles where the middle one moved so fast that the first
+#    candle's high and the third candle's low do not overlap (a "gap"). In the trend's direction,
+#    wait for the price to come back into the gap and close out of it again.
+def _fvg_retest(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out, gaps = [], []          # gap: [side, bottom, top, born]
+    for i in range(2, len(c.closes)):
+        if not _ready(trend[i], atr[i]):
+            continue
+        buf = p["buffer"] * atr[i]
+        keep = []
+        fired = False
+        for side, bottom, top, born in gaps:
+            if i - born > p["max_wait"]:
+                continue
+            if side == LONG:
+                if c.closes[i] < bottom:
+                    continue                                     # gap filled through: gone
+                if not fired and c.lows[i] <= top and c.closes[i] > top:
+                    out.append(Signal(i, LONG, stop_price=bottom - buf, reward=p["reward"]))
+                    fired = True
+                    continue
+            else:
+                if c.closes[i] > top:
+                    continue
+                if not fired and c.highs[i] >= bottom and c.closes[i] < bottom:
+                    out.append(Signal(i, SHORT, stop_price=top + buf, reward=p["reward"]))
+                    fired = True
+                    continue
+            keep.append((side, bottom, top, born))
+        gaps = keep[-20:]
+        if c.lows[i] > c.highs[i - 2] and c.closes[i] > trend[i]:
+            gaps.append((LONG, c.highs[i - 2], c.lows[i], i))
+        elif c.highs[i] < c.lows[i - 2] and c.closes[i] < trend[i]:
+            gaps.append((SHORT, c.highs[i], c.lows[i - 2], i))
+    return out
+
+
+# 9. Order block: the price breaks the high of the last N candles (break of structure) in the
+#    trend's direction; the last opposite-coloured candle before that move is the "order block".
+#    Trade when the price comes back to it and closes away from it again.
+def _order_block(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    high, low = ind.highest(c.highs, p["swing"]), ind.lowest(c.lows, p["swing"])
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out, block = [], None       # block: [side, bottom, top, born]
+    for i in range(1, len(c.closes)):
+        if not _ready(trend[i], high[i - 1], atr[i]):
+            continue
+        buf = p["buffer"] * atr[i]
+        if block is not None:
+            side, bottom, top, born = block
+            if i - born > p["max_wait"] or (side == LONG and c.closes[i] < bottom) or (side == SHORT and c.closes[i] > top):
+                block = None
+            elif side == LONG and c.lows[i] <= top and c.closes[i] > top:
+                out.append(Signal(i, LONG, stop_price=bottom - buf, reward=p["reward"]))
+                block = None
+            elif side == SHORT and c.highs[i] >= bottom and c.closes[i] < bottom:
+                out.append(Signal(i, SHORT, stop_price=top + buf, reward=p["reward"]))
+                block = None
+        if block is None:
+            start = max(0, i - p["swing"])
+            if c.closes[i] > high[i - 1] and c.closes[i] > trend[i]:
+                k = next((j for j in range(i - 1, start - 1, -1) if c.closes[j] < c.opens[j]), None)
+                if k is not None:
+                    block = (LONG, c.lows[k], c.highs[k], i)
+            elif c.closes[i] < low[i - 1] and c.closes[i] < trend[i]:
+                k = next((j for j in range(i - 1, start - 1, -1) if c.closes[j] > c.opens[j]), None)
+                if k is not None:
+                    block = (SHORT, c.lows[k], c.highs[k], i)
+    return out
+
+
+# 10. Fresh supply and demand (RTM): a "base" of 1-3 small candles, then a big candle leaving it
+#     (at least leg x ATR). The first time the price comes back to the base, trade the same way
+#     as the leg. A zone is used once ("fresh" only).
+def _sd_zone(c: Candles, p: dict) -> list[Signal]:
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out, zones = [], []         # zone: (side, bottom, top, born)
+    for i in range(4, len(c.closes)):
+        if not _ready(atr[i - 1], atr[i]):
+            continue
+        buf = p["buffer"] * atr[i]
+        keep = []
+        for side, bottom, top, born in zones:
+            if i - born > p["max_wait"]:
+                continue
+            touched = c.lows[i] <= top if side == LONG else c.highs[i] >= bottom
+            if not touched:
+                keep.append((side, bottom, top, born))
+                continue
+            # touched: trade if it closed back away from the zone; the zone is used up either way
+            if side == LONG and c.closes[i] > top:
+                out.append(Signal(i, LONG, stop_price=bottom - buf, reward=p["reward"]))
+            elif side == SHORT and c.closes[i] < bottom:
+                out.append(Signal(i, SHORT, stop_price=top + buf, reward=p["reward"]))
+        zones = keep[-20:]
+        rng = c.highs[i] - c.lows[i]
+        body = abs(c.closes[i] - c.opens[i])
+        if rng < p["leg"] * atr[i - 1] or body < 0.6 * rng:
+            continue
+        base = []
+        for j in range(i - 1, max(i - 4, 0), -1):
+            if c.highs[j] - c.lows[j] <= 0.6 * atr[i - 1]:
+                base.append(j)
+            else:
+                break
+        if not base:
+            continue
+        bottom = min(c.lows[j] for j in base)
+        top = max(c.highs[j] for j in base)
+        zones.append((LONG if c.closes[i] > c.opens[i] else SHORT, bottom, top, i))
+    return out
+
+
+# 11. Squeeze breakout: the Bollinger Bands sit inside the Keltner Channel for a while (a very
+#     quiet market). When they come out again, trade the direction of the move.
+def _squeeze(c: Candles, p: dict) -> list[Signal]:
+    upper, basis, lower = ind.bollinger(c.closes, p["length"], 2.0)
+    mid = ind.ema(c.closes, p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, p["length"])
+    out, quiet = [], 0
+    for i in range(1, len(c.closes)):
+        if not _ready(upper[i], mid[i], atr[i]):
+            continue
+        inside = upper[i] < mid[i] + p["kc_mult"] * atr[i] and lower[i] > mid[i] - p["kc_mult"] * atr[i]
+        if inside:
+            quiet += 1
+            continue
+        if quiet >= p["min_quiet"]:
+            stop = atr[i] * p["atr_mult"]
+            if c.closes[i] > basis[i] and c.closes[i] > c.closes[i - 1]:
+                out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+            elif c.closes[i] < basis[i] and c.closes[i] < c.closes[i - 1]:
+                out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+        quiet = 0
+    return out
+
+
+# 12. VWAP reversion: the price stretched far from the volume-weighted average of the last N
+#     candles and closes back toward it -> trade back to the VWAP.
+def _vwap_reversion(c: Candles, p: dict) -> list[Signal]:
+    n = p["length"]
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out = []
+    pv = vol = 0.0
+    window = []
+    vwap = [None] * len(c.closes)
+    for i in range(len(c.closes)):
+        typical = (c.highs[i] + c.lows[i] + c.closes[i]) / 3
+        v = c.volumes[i] or 0.0
+        window.append((typical * v, v))
+        pv += typical * v
+        vol += v
+        if len(window) > n:
+            a, b = window.pop(0)
+            pv -= a
+            vol -= b
+        if len(window) == n and vol > 0:
+            vwap[i] = pv / vol
+    for i in range(1, len(c.closes)):
+        if not _ready(vwap[i], vwap[i - 1], atr[i], atr[i - 1]):
+            continue
+        band = p["band"] * atr[i]
+        buf = 0.2 * atr[i]
+        if c.closes[i - 1] < vwap[i - 1] - p["band"] * atr[i - 1] and c.closes[i] > vwap[i] - band:
+            out.append(Signal(i, LONG, stop_price=min(c.lows[i - 1], c.lows[i]) - buf, target_price=vwap[i]))
+        elif c.closes[i - 1] > vwap[i - 1] + p["band"] * atr[i - 1] and c.closes[i] < vwap[i] + band:
+            out.append(Signal(i, SHORT, stop_price=max(c.highs[i - 1], c.highs[i]) + buf, target_price=vwap[i]))
+    return out
+
+
 def _ema_line(n, iid="trend") -> dict:
     return {"id": f"s-{iid}", "type": "ema", "params": {"length": n}}
 
@@ -241,6 +439,28 @@ _STRATEGIES = [
     Strategy("donchian", "Channel Breakout", ("range", "volatile"), ("Donchian", "ATR"),
              (Param("length", 20, 2, 500), ATR_LENGTH, _atr_mult(2), _reward(2)),
              _donchian),
+    Strategy("liquidity_sweep", "Liquidity Sweep", ("trend_up", "trend_down", "range", "volatile"), ("Price action", "ATR"),
+             (Param("length", 20, 2, 500), BUFFER, _reward(2)),
+             _liquidity_sweep),
+    Strategy("fvg_retest", "FVG Retest", ("trend_up", "trend_down"), ("Price action", "EMA"),
+             (TREND, MAX_WAIT, BUFFER, _reward(2)),
+             _fvg_retest,
+             lambda p: [_ema_line(p["trend"])]),
+    Strategy("order_block", "Order Block", ("trend_up", "trend_down"), ("Price action", "EMA"),
+             (Param("swing", 10, 2, 200), TREND, MAX_WAIT, BUFFER, _reward(2)),
+             _order_block,
+             lambda p: [_ema_line(p["trend"])]),
+    Strategy("sd_zone", "Supply & Demand (RTM)", ("trend_up", "trend_down", "range", "volatile"), ("Price action", "ATR"),
+             (Param("leg", 2, 0.5, 10, 0.1), Param("max_wait", 50, 1, 500), BUFFER, _reward(2)),
+             _sd_zone),
+    Strategy("squeeze", "Squeeze Breakout", ("range", "volatile"), ("BB", "Keltner", "ATR"),
+             (Param("length", 20, 2, 500), Param("kc_mult", 1.5, 0.1, 10, 0.1), Param("min_quiet", 5, 1, 200),
+              _atr_mult(1.5), _reward(2)),
+             _squeeze,
+             lambda p: [{"id": "s-bb", "type": "bb", "params": {"length": p["length"], "mult": 2}}]),
+    Strategy("vwap_reversion", "VWAP Reversion", ("range",), ("VWAP", "ATR"),
+             (Param("length", 96, 5, 2000), Param("band", 2, 0.5, 10, 0.1)),
+             _vwap_reversion),
 ]
 
 STRATEGIES: dict[str, Strategy] = {s.type: s for s in _STRATEGIES}

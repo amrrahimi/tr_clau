@@ -200,22 +200,20 @@ async def check_paper_bot() -> None:
             assert not [e for e in fast.public()["events"] if e["kind"] == "error"], "barrage errors"
             print(f"::notice title=Barrage::one 1m round in {time.time() - started:.1f}s; signals {flow['seen']}, "
                   f"opened {flow['opened']}, skipped {flow['skipped']}")
-            # Owner's questions: break-even off / at 50% / at 80%, and the "+$0.1 profit cap", per timeframe.
-            from app.research import add, compare_exits
-            from app.paper import MODE_OF, SCAN_ORDER
-            from app.strategies import STRATEGIES, parse_params
+            # Every strategy (old and new) on the history of 100 coins, as the bot runs it, per timeframe.
+            from app.research import add, strategy_results
+            from app.paper import SCAN_ORDER, bot_settings, MODE_OF
             started = time.time()
             coins_list = await coins()
             for tf in SCAN_ORDER:
-                settings = {k: parse_params(k, {}, MODE_OF[tf]) for k in STRATEGIES}
                 total: dict = {}
                 for sym, _ in coins_list:
                     rows = await history_of(sym, tf)
-                    add(total, await asyncio.to_thread(compare_exits, rows[:-1], settings, MODE_OF[tf], bot.fees))
-                parts = [f"{v}: {r['count']} trades, avg {r['sumR'] / r['count']:+.3f}R, win {r['wins'] / r['count'] * 100:.0f}%"
-                         for v, r in total.items() if r["count"]]
-                print(f"::notice title=Exits {tf}::" + " | ".join(parts))
-            print(f"exit comparison took {time.time() - started:.1f}s")
+                    add(total, await asyncio.to_thread(strategy_results, rows[:-1], bot_settings(tf), MODE_OF[tf], bot.fees))
+                ranked = sorted(((r["sumR"] / r["count"], k, r) for k, r in total.items() if r["count"]), reverse=True)
+                print(f"::notice title=Strategies {tf}::" + " | ".join(
+                    f"{k} {avg:+.3f}R n={r['count']} win {r['wins'] / r['count'] * 100:.0f}%" for avg, k, r in ranked))
+            print(f"strategy comparison took {time.time() - started:.1f}s")
             memory.close()
     finally:
         await service.close()

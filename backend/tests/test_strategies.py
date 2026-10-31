@@ -333,7 +333,8 @@ class RulesOnWaveDataTest(unittest.TestCase):
         for kind in st.STRATEGIES:
             result = st.run(self.rows, kind, st.parse_params(kind, {}, "scalping"))
             closed = [t for t in result["trades"] if t["result"] != "open"]
-            self.assertTrue(closed, kind)
+            if kind in ORIGINAL_SIX:   # the price-action ones need gaps / zones a smooth wave never has
+                self.assertTrue(closed, kind)
             for t in result["trades"]:
                 direction = 1 if t["side"] == LONG else -1
                 self.assertGreater((t["entryPrice"] - t["stopLoss"]) * direction, 0, kind)
@@ -346,10 +347,88 @@ class RulesOnWaveDataTest(unittest.TestCase):
             json.dumps(result)  # the answer can be sent as JSON
 
 
+ORIGINAL_SIX = ["ema_cross", "macd_ema", "rsi_pullback", "bb_reversion", "supertrend", "donchian"]
+
+
+def flat(n, price=100.0, wiggle=0.2):
+    """Quiet candles around a price."""
+    return [{"time": i * 60, "open": price, "high": price + wiggle, "low": price - wiggle,
+             "close": price + (0.05 if i % 2 else -0.05), "volume": 1.0} for i in range(n)]
+
+
+def candles_of(rows):
+    return st.Candles(opens=[r["open"] for r in rows], highs=[r["high"] for r in rows], lows=[r["low"] for r in rows],
+                      closes=[r["close"] for r in rows], volumes=[r["volume"] for r in rows])
+
+
+def add_bar(rows, o, h, l, c, v=1.0):
+    rows.append({"time": len(rows) * 60, "open": o, "high": h, "low": l, "close": c, "volume": v})
+
+
+class PriceActionStrategiesTest(unittest.TestCase):
+    def sigs(self, kind, rows, **given):
+        return st.STRATEGIES[kind].signals(candles_of(rows), st.parse_params(kind, given, "scalping"))
+
+    def test_liquidity_sweep_takes_the_stops_and_closes_back_inside(self):
+        rows = flat(60)
+        add_bar(rows, 100, 100.1, 98.5, 99.9)            # wick far below the 20-candle low, close back inside
+        s = self.sigs("liquidity_sweep", rows)[-1]
+        self.assertEqual((s.index, s.side), (60, LONG))
+        self.assertLess(s.stop_price, 98.5)
+
+    def test_fvg_retest_waits_for_the_price_to_come_back(self):
+        rows = [{**r, "open": 100 + i * 0.01, "high": 100.2 + i * 0.01, "low": 99.8 + i * 0.01,
+                 "close": 100 + i * 0.01} for i, r in enumerate(flat(80))]
+        add_bar(rows, 100.8, 101.0, 100.7, 100.9)
+        add_bar(rows, 100.9, 103.0, 100.9, 102.9)        # fast candle
+        add_bar(rows, 102.9, 103.5, 102.0, 103.3)        # low 102.0 > high 101.0 two candles back: gap 101-102
+        add_bar(rows, 103.3, 103.4, 102.5, 102.6)
+        add_bar(rows, 102.6, 102.7, 101.6, 102.3)        # dips into the gap, closes above it
+        found = self.sigs("fvg_retest", rows, trend=20)
+        self.assertTrue(found and found[-1].index == len(rows) - 1 and found[-1].side == LONG)
+        self.assertLess(found[-1].stop_price, 101.0)
+
+    def test_order_block_after_a_break_of_structure(self):
+        rows = [{**r, "open": 100 + i * 0.01, "high": 100.2 + i * 0.01, "low": 99.8 + i * 0.01,
+                 "close": 100 + i * 0.01} for i, r in enumerate(flat(80))]
+        add_bar(rows, 101.0, 101.1, 100.4, 100.5)        # last down candle: the order block (100.4-101.1)
+        add_bar(rows, 100.5, 103.0, 100.5, 102.9)        # breaks the recent high
+        add_bar(rows, 102.9, 103.0, 102.0, 102.2)
+        add_bar(rows, 102.2, 102.3, 100.9, 101.5)        # back into the block, closes above it
+        found = self.sigs("order_block", rows, trend=20)
+        self.assertTrue(found and found[-1].index == len(rows) - 1 and found[-1].side == LONG)
+        self.assertLess(found[-1].stop_price, 100.4)
+
+    def test_fresh_demand_zone_is_used_once(self):
+        rows = flat(40)
+        add_bar(rows, 100, 100.05, 99.95, 100.02)        # small base candle
+        add_bar(rows, 100, 102.0, 99.98, 101.9)          # big leg up
+        add_bar(rows, 101.9, 102.0, 101.0, 101.2)
+        add_bar(rows, 101.2, 101.3, 100.03, 100.4)       # back to the base, closes above it
+        add_bar(rows, 100.4, 100.5, 100.0, 100.3)        # second touch: no new trade
+        found = [s for s in self.sigs("sd_zone", rows) if s.index >= 40]
+        self.assertEqual([(s.index, s.side) for s in found], [(43, LONG)])
+
+    def test_squeeze_breakout_after_a_quiet_spell(self):
+        rows = flat(60, wiggle=0.05)
+        rows = [{**r, "close": 100 + (0.01 if i % 2 else -0.01)} for i, r in enumerate(rows)]
+        add_bar(rows, 100, 101.5, 100, 101.4)            # explodes up out of the quiet market
+        found = self.sigs("squeeze", rows)
+        self.assertTrue(found and found[-1].index == 60 and found[-1].side == LONG)
+
+    def test_vwap_reversion_back_toward_the_average(self):
+        rows = flat(120)
+        add_bar(rows, 100, 100.1, 97.0, 97.2)            # stretched far below the VWAP
+        add_bar(rows, 97.2, 99.9, 97.1, 99.8)            # closes back toward it
+        found = self.sigs("vwap_reversion", rows, length=96, band=2)
+        self.assertTrue(found and found[-1].index == len(rows) - 1 and found[-1].side == LONG)
+        self.assertGreater(found[-1].target_price, 99.8)
+
+
 class CardsAndSettingsTest(unittest.TestCase):
-    def test_six_strategies_with_valid_defaults(self):
-        self.assertEqual(list(st.STRATEGIES), ["ema_cross", "macd_ema", "rsi_pullback", "bb_reversion",
-                                               "supertrend", "donchian"])
+    def test_strategies_with_valid_defaults(self):
+        self.assertEqual(list(st.STRATEGIES), ORIGINAL_SIX + ["liquidity_sweep", "fvg_retest", "order_block",
+                                                              "sd_zone", "squeeze", "vwap_reversion"])
         for s in st.STRATEGIES.values():
             for p in s.params:
                 self.assertTrue(p.min <= p.default <= p.max, (s.type, p.name))
