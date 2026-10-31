@@ -223,6 +223,20 @@ def side_room(positions: list[dict]) -> dict[str, int]:
 
 # ---------------------------------------------------------------- the account
 
+# Break-even per timeframe, chosen from the history test of 2026-10-31 (all strategies, 100 coins,
+# after fees, avg R): off was best on 3m / 5m / 15m (and the fast charts are noisy), at 50% was best
+# on 1h. The differences were small; the owner saw fast trades closed at break-even just before the target.
+BREAKEVEN_BY_TF = {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5}
+
+
+def bot_settings(tf: str) -> dict[str, dict]:
+    """Settings of every strategy as the bot uses them on this timeframe."""
+    settings = {k: parse_params(k, {}, MODE_OF[tf]) for k in STRATEGIES}
+    for params in settings.values():
+        params["breakeven"] = BREAKEVEN_BY_TF[tf]
+    return settings
+
+
 EVEN_PART = 1e-4    # a result smaller than this share of the position counts as break-even
 
 
@@ -460,7 +474,7 @@ class PaperBot:
         try:
             for tf in SCAN_ORDER:
                 mode = MODE_OF[tf]
-                settings = {k: parse_params(k, {}, mode) for k in STRATEGIES}
+                settings = bot_settings(tf)
                 for symbol, base in coins:
                     now = self.now()
                     if pretrain.due(memory.pretrain_time(symbol, tf), now):
@@ -643,7 +657,7 @@ class PaperBot:
 
     async def _scan_and_open(self, tf: str, now: float, trade: bool = True) -> None:
         mode = MODE_OF[tf]
-        settings = {k: parse_params(k, {}, mode) for k in STRATEGIES}
+        settings = bot_settings(tf)
         benched = {k for k, until in self.account["benched"].items() if until > now}
         allowed = set(self.account["strategies"]) - benched
         memory = self.memory

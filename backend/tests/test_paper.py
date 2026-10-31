@@ -442,5 +442,12 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.account["status"], "stopped")
 
 
+
+class BotSettingsTest(unittest.TestCase):
+    def test_break_even_only_on_the_hour_chart(self):
+        self.assertEqual({tf: pp.bot_settings(tf)["donchian"]["breakeven"] for tf in pp.TIMEFRAMES},
+                         {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5})
+
+
 if __name__ == "__main__":
     unittest.main()
