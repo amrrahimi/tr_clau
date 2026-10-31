@@ -2,7 +2,7 @@
 // The real app uses HttpBackend; the preview uses a fake one with sample data.
 
 import type {
-  Analysis, Candle, CatalogSpec, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
+  Analysis, Candle, CatalogSpec, ConnectionState, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
   StrategyOverview,
 } from "./types.ts";
 
@@ -32,7 +32,10 @@ export type PaperAction =
   | { kind: "start" }
   | { kind: "stop" }
   | { kind: "reset"; capital: number }
-  | { kind: "mode"; mode: "auto" | "manual"; strategies: string[] };
+  | { kind: "mode"; mode: "auto" | "manual"; strategies: string[] }
+  | { kind: "close"; position_id: number }
+  | { kind: "close-all" }
+  | { kind: "cap"; usd: number };
 
 export interface CandleRequest {
   marketType: MarketType;
@@ -62,6 +65,8 @@ export interface Backend {
   getPaper(): Promise<PaperState>;
   /** Bot buttons: start, stop, reset (with capital), mode (auto/manual with strategies). */
   paperAction(action: PaperAction): Promise<PaperState>;
+  getConnection(): Promise<ConnectionState>;
+  setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
 
@@ -154,11 +159,23 @@ export class HttpBackend implements Backend {
     return this.getJson<PaperState>("/api/paper", {});
   }
 
+  async getConnection(): Promise<ConnectionState> {
+    return this.getJson<ConnectionState>("/api/connection", {});
+  }
+
+  async setConnection(proxy: string): Promise<ConnectionState> {
+    return this.post<ConnectionState>("/api/connection", { proxy });
+  }
+
   async paperAction(action: PaperAction): Promise<PaperState> {
     const { kind, ...body } = action;
+    return this.post<PaperState>(`/api/paper/${kind}`, body);
+  }
+
+  private async post<T>(path: string, body: object): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(new URL(`/api/paper/${kind}`, this.baseUrl), {
+      response = await fetch(new URL(path, this.baseUrl), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -168,7 +185,7 @@ export class HttpBackend implements Backend {
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new BackendError(typeof data.detail === "string" ? data.detail : `HTTP ${response.status}`);
-    return data as PaperState;
+    return data as T;
   }
 
   async getScan(request: ScanRequest): Promise<ScanResult> {

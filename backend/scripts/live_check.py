@@ -190,6 +190,22 @@ async def check_paper_bot() -> None:
             print(f"::notice title=Pre-training::{added} past signals from {bot.pretrain_progress['done']} charts "
                   f"in {took:.1f}s; learning {learn:.1f}s -> {outcome['result']} (tested on {outcome.get('testedOn')}); "
                   f"kept {kept.get('count')} of {every.get('count')}, avgR {kept.get('avgR')} vs {every.get('avgR')}")
+            # Owner's questions: break-even off / at 50% / at 80%, and the "+$0.1 profit cap", per timeframe.
+            from app.research import add, compare_exits
+            from app.paper import MODE_OF, SCAN_ORDER
+            from app.strategies import STRATEGIES, parse_params
+            started = time.time()
+            coins_list = await coins()
+            for tf in SCAN_ORDER:
+                settings = {k: parse_params(k, {}, MODE_OF[tf]) for k in STRATEGIES}
+                total: dict = {}
+                for sym, _ in coins_list:
+                    rows = await history_of(sym, tf)
+                    add(total, await asyncio.to_thread(compare_exits, rows[:-1], settings, MODE_OF[tf], bot.fees))
+                parts = [f"{v}: {r['count']} trades, avg {r['sumR'] / r['count']:+.3f}R, win {r['wins'] / r['count'] * 100:.0f}%"
+                         for v, r in total.items() if r["count"]]
+                print(f"::notice title=Exits {tf}::" + " | ".join(parts))
+            print(f"exit comparison took {time.time() - started:.1f}s")
             memory.close()
     finally:
         await service.close()

@@ -118,7 +118,7 @@ export interface Trade {
   takeProfit: number;
   exitTime: number | null; // null while open
   exitPrice: number | null;
-  exitReason: "target" | "stop" | "breakeven" | "time" | null;
+  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | null;
   breakevenTime: number | null; // when the stop moved to the entry price
   result: "win" | "loss" | "breakeven" | "open";
   pnlPercent: number | null; // after fees
@@ -228,7 +228,7 @@ export interface PaperPosition {
 export interface PaperTrade extends PaperPosition {
   exitPrice: number;
   exitTime: number;
-  exitReason: "target" | "stop" | "breakeven";
+  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap";
   pnl: number; // USDT after fees
   fees: number;
   pnlPercent: number; // of the margin
@@ -278,6 +278,13 @@ export interface BrainState {
   nextTraining: number | null; // seconds
 }
 
+/** How the engine reaches the exchange. */
+export interface ConnectionState {
+  proxy: string | null;
+  source: "app" | "system" | "direct";
+  typed: string; // what the owner typed ("" = use the computer's setting)
+}
+
 export interface PaperState {
   capital: number;
   balance: number;
@@ -319,6 +326,6 @@ export interface PaperState {
   lastScan: Record<string, { period: number; time: number }>;
   timeframes: string[];
   rules: { risk: number; maxOpen: number; maxFast?: number; maxSlow?: number; maxSameSide?: number;
-    maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; totalStop: number;
+    maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
     fees: { maker: number; taker: number } };
 }

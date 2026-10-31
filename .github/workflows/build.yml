@@ -46,6 +46,8 @@ jobs:
           pyinstaller --onefile --name backend --noconfirm \
             --collect-submodules uvicorn \
             --collect-submodules ccxt \
+            --collect-submodules aiohttp_socks \
+            --collect-submodules python_socks \
             --collect-data certifi \
             run.py
 

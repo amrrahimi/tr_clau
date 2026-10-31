@@ -499,3 +499,12 @@ button:hover { background: var(--border); }
 .bot-diary li.skip { color: var(--muted); }
 .bot-diary li.pause { color: #f7c948; }
 .bot-diary li.resume { color: var(--up); }
+
+.bot-trades-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bot-close-all { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--down); border: 1px solid var(--down); }
+.bot-close-all.confirm { background: var(--down); color: #fff; }
+.bot-close { font: inherit; font-size: 12px; line-height: 1; padding: 3px 7px; border-radius: 5px; cursor: pointer;
+  background: transparent; color: var(--muted, #8c91a0); border: 1px solid var(--border); }
+.bot-close:hover { color: #fff; background: var(--down); border-color: var(--down); }
+.bot-table td.even-stop { color: #f5c542; }

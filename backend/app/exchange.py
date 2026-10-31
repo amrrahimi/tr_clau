@@ -44,11 +44,23 @@ def create_exchange(market_type: str):
     """
     import ccxt.async_support as ccxt_async
 
+    from . import connection
+
     exchange_class = getattr(ccxt_async, config.EXCHANGE_ID)
-    return exchange_class({
+    settings: dict[str, Any] = {
         "enableRateLimit": True,  # ccxt waits between requests to respect exchange limits
         "options": {"defaultType": config.MARKET_TYPES[market_type]},
-    })
+    }
+    exchange = exchange_class(settings)
+    proxy, _ = connection.current()
+    if proxy:
+        # socks5://... goes through a SOCKS proxy, anything else through an HTTP proxy
+        # (what VPN apps open on this computer, e.g. 127.0.0.1:10809).
+        if proxy.startswith("socks"):
+            exchange.socks_proxy = proxy
+        else:
+            exchange.http_proxy = proxy
+    return exchange
 
 
 def candle_to_dict(row: list) -> dict[str, float]:

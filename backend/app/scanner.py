@@ -139,7 +139,8 @@ async def run_scan(scan: Scan, coins: Coins, candles: Candles, timeframe: str, t
             async with gate:
                 try:
                     rows = await candles(symbol)
-                    overview = strategy_overview(rows, timeframe, settings, None, trading_mode, now=now(), fees=fees)
+                    overview = await asyncio.to_thread(strategy_overview, rows, timeframe, settings, None, trading_mode,
+                                                       now=now(), fees=fees)
                     scan.entries.extend(coin_rows(symbol, base, overview))
                 except Exception:  # one coin failing does not stop the scan
                     scan.failed.append(base)

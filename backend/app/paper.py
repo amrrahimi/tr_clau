@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import time
@@ -249,6 +250,7 @@ def new_account(capital: float, now: float) -> dict:
         "day": time.strftime("%Y-%m-%d", time.gmtime(now)),
         "dayStartEquity": capital,
         "lossStreak": 0,
+        "profitCap": 0.0,        # owner's option: close a position once it is this many USDT in profit (0 = off)
         "pausedUntil": None,
         "pausedAt": None,
         "pauseReason": None,
@@ -356,7 +358,7 @@ class PaperBot:
             "rules": {"risk": RISK * 100, "maxOpen": MAX_OPEN, "maxFast": GROUP_SLOTS["fast"],
                       "maxSlow": GROUP_SLOTS["slow"], "maxSameSide": MAX_SAME_SIDE, "maxLeverage": MAX_LEVERAGE,
                       "pauseLosses": PAUSE_LOSSES, "pauseFall": PAUSE_FALL * 100,
-                      "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "totalStop": TOTAL_STOP * 100,
+                      "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
 
@@ -382,10 +384,38 @@ class PaperBot:
             self.save()
 
     def reset(self, capital: float) -> None:
+        cap = self.account.get("profitCap", 0.0)
         self.account = new_account(capital, self.now())
+        self.account["profitCap"] = cap   # a setting, not a result: kept
         self.prices.clear()
         self._event("reset", capital=capital)
         self.save()
+
+    def set_profit_cap(self, usd: float) -> None:
+        self.account["profitCap"] = max(0.0, float(usd))
+        self.save()
+
+    async def close_position(self, position_id: int) -> bool:
+        """Owner's button: close one open position now, at the current price (taker fee)."""
+        # No waiting for the bot's lock: a long scan must not delay the owner's button.
+        p = next((p for p in self.account["positions"] if p["id"] == position_id), None)
+        if p is None:
+            return False
+        candles = await self.recent(p["symbol"], p["timeframe"])
+        price = candles[-1]["close"] if candles else self.prices.get(p["id"], p["entryPrice"])
+        if p not in self.account["positions"]:
+            return False   # closed by the bot meanwhile
+        self._close(p, price, "manual", self.now())
+        self.save()
+        return True
+
+    async def close_all_and_stop(self) -> int:
+        """Owner's button: close every open position now and switch the bot off."""
+        ids = [p["id"] for p in self.account["positions"]]
+        for i in ids:
+            await self.close_position(i)
+        self.stop()
+        return len(ids)
 
     def set_mode(self, mode: str, strategies: list[str]) -> None:
         self.account["mode"] = mode
@@ -404,6 +434,7 @@ class PaperBot:
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # never let one bad answer stop the bot
+                logging.getLogger("trading_bot").warning("bot round failed", exc_info=True)
                 self._event("error", message=str(error)[:200])
             self._maybe_learn()
             self._maybe_pretrain()
@@ -516,7 +547,8 @@ class PaperBot:
         since = a.get("pausedAt")
         if since is None:
             return False
-        results = [(t["exitTime"], t.get("outcome") or trade_outcome(t)) for t in a["closed"] if t["exitTime"] >= since]
+        results = [(t["exitTime"], t.get("outcome") or trade_outcome(t)) for t in a["closed"]
+                   if t["exitTime"] >= since and t.get("exitReason") != "manual"]
         if self.memory is not None:
             benched = {k for k, until in a["benched"].items() if until > now}
             allowed = set(a["strategies"]) - benched
@@ -578,10 +610,15 @@ class PaperBot:
             last = candles[-1]["close"]
             self.prices[p["id"]] = last
             hit = check_exit(p, candles, last, config.TIMEFRAME_SECONDS[p["timeframe"]], now)
+            cap = self.account.get("profitCap") or 0
+            if hit is None and cap > 0 and pnl(p, last, self.fees.taker)[0] >= cap:
+                hit = (last, "cap")   # owner's profit cap: take the small profit now
             if hit:
                 self._close(p, hit[0], hit[1], now)
 
     def _close(self, p: dict, price: float, reason: str, now: float) -> None:
+        if p not in self.account["positions"]:
+            return   # already closed (e.g. by the owner's button while the bot was checking it)
         exit_fee = self.fees.maker if reason == "target" else self.fees.taker
         result, fees = pnl(p, price, exit_fee)
         self.account["balance"] += result
@@ -593,7 +630,9 @@ class PaperBot:
         del self.account["closed"][:-KEEP_CLOSED]
         outcome = trade_outcome(trade)
         trade["outcome"] = outcome
-        if outcome == "loss":
+        if reason == "manual":
+            pass   # closed by the owner: says nothing about the market, the pause count stays
+        elif outcome == "loss":
             self.account["lossStreak"] += 1
         elif outcome == "win":
             self.account["lossStreak"] = 0
@@ -612,32 +651,36 @@ class PaperBot:
         candidates: list[dict] = []
         self.scanning = tf
 
+        def work(symbol: str, base: str, rows: list[dict]) -> None:
+            """The heavy part of one chart (runs in a worker thread so the engine keeps answering the screen)."""
+            overview = strategy_overview(rows, tf, settings, None, mode, now=now, fees=self.fees)
+            if memory is not None:  # results of earlier signals of this chart
+                memory.resolve(symbol, tf, closed_only(rows, tf, now), settings, self.fees, now)
+            extra = {"adx": overview.get("adx"), "atrRatio": overview.get("atrRatio")}
+            for row in overview["rows"]:
+                entry = {"symbol": symbol, "base": base, "strategy": row["strategy"],
+                         "marketState": overview["marketState"], "stats": row["stats"], "signal": row.get("signal")}
+                if not entry["signal"]:
+                    continue
+                ok = reliable(entry)
+                if memory is not None:  # every signal is remembered (traded or not, reliable or not)
+                    feats = features(entry, extra, self.fees)
+                    feats["reliable"] = ok
+                    entry["memoryKey"] = memory.record(entry, tf, feats, now, reliable=ok)
+                    if ok and self.brain is not None:
+                        entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
+                        if entry["chance"] is not None:
+                            memory.set_chance(entry["memoryKey"], entry["chance"])
+                if ok and row["strategy"] in allowed:   # the bot trades reliable signals only
+                    candidates.append(entry)
+
         async def one(symbol: str, base: str) -> None:
             async with gate:
                 try:
                     rows = await self.history(symbol, tf)
-                    overview = strategy_overview(rows, tf, settings, None, mode, now=now, fees=self.fees)
-                    if memory is not None:  # results of earlier signals of this chart
-                        memory.resolve(symbol, tf, closed_only(rows, tf, now), settings, self.fees, now)
+                    await asyncio.to_thread(work, symbol, base, rows)
                 except Exception:
                     return
-                extra = {"adx": overview.get("adx"), "atrRatio": overview.get("atrRatio")}
-                for row in overview["rows"]:
-                    entry = {"symbol": symbol, "base": base, "strategy": row["strategy"],
-                             "marketState": overview["marketState"], "stats": row["stats"], "signal": row.get("signal")}
-                    if not entry["signal"]:
-                        continue
-                    ok = reliable(entry)
-                    if memory is not None:  # every signal is remembered (traded or not, reliable or not)
-                        feats = features(entry, extra, self.fees)
-                        feats["reliable"] = ok
-                        entry["memoryKey"] = memory.record(entry, tf, feats, now, reliable=ok)
-                        if ok and self.brain is not None:
-                            entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
-                            if entry["chance"] is not None:
-                                memory.set_chance(entry["memoryKey"], entry["chance"])
-                    if ok and row["strategy"] in allowed:   # the bot trades reliable signals only
-                        candidates.append(entry)
 
         try:
             await asyncio.gather(*(one(s, b) for s, b in await self.coins()))

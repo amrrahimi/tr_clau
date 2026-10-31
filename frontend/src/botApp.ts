@@ -12,7 +12,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, PaperPosition, PaperState, PaperTrade, StrategyCard } from "./types.ts";
+import type { Candle, ConnectionState, PaperPosition, PaperState, PaperTrade, StrategyCard } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -32,6 +32,12 @@ export class BotApp {
   private chartId = 0;
   private confirmReset = false;
   private capitalDraft: string | null = null; // what the owner typed, kept across redraws
+  private capDraft: string | null = null;
+  private proxyDraft: string | null = null;
+  private confirmCloseAll = false;
+  private failures = 0; // polls in a row without an answer from the engine
+  private connection: ConnectionState | null = null;
+  private polls = 0;
   private error: string | null = null;
 
   constructor(private readonly root: HTMLElement, private readonly backend: Backend,
@@ -46,7 +52,11 @@ export class BotApp {
       // the panel still works; manual strategy names come later
     }
     await this.refresh();
-    setInterval(() => void this.refresh(), POLL_MS);
+    void this.loadConnection();
+    setInterval(() => {
+      void this.refresh();
+      if (++this.polls % 12 === 0) void this.loadConnection(); // about once a minute
+    }, POLL_MS);
   }
 
   private t(key: MessageKey, params?: Record<string, string>): string {
@@ -110,13 +120,29 @@ export class BotApp {
     try {
       this.state = await this.backend.getPaper();
       this.error = null;
+      this.failures = 0;
     } catch (error) {
-      this.error = error instanceof BackendError && error.unreachable ? this.t("error.backendUnreachable")
-        : this.t("error.generic", { detail: error instanceof Error ? error.message : String(error) });
+      if (error instanceof BackendError && error.unreachable) {
+        // A busy engine can miss an answer or two: only say so after a few misses in a row.
+        this.failures += 1;
+        if (this.failures >= 3) this.error = this.t("error.backendBusy");
+      } else {
+        this.error = this.t("error.generic", { detail: error instanceof Error ? error.message : String(error) });
+      }
     }
     this.followBot();
     this.drawTrades();
     this.render();
+  }
+
+  private async loadConnection(): Promise<void> {
+    try {
+      this.connection = await this.backend.getConnection();
+    } catch {
+      return;
+    }
+    const typing = document.activeElement instanceof HTMLInputElement && this.els.panel.contains(document.activeElement);
+    if (!typing) this.renderPanel();
   }
 
   /** Unless the owner clicked a trade, the chart follows the bot's newest trade. */
@@ -320,6 +346,28 @@ export class BotApp {
       parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: s.timeframes.join("، ") })));
     }
 
+    // Profit cap per position (owner's option, 0 = off).
+    const capBox = el("div", "bot-capital");
+    const capInput = document.createElement("input");
+    capInput.type = "number";
+    capInput.min = "0";
+    capInput.step = "0.05";
+    capInput.dir = "ltr";
+    capInput.value = this.capDraft ?? String(s.rules.profitCap ?? 0);
+    capInput.addEventListener("input", () => (this.capDraft = capInput.value));
+    const capSave = el("button", "bot-reset", t("bot.save"));
+    capSave.addEventListener("click", () => {
+      const usd = Number(capInput.value);
+      if (!Number.isFinite(usd) || usd < 0) {
+        capInput.classList.add("invalid");
+        return;
+      }
+      this.capDraft = null;
+      void this.act({ kind: "cap", usd });
+    });
+    capBox.append(el("label", "", t("bot.cap")), capInput, capSave);
+    parts.push(capBox, el("div", "bot-hint", t("bot.capHint")));
+
     // Rules in one line.
     parts.push(el("div", "bot-hint rules", t("bot.rules", {
       risk: String(s.rules.risk), open: String(s.rules.maxOpen), fast: String(s.rules.maxFast ?? 3),
@@ -351,6 +399,33 @@ export class BotApp {
       }
     }
 
+    // Connection to the exchange: direct, the computer's proxy, or one typed here (VPN in proxy mode).
+    if (this.connection) {
+      const c = this.connection;
+      parts.push(el("div", "list-heading", t("bot.connection")));
+      parts.push(el("div", "bot-hint", c.source === "direct" ? t("bot.conn.direct")
+        : t(c.source === "app" ? "bot.conn.app" : "bot.conn.system", { proxy: c.proxy ?? "" })));
+      const box = el("div", "bot-capital");
+      const proxy = document.createElement("input");
+      proxy.type = "text";
+      proxy.dir = "ltr";
+      proxy.placeholder = t("bot.conn.placeholder");
+      proxy.value = this.proxyDraft ?? c.typed;
+      proxy.addEventListener("input", () => (this.proxyDraft = proxy.value));
+      const save = el("button", "bot-reset", t("bot.save"));
+      save.addEventListener("click", async () => {
+        try {
+          this.connection = await this.backend.setConnection(proxy.value);
+          this.proxyDraft = null;
+        } catch (error) {
+          this.error = error instanceof Error ? error.message : String(error);
+        }
+        this.render();
+      });
+      box.append(proxy, save);
+      parts.push(box, el("div", "bot-hint", t("bot.conn.hint")));
+    }
+
     // The bot's diary.
     parts.push(el("div", "list-heading", t("bot.diary")));
     const diary = el("ul", "bot-diary");
@@ -371,8 +446,28 @@ export class BotApp {
     const s = this.state;
     const box = this.els.trades;
     const title = document.createElement("div");
-    title.className = "section-title";
+    title.className = "section-title bot-trades-title";
     title.textContent = t("bot.trades");
+    if (s?.positions.length) {
+      // Close every open position now and switch the bot off (two presses, like "start again").
+      const all = document.createElement("button");
+      all.className = `bot-close-all ${this.confirmCloseAll ? "confirm" : ""}`;
+      all.textContent = t(this.confirmCloseAll ? "bot.closeAllConfirm" : "bot.closeAll");
+      all.addEventListener("click", () => {
+        if (!this.confirmCloseAll) {
+          this.confirmCloseAll = true;
+          this.renderTrades();
+          setTimeout(() => {
+            this.confirmCloseAll = false;
+            this.renderTrades();
+          }, 4000);
+          return;
+        }
+        this.confirmCloseAll = false;
+        void this.act({ kind: "close-all" });
+      });
+      title.append(all);
+    }
     const table = document.createElement("table");
     table.className = "scanner-table bot-table";
     const head = document.createElement("tr");
@@ -382,6 +477,7 @@ export class BotApp {
       th.textContent = t(key);
       head.append(th);
     }
+    head.append(document.createElement("th")); // close buttons
     const thead = document.createElement("thead");
     thead.append(head);
     const body = document.createElement("tbody");
@@ -402,7 +498,8 @@ export class BotApp {
         [t(p.side === "long" ? "strategies.long" : "strategies.short"), `side ${p.side}`],
         [`×${p.leverage}`, ""],
         [formatPrice(p.entryPrice, digits), ""],
-        [formatPrice(p.stop, digits), "loss"],
+        // After break-even the stop sits at the break-even price: marked with "＝".
+        [`${p.breakevenAt ? "＝ " : ""}${formatPrice(p.stop, digits)}`, p.breakevenAt ? "even-stop" : "loss"],
         [formatPrice(p.takeProfit, digits), "up"],
         [formatPrice(closed ? (p as PaperTrade).exitPrice : p.lastPrice ?? null, digits), ""],
         [outcome === "even" ? "0.00" : formatMoney(result),
@@ -416,6 +513,20 @@ export class BotApp {
         if (/^[\d×+−.—]/.test(text)) td.dir = "ltr";
         tr.append(td);
       }
+      const action = document.createElement("td");
+      if (!closed) {
+        const x = document.createElement("button");
+        x.className = "bot-close";
+        x.textContent = "✕";
+        x.title = t("bot.closeOne");
+        x.addEventListener("click", (event) => {
+          event.stopPropagation(); // not a click on the row
+          x.disabled = true;
+          void this.act({ kind: "close", position_id: p.id });
+        });
+        action.append(x);
+      }
+      tr.append(action);
       tr.addEventListener("click", () => {
         this.pinned = true;
         void this.showChart({ symbol: p.symbol, timeframe: p.timeframe, id: p.id });

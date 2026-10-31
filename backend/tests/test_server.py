@@ -125,6 +125,21 @@ class ServerTest(unittest.TestCase):
                                                          "Access-Control-Request-Headers": "content-type"})
         self.assertEqual(pre.status_code, 200)
 
+    def test_paper_close_cap_and_connection(self):
+        import os
+        from unittest import mock
+        client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
+        self.assertEqual(client.post("/api/paper/close", json={"position_id": 99}).status_code, 404)
+        self.assertEqual(client.post("/api/paper/cap", json={"usd": 0.1}).json()["rules"]["profitCap"], 0.1)
+        self.assertEqual(client.post("/api/paper/cap", json={"usd": -1}).status_code, 400)
+        client.post("/api/paper/start")
+        self.assertEqual(client.post("/api/paper/close-all").json()["status"], "stopped")
+        with mock.patch.dict(os.environ, {"TRADING_BOT_DATA": self._tmp.name, "https_proxy": "", "http_proxy": "",
+                                          "HTTPS_PROXY": "", "HTTP_PROXY": "", "all_proxy": "", "ALL_PROXY": ""}):
+            body = client.post("/api/connection", json={"proxy": "127.0.0.1:10809"}).json()
+            self.assertEqual((body["proxy"], body["source"]), ("http://127.0.0.1:10809", "app"))
+            self.assertEqual(client.get("/api/connection").json()["typed"], "127.0.0.1:10809")
+
     def test_catalog_endpoint(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
         body = client.get("/api/indicators/catalog").json()

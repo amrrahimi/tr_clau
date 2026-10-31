@@ -19,6 +19,7 @@ from . import config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
+from . import connection
 from .brain import Brain
 from .memory import Memory
 from .paper import MARKET, TIMEFRAMES, PaperBot, Store, default_path
@@ -125,6 +126,49 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             bot.reset(capital)
         return bot.public()
 
+    @app.post("/api/paper/close")
+    async def paper_close(position_id: int = Body(..., embed=True)):
+        """Close one open position now, at the current price."""
+        if not await bot.close_position(position_id):
+            raise HTTPException(404, "no open position with this id")
+        return bot.public()
+
+    @app.post("/api/paper/close-all")
+    async def paper_close_all():
+        """Close every open position now and switch the bot off."""
+        await bot.close_all_and_stop()
+        return bot.public()
+
+    @app.post("/api/paper/cap")
+    async def paper_cap(usd: float = Body(..., embed=True)):
+        """Profit cap per position in USDT (0 = off)."""
+        if not 0 <= usd <= 1_000_000:
+            raise HTTPException(400, "usd must be between 0 and 1000000")
+        bot.set_profit_cap(usd)
+        return bot.public()
+
+    @app.get("/api/connection")
+    async def connection_state():
+        """How the engine reaches the exchange: proxy typed in the app, the computer's proxy, or direct."""
+        proxy, source = connection.current()
+        return {"proxy": proxy, "source": source, "typed": connection.load_settings().get("proxy", "")}
+
+    @app.post("/api/connection")
+    async def connection_set(proxy: str = Body("", embed=True)):
+        """Save the proxy typed in the app ('' = use the computer's setting) and reconnect."""
+        if len(proxy) > 300:
+            raise HTTPException(400, "proxy too long")
+        connection.save_proxy(proxy)
+        async with services_lock:
+            old = list(services.values())
+            services.clear()   # the next request connects again with the new setting
+        for service in old:
+            try:
+                await service.close()
+            except Exception:
+                pass
+        return await connection_state()
+
     @app.post("/api/paper/mode")
     async def paper_mode(mode: str = Body(...), strategies: list[str] = Body(default=[])):
         """auto: the bot uses every strategy; manual: only the ones listed."""
@@ -195,7 +239,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = run_strategy(rows, timeframe, strategy, settings, trading_mode, fees=fees)
+        result = await asyncio.to_thread(run_strategy, rows, timeframe, strategy, settings, trading_mode, fees=fees)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/strategies/overview")
@@ -241,8 +285,8 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = strategy_overview(rows, timeframe, checked, active or None, trading_mode,
-                                   auto_rule=auto_rule or None, fees=fees)
+        result = await asyncio.to_thread(strategy_overview, rows, timeframe, checked, active or None, trading_mode,
+                                         auto_rule=auto_rule or None, fees=fees)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.get("/api/scanner")
@@ -345,7 +389,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             raise HTTPException(400, str(error))
         except Exception as error:
             raise HTTPException(502, f"Exchange request failed: {error}")
-        result = analyze(rows, timeframe, trading_mode, instances)
+        result = await asyncio.to_thread(analyze, rows, timeframe, trading_mode, instances)
         return {"symbol": symbol, "timeframe": timeframe, "marketType": market_type, **result}
 
     @app.websocket("/ws/candles")

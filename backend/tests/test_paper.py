@@ -384,6 +384,40 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.account["positions"], [])
         self.assertEqual(memory.db.execute("SELECT reliable, skip_reason FROM signals").fetchone(), (0, None))
 
+    async def test_owner_closes_one_or_all_positions(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        bot.account["lossStreak"] = 3
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 99.5, 99.5)]     # a small loss now
+        pid = bot.account["positions"][0]["id"]
+        self.assertTrue(await bot.close_position(pid))
+        trade = bot.account["closed"][-1]
+        self.assertEqual((trade["exitReason"], trade["exitPrice"]), ("manual", 99.5))
+        self.assertEqual(bot.account["lossStreak"], 3)                 # the owner's close does not count
+        self.assertFalse(await bot.close_position(pid))                 # already closed
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100)]
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        self.assertEqual(await bot.close_all_and_stop(), 1)
+        self.assertEqual((bot.account["positions"], bot.account["status"]), ([], "stopped"))
+
+    async def test_profit_cap_takes_the_small_profit(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.set_profit_cap(0.1)
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100.05)]   # not enough after fees yet
+        await bot._watch_positions(self.clock[0])
+        self.assertEqual(len(bot.account["positions"]), 1)
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.3, 100, 100.3)]
+        await bot._watch_positions(self.clock[0])
+        trade = bot.account["closed"][-1]
+        self.assertEqual(trade["exitReason"], "cap")
+        self.assertGreaterEqual(trade["pnl"], 0.1)
+        bot.reset(50)
+        self.assertEqual(bot.account["profitCap"], 0.1)                  # a setting survives "start again"
+
     async def test_brain_learning_round_writes_the_diary(self):
         class Quick:
             def train(self):

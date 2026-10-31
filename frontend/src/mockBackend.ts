@@ -7,7 +7,7 @@ import type {
 import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
-  Analysis, CatalogSpec, Candle, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
+  Analysis, CatalogSpec, Candle, ConnectionState, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
   PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade,
 } from "./types.ts";
 
@@ -113,11 +113,38 @@ export class MockBackend implements Backend {
     else if (action.kind === "mode") {
       state.mode = action.mode;
       state.strategies = action.mode === "auto" ? MOCK_STRATEGIES.map((c) => c.type) : action.strategies;
+    } else if (action.kind === "cap") {
+      state.rules.profitCap = action.usd;
+    } else if (action.kind === "close" || action.kind === "close-all") {
+      const ids = action.kind === "close" ? [action.position_id] : state.positions.map((p) => p.id);
+      for (const id of ids) {
+        const p = state.positions.find((x) => x.id === id);
+        if (!p) continue;
+        const price = p.lastPrice ?? p.entryPrice;
+        const pnl = (price - p.entryPrice) * p.quantity * (p.side === "long" ? 1 : -1);
+        state.positions = state.positions.filter((x) => x !== p);
+        state.closed.unshift({ ...p, exitPrice: price, exitTime: Date.now() / 1000, exitReason: "manual", pnl, fees: 0,
+          pnlPercent: (pnl / p.margin) * 100 });
+      }
+      if (action.kind === "close-all") state.status = "stopped";
     } else if (action.kind === "start") {
       state.status = "running";
       if (!state.positions.length && !state.closed.length) await this.sampleTrades(state);
     }
     return this.paper!;
+  }
+
+  private connection: ConnectionState = { proxy: null, source: "direct", typed: "" };
+
+  async getConnection(): Promise<ConnectionState> {
+    return this.connection;
+  }
+
+  async setConnection(proxy: string): Promise<ConnectionState> {
+    const typed = proxy.trim();
+    this.connection = typed ? { proxy: typed.includes("://") ? typed : `http://${typed}`, source: "app", typed }
+      : { proxy: null, source: "direct", typed: "" };
+    return this.connection;
   }
 
   private emptyPaper(capital: number): PaperState {
