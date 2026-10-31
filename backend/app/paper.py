@@ -612,6 +612,7 @@ class PaperBot:
 
     async def step(self) -> None:
         async with self.lock:
+            account = self.account
             now = self.now()
             self._new_day(now)
             await self._watch_positions(now)
@@ -624,16 +625,29 @@ class PaperBot:
                 return
             if self.profile.smart_pause:
                 self._update_pause(now, equity)
-            for tf in self._due_timeframes(now):
+            due = self._trading_order(self._due_timeframes(now))
+            self.save()
+        # One timeframe at a time, each under the lock on its own: the buttons (stop, start again,
+        # close) wait for one chart scan at most, not for a whole round of five timeframes.
+        for tf in due:
+            async with self.lock:
+                if self.account is not account or account["status"] != "running":
+                    return   # started again or stopped meanwhile
+                now = self.now()
                 if self.profile.barrage:
                     await self._barrage_scan(tf, now)
-                    continue
-                # Scanned even when there is no free place or the owner did not tick this timeframe:
-                # the memory still learns from the signals. Trades only on the ticked timeframes.
-                trade = (not self._paused(now) and tf in self.chosen_timeframes()
-                         and free_slots(self.account["positions"], tf, self.profile.slots) > 0)
-                await self._scan_and_open(tf, now, trade=trade)
-            self.save()
+                else:
+                    # Scanned even when there is no free place or the owner did not tick this timeframe:
+                    # the memory still learns from the signals. Trades only on the ticked timeframes.
+                    trade = (not self._paused(now) and tf in self.chosen_timeframes()
+                             and free_slots(self.account["positions"], tf, self.profile.slots) > 0)
+                    await self._scan_and_open(tf, now, trade=trade)
+                self.save()
+
+    def _trading_order(self, due: list[str]) -> list[str]:
+        """The ticked timeframes first, fastest first (a 1-minute signal goes stale soonest), then the rest."""
+        chosen = self.chosen_timeframes()
+        return sorted(due, key=lambda tf: (tf not in chosen, config.TIMEFRAME_SECONDS[tf]))
 
     def _count(self, kind: str, n: int = 1) -> None:
         now = self.now()
@@ -706,10 +720,19 @@ class PaperBot:
         if self.profile.barrage:
             return   # the barrage account learns nothing and opens nothing while off
         async with self.lock:
-            now = self.now()
-            for tf in self._due_timeframes(now):
-                await self._scan_and_open(tf, now, trade=False)
+            account = self.account
+            due = self._due_timeframes(self.now())
             self.save()
+        for i, tf in enumerate(due):
+            async with self.lock:
+                # Switched on (or started again) meanwhile: leave the rest of this learning round,
+                # so the next round trades right away instead of after a 5-minute learning round.
+                if self.account is not account or account["status"] == "running":
+                    for rest in due[i:]:   # not scanned: due again for the trading round
+                        account["lastScan"].pop(rest, None)
+                    return
+                await self._scan_and_open(tf, self.now(), trade=False)
+                self.save()
 
     def _due_timeframes(self, now: float) -> list[str]:
         due = []

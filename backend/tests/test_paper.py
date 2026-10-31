@@ -189,13 +189,73 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             scanned.append((tf, trade))
         bot._scan_and_open = fake_scan
         await bot.step()
-        self.assertEqual([tf for tf, _ in scanned], ["1h", "15m", "5m", "3m", "1m"])   # biggest first
+        self.assertEqual([tf for tf, _ in scanned], ["1m", "3m", "5m", "15m", "1h"])   # fastest first
         self.assertTrue(all(trade for _, trade in scanned))
         await bot.step()
         self.assertEqual(len(scanned), 5)                             # same candles: no new scan
         self.clock[0] += 60
         await bot.step()
         self.assertIn(("1m", True), scanned[5:])
+
+    async def test_ticked_timeframes_scanned_first(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.set_timeframes(["15m"])
+        bot.start()
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append(tf)
+        bot._scan_and_open = fake_scan
+        await bot.step()
+        self.assertEqual(scanned, ["15m", "1m", "3m", "5m", "1h"])
+
+    async def test_reset_during_a_round_stops_the_round(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append(tf)
+            if len(scanned) == 2:
+                bot.reset(50)          # pressed while the round runs
+        bot._scan_and_open = fake_scan
+        await bot.step()
+        self.assertEqual(len(scanned), 2)     # the rest of the old round is dropped
+        self.assertEqual(bot.account["capital"], 50)
+
+    async def test_switching_on_ends_the_learning_round(self):
+        bot = self.bot
+        bot.memory = object()   # learn_only only runs with a memory
+        bot.reset(100)
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append((tf, trade))
+            bot.start()                # pressed while the learning round runs
+        bot._scan_and_open = fake_scan
+        await bot.learn_only()
+        self.assertEqual(scanned, [("1h", False)])
+        await bot.step()               # the next round trades straight away
+        self.assertTrue(any(trade for _, trade in scanned[1:]))
+
+    async def test_lock_is_free_between_timeframes(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        free = []
+
+        async def fake_scan(tf, now, trade=True):
+            await asyncio.sleep(0)
+        bot._scan_and_open = fake_scan
+        task = asyncio.create_task(bot.step())
+
+        async def press():
+            async with bot.lock:   # what the "start again" button waits for
+                free.append(True)
+        await asyncio.gather(task, press())
+        self.assertEqual(free, [True])
 
     async def test_smart_pause_after_four_losses_then_resume(self):
         bot = self.bot
