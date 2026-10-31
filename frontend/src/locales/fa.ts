@@ -308,6 +308,8 @@ export const fa: Record<MessageKey, string> = {
   "bot.fastWaiting": "منتظر کندل بعدی ۱ دقیقه‌ای برای رگبار بعدی",
   "bot.flow": "۱۰ دقیقه‌ی اخیر: {seen} سیگنال دیده شد، {opened} پوزیشن باز شد.",
   "bot.flowSkipped": "رد شده: {list}",
+  "bot.timeframes": "تایم‌فریم‌های معامله",
+  "bot.timeframesHint": "ربات فقط روی تایم‌فریم‌های تیک‌خورده معامله می‌کند. بقیه را فقط برای یادگیری حافظه و هوش ربات بررسی می‌کند.",
   "language.switch": "EN",
   "language.switchLabel": "تغییر به انگلیسی",
 };

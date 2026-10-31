@@ -148,6 +148,10 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(client.post("/api/fast/reset", json={"capital": 50}).json()["capital"], 50)
         self.assertEqual(client.get("/api/paper").json()["capital"], 100)          # the main account is untouched
         self.assertEqual(client.post("/api/paper/advice", json={"position_id": 1, "answer": "hold"}).status_code, 404)
+        body = client.post("/api/paper/timeframes", json={"timeframes": ["1m", "1h"]}).json()
+        self.assertEqual(body["chosenTimeframes"], ["1m", "1h"])
+        self.assertEqual(client.post("/api/paper/timeframes", json={"timeframes": []}).status_code, 400)
+        self.assertEqual(client.post("/api/fast/timeframes", json={"timeframes": ["5m"]}).status_code, 400)
         self.assertEqual(client.post("/api/paper/advice", json={"position_id": 1, "answer": "maybe"}).status_code, 400)
 
     def test_catalog_endpoint(self):

@@ -475,6 +475,22 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(p["advice"]["answer"], "hold")
         self.assertEqual(len(bot.account["positions"]), 1)                              # it goes on
 
+    async def test_only_ticked_timeframes_are_traded_but_all_are_scanned(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        bot.set_timeframes(["5m", "1m"])
+        self.assertEqual(bot.chosen_timeframes(), ["1m", "5m"])
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append((tf, trade))
+        bot._scan_and_open = fake_scan
+        await bot.step()
+        self.assertEqual(dict(scanned), {"1h": False, "15m": False, "5m": True, "3m": False, "1m": True})
+        bot.reset(50)
+        self.assertEqual(bot.public()["chosenTimeframes"], ["1m", "5m"])     # kept after start again
+
     async def test_brain_learning_round_writes_the_diary(self):
         class Quick:
             def train(self):

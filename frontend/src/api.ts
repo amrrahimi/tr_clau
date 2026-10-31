@@ -36,6 +36,7 @@ export type PaperAction =
   | { kind: "close"; position_id: number }
   | { kind: "close-all" }
   | { kind: "cap"; usd: number }
+  | { kind: "timeframes"; timeframes: string[] }
   | { kind: "advice"; position_id: number; answer: "hold" | "close" };
 
 /** main: the careful bot. fast: the owner's high-risk test account (its own virtual money). */

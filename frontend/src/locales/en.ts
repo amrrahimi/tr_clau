@@ -306,6 +306,8 @@ export const en = {
   "bot.fastWaiting": "Waiting for the next 1-minute candle for the next barrage",
   "bot.flow": "Last 10 minutes: {seen} signals seen, {opened} positions opened.",
   "bot.flowSkipped": "Skipped: {list}",
+  "bot.timeframes": "Timeframes to trade",
+  "bot.timeframesHint": "The bot trades only on the ticked timeframes. The others are still watched, only so the memory and brain keep learning.",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;

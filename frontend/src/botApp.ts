@@ -359,6 +359,31 @@ export class BotApp {
     capital.append(label, input, reset);
     parts.push(capital, el("div", "bot-hint", t("bot.resetHint")));
 
+    // Timeframes the bot may trade on: the owner ticks them (all others are still watched for learning).
+    if (s.timeframes.length > 1) {
+      const chosen = s.chosenTimeframes ?? s.timeframes;
+      const list = el("div", "bot-timeframes");
+      for (const tf of s.timeframes) {
+        const line = el("label", "");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = chosen.includes(tf);
+        box.addEventListener("change", () => {
+          const next = s.timeframes.filter((x) => (x === tf ? box.checked : chosen.includes(x)));
+          if (!next.length) {
+            box.checked = true; // at least one
+            return;
+          }
+          void this.act({ kind: "timeframes", timeframes: next });
+        });
+        const name = el("span", "", tf);
+        name.dir = "ltr";
+        line.append(box, name);
+        list.append(line);
+      }
+      parts.push(el("div", "list-heading", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
+    }
+
     // Auto / Manual: in manual the owner picks the strategies, the bot does the rest.
     const modes = el("div", "segmented small");
     for (const mode of ["auto", "manual"] as const) {
@@ -391,7 +416,7 @@ export class BotApp {
       }
       parts.push(list);
     } else {
-      parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: s.timeframes.join("، ") })));
+      parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: (s.chosenTimeframes ?? s.timeframes).join("، ") })));
     }
     if (s.profile === "fast") {
       parts.push(el("div", "bot-hint warn", t("bot.fastHint", { cap: String(s.rules.profitCap ?? 0.05) })));

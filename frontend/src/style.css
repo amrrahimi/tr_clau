@@ -518,3 +518,6 @@ button:hover { background: var(--border); }
 .bot-advice-buttons button { flex: 1; font: inherit; font-size: 12px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
   background: transparent; color: inherit; border: 1px solid var(--border); }
 .bot-advice-buttons button.suggested { background: var(--accent, #2962ff); border-color: var(--accent, #2962ff); color: #fff; }
+
+.bot-timeframes { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0; }
+.bot-timeframes label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px; }

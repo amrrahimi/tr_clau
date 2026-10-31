@@ -426,6 +426,7 @@ class PaperBot:
             "scanning": self.scanning,
             "lastScan": a["lastScan"],
             "timeframes": list(self.profile.timeframes),
+            "chosenTimeframes": self.chosen_timeframes(),
             "profile": self.profile.name,
             "flow": self.flow_summary(),
             "rules": {"risk": RISK * 100, "maxOpen": self.profile.max_open, "maxFast": self.profile.slots["fast"],
@@ -461,10 +462,22 @@ class PaperBot:
 
     def reset(self, capital: float) -> None:
         cap = self.account.get("profitCap", 0.0)
+        chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
-        self.account["profitCap"] = cap   # a setting, not a result: kept
+        self.account["profitCap"] = cap   # settings, not results: kept
+        if chosen:
+            self.account["chosenTimeframes"] = chosen
         self.prices.clear()
         self._event("reset", capital=capital)
+        self.save()
+
+    def chosen_timeframes(self) -> list[str]:
+        """The timeframes the owner ticked for trading (all of the account's by default)."""
+        chosen = [tf for tf in self.account.get("chosenTimeframes") or [] if tf in self.profile.timeframes]
+        return chosen or list(self.profile.timeframes)
+
+    def set_timeframes(self, timeframes: list[str]) -> None:
+        self.account["chosenTimeframes"] = [tf for tf in self.profile.timeframes if tf in timeframes]
         self.save()
 
     def set_profit_cap(self, usd: float) -> None:
@@ -591,8 +604,10 @@ class PaperBot:
                 if self.profile.barrage:
                     await self._barrage_scan(tf, now)
                     continue
-                # Scanned even when there is no free place: the memory still learns from the signals.
-                trade = not self._paused(now) and free_slots(self.account["positions"], tf, self.profile.slots) > 0
+                # Scanned even when there is no free place or the owner did not tick this timeframe:
+                # the memory still learns from the signals. Trades only on the ticked timeframes.
+                trade = (not self._paused(now) and tf in self.chosen_timeframes()
+                         and free_slots(self.account["positions"], tf, self.profile.slots) > 0)
                 await self._scan_and_open(tf, now, trade=trade)
             self.save()
 

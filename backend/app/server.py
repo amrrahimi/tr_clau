@@ -145,6 +145,14 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             await b.close_all_and_stop()
             return b.public()
 
+        @app.post(f"/api/{prefix}/timeframes")
+        async def paper_timeframes(timeframes: list[str] = Body(..., embed=True)):
+            """The timeframes the bot may trade on (ticked by the owner)."""
+            if not timeframes or set(timeframes) - set(b.profile.timeframes):
+                raise HTTPException(400, f"choose at least one of {list(b.profile.timeframes)}")
+            b.set_timeframes(timeframes)
+            return b.public()
+
         @app.post(f"/api/{prefix}/cap")
         async def paper_cap(usd: float = Body(..., embed=True)):
             """Profit cap per position in USDT (0 = off)."""

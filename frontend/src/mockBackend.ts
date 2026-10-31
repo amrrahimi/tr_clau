@@ -118,6 +118,8 @@ export class MockBackend implements Backend {
     else if (action.kind === "mode") {
       state.mode = action.mode;
       state.strategies = action.mode === "auto" ? MOCK_STRATEGIES.map((c) => c.type) : action.strategies;
+    } else if (action.kind === "timeframes") {
+      state.chosenTimeframes = state.timeframes.filter((tf) => action.timeframes.includes(tf));
     } else if (action.kind === "cap") {
       state.rules.profitCap = action.usd;
     } else if (action.kind === "close" || action.kind === "close-all") {
