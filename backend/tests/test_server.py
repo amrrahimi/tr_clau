@@ -12,6 +12,7 @@ except ImportError:
     HAVE_FASTAPI = False
 
 from app.exchange import MarketService
+from app.strategies import STRATEGIES
 
 from .fake_exchange import FakeExchange, row
 
@@ -67,7 +68,7 @@ class ServerTest(unittest.TestCase):
         exchange = FakeExchange(candles=[rows] * 6)
         client = self.client(lambda market_type: MarketService(exchange, market_type))
         cards = client.get("/api/strategies/catalog").json()["strategies"]
-        self.assertEqual(len(cards), 6)
+        self.assertEqual(len(cards), len(STRATEGIES))
         params = {"symbol": "BTC/USDT", "timeframe": "1m", "strategy": "ema_cross", "trading_mode": "scalping"}
         body = client.get("/api/strategies/run", params=params).json()
         self.assertEqual(body["params"]["trend"], 50)
@@ -81,7 +82,7 @@ class ServerTest(unittest.TestCase):
         base = {"symbol": "BTC/USDT", "timeframe": "1m", "trading_mode": "daily"}
         overview = client.get("/api/strategies/overview", params={
             **base, "active": "donchian", "settings": json.dumps({"ema_cross": {"fast": 5}})}).json()
-        self.assertEqual(len(overview["rows"]), 6)
+        self.assertEqual(len(overview["rows"]), len(STRATEGIES))
         self.assertEqual(overview["rows"][0]["params"]["fast"], 5)
         self.assertEqual(overview["active"]["strategy"], "donchian")
         self.assertEqual(overview["fees"], {"maker": 0.075, "taker": 0.1})   # spot defaults
