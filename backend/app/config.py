@@ -46,6 +46,20 @@ POLL_INTERVAL_SECONDS = 2.0
 # Seconds a ticker snapshot (24h volumes) is reused before asking again.
 TICKER_CACHE_SECONDS = 60.0
 
+# How long one request to the exchange may take. ccxt's own default (10 s) is
+# too short through a VPN: the full futures ticker list is a large answer and
+# often arrived after 10 s, so the bot round failed with "RequestTimeout".
+EXCHANGE_TIMEOUT_MS = 30000
+
+# A ticker request that fails because of the network is tried this many times
+# in total, with a short pause between tries.
+TICKER_ATTEMPTS = 3
+TICKER_RETRY_PAUSE_SECONDS = 2.0
+
+# If the exchange still cannot be reached, the last good ticker snapshot keeps
+# being used for at most this long, so a short VPN drop does not stop the bot.
+TICKER_STALE_MAX_SECONDS = 15 * 60.0
+
 # The local server. 127.0.0.1 means only this computer can connect.
 HOST = "127.0.0.1"
 PORT = 8765

@@ -113,3 +113,69 @@ class CandlesTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlakyTickers(FakeExchange):
+    """fetch_tickers fails with the given errors first, then answers normally."""
+
+    def __init__(self, failures):
+        super().__init__()
+        self.failures = list(failures)
+
+    async def fetch_tickers(self, symbols=None):
+        if self.failures:
+            self.calls["fetch_tickers"] += 1
+            raise self.failures.pop(0)
+        return await super().fetch_tickers(symbols)
+
+
+async def no_wait(seconds):
+    pass
+
+
+class TickerRetryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_timeout_is_tried_again(self):
+        exchange = FlakyTickers([TimeoutError("slow VPN")])
+        service = MarketService(exchange, "futures", sleep=no_wait)
+        self.assertEqual(len(await service.top_markets()), 2)
+        self.assertEqual(exchange.calls["fetch_tickers"], 2)
+
+    async def test_gives_up_after_all_attempts_without_snapshot(self):
+        exchange = FlakyTickers([TimeoutError()] * config.TICKER_ATTEMPTS)
+        service = MarketService(exchange, "futures", sleep=no_wait)
+        with self.assertRaises(TimeoutError):
+            await service.top_markets()
+        self.assertEqual(exchange.calls["fetch_tickers"], config.TICKER_ATTEMPTS)
+
+    async def test_recent_snapshot_used_when_exchange_unreachable(self):
+        clock = Clock()
+        exchange = FlakyTickers([])
+        service = MarketService(exchange, "futures", clock=clock, sleep=no_wait)
+        first = [m.symbol for m in await service.top_markets()]
+        exchange.failures = [TimeoutError()] * config.TICKER_ATTEMPTS
+        clock.now = config.TICKER_CACHE_SECONDS + 1
+        self.assertEqual([m.symbol for m in await service.top_markets()], first)
+
+    async def test_too_old_snapshot_is_not_used(self):
+        clock = Clock()
+        exchange = FlakyTickers([])
+        service = MarketService(exchange, "futures", clock=clock, sleep=no_wait)
+        await service.top_markets()
+        exchange.failures = [TimeoutError()] * config.TICKER_ATTEMPTS
+        clock.now = config.TICKER_STALE_MAX_SECONDS + 1
+        with self.assertRaises(TimeoutError):
+            await service.top_markets()
+
+    async def test_other_errors_are_not_retried(self):
+        exchange = FlakyTickers([ValueError("bad answer")])
+        service = MarketService(exchange, "futures", sleep=no_wait)
+        with self.assertRaises(ValueError):
+            await service.top_markets()
+        self.assertEqual(exchange.calls["fetch_tickers"], 1)
+
+    async def test_callers_at_the_same_moment_share_one_request(self):
+        import asyncio
+        exchange = FakeExchange()
+        service = MarketService(exchange, "futures")
+        await asyncio.gather(service.top_markets(), service.top_markets(), service.top_markets())
+        self.assertEqual(exchange.calls["fetch_tickers"], 1)

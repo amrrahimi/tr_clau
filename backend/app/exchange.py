@@ -7,6 +7,8 @@ tests) can be swapped without touching the server or the analysis code.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -16,6 +18,21 @@ from . import config
 
 class MarketDataError(Exception):
     """A request the app cannot answer, with a message for the user."""
+
+
+def is_network_error(error: BaseException) -> bool:
+    """True when the exchange could not be reached or answered too slowly.
+
+    These are worth trying again (a VPN reconnecting, a slow tunnel). Errors
+    the exchange itself sent back (bad symbol, etc.) are not.
+    """
+    try:
+        import ccxt
+    except ImportError:
+        ccxt = None
+    if ccxt is not None and isinstance(error, ccxt.NetworkError):
+        return True
+    return isinstance(error, (asyncio.TimeoutError, TimeoutError, ConnectionError))
 
 
 @dataclass(frozen=True)
@@ -49,6 +66,7 @@ def create_exchange(market_type: str):
     exchange_class = getattr(ccxt_async, config.EXCHANGE_ID)
     settings: dict[str, Any] = {
         "enableRateLimit": True,  # ccxt waits between requests to respect exchange limits
+        "timeout": config.EXCHANGE_TIMEOUT_MS,
         "options": {"defaultType": config.MARKET_TYPES[market_type]},
     }
     exchange = exchange_class(settings)
@@ -98,7 +116,8 @@ def _ticker_volume(ticker: dict | None) -> float:
 class MarketService:
     """Market list and candles for one market type (spot or futures)."""
 
-    def __init__(self, exchange, market_type: str, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, exchange, market_type: str, clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], Any] = asyncio.sleep):
         if market_type not in config.MARKET_TYPES:
             raise MarketDataError(f"Unknown market type: {market_type}")
         self.exchange = exchange
@@ -108,6 +127,10 @@ class MarketService:
         self._markets: dict[str, dict] | None = None
         self._tickers: dict[str, dict] = {}
         self._tickers_time: float | None = None
+        self._sleep = sleep
+        # Both bots and the chart ask for tickers at the same moment; the lock
+        # makes them share one request instead of sending three large ones.
+        self._tickers_lock = asyncio.Lock()
 
     async def _load_markets(self) -> dict[str, dict]:
         """Markets of the chosen type, priced in USDT, that are open for trading."""
@@ -127,15 +150,37 @@ class MarketService:
         return self._markets
 
     async def _load_tickers(self) -> dict[str, dict]:
-        """Latest 24h statistics, reused for a short time to save requests."""
-        now = self._clock()
-        expired = self._tickers_time is None or now - self._tickers_time >= config.TICKER_CACHE_SECONDS
-        if expired:
+        """Latest 24h statistics, reused for a short time to save requests.
+
+        A network failure is tried again a few times. If the exchange still
+        cannot be reached, the last good snapshot is used while it is not too
+        old, so a short VPN drop does not stop the bot.
+        """
+        async with self._tickers_lock:
+            now = self._clock()
+            expired = self._tickers_time is None or now - self._tickers_time >= config.TICKER_CACHE_SECONDS
+            if not expired:
+                return self._tickers
             markets = await self._load_markets()
-            tickers = await self.exchange.fetch_tickers(list(markets))
+            for attempt in range(1, config.TICKER_ATTEMPTS + 1):
+                try:
+                    tickers = await self.exchange.fetch_tickers(list(markets))
+                    break
+                except Exception as error:
+                    if not is_network_error(error):
+                        raise
+                    if attempt < config.TICKER_ATTEMPTS:
+                        await self._sleep(config.TICKER_RETRY_PAUSE_SECONDS * attempt)
+                        continue
+                    age = None if self._tickers_time is None else self._clock() - self._tickers_time
+                    if age is not None and age <= config.TICKER_STALE_MAX_SECONDS:
+                        logging.getLogger("trading_bot").warning(
+                            "tickers unreachable, using the snapshot from %.0f s ago: %s", age, error)
+                        return self._tickers
+                    raise
             self._tickers = tickers or {}
-            self._tickers_time = now
-        return self._tickers
+            self._tickers_time = self._clock()
+            return self._tickers
 
     async def _market_infos(self) -> list[MarketInfo]:
         markets = await self._load_markets()

@@ -538,7 +538,17 @@ class PaperBot:
             return
         last = self.account.get("pretrainedAt")
         if pretrain.due(last, self.now()):
-            self.pretraining = asyncio.create_task(self.pretrain_round())
+            self.pretraining = asyncio.create_task(self._pretrain_safely())
+
+    async def _pretrain_safely(self) -> int:
+        """pretrain_round in the background: a failure is logged, never left unread."""
+        try:
+            return await self.pretrain_round()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # e.g. the exchange unreachable; tried again next round
+            logging.getLogger("trading_bot").warning("pretrain round failed: %s", error)
+            return 0
 
     async def pretrain_round(self) -> int:
         """One round over all charts; charts done in the last day are skipped. Returns new signals."""
