@@ -113,6 +113,12 @@ BENCH_SECONDS = 12 * 3600    # strategies that lost lately are left out this lon
 BENCH_LOOKBACK = 24 * 3600
 TOTAL_STOP = 0.30
 POLL_SECONDS = 10
+
+
+def _really_cancelled() -> bool:
+    """True when this task itself is being cancelled (the app is closing), not just a request inside it."""
+    task = asyncio.current_task()
+    return task is None or task.cancelling() > 0
 SCAN_DELAY = 3                # seconds after a candle closes before scanning (final price)
 KEEP_CLOSED = 500
 KEEP_EVENTS = 50
@@ -521,13 +527,19 @@ class PaperBot:
                     await self.step()
                 elif self.memory is not None:
                     await self.learn_only()
+                self._maybe_learn()
+                self._maybe_pretrain()
             except asyncio.CancelledError:
-                raise
+                if _really_cancelled():
+                    raise   # the app is closing
+                # A cancel that did not come from the app: e.g. the exchange connection was closed
+                # while a request was waiting (changing the proxy does that). Before, this ended
+                # the loop silently: the bot showed "running" but never scanned again.
+                logging.getLogger("trading_bot").warning("bot round interrupted", exc_info=True)
+                self._event("error", message="round interrupted (connection was reset)")
             except Exception as error:  # never let one bad answer stop the bot
                 logging.getLogger("trading_bot").warning("bot round failed", exc_info=True)
                 self._event("error", message=str(error)[:200])
-            self._maybe_learn()
-            self._maybe_pretrain()
             await asyncio.sleep(POLL_SECONDS)
 
     def _maybe_pretrain(self) -> None:

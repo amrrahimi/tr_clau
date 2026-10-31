@@ -524,3 +524,44 @@ class BotSettingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoopSurvivesTest(unittest.IsolatedAsyncioTestCase):
+    """A cancel from inside a request (e.g. the exchange connection closed on a proxy change)
+    must not end the bot's loop; only cancelling the loop itself does."""
+
+    async def test_stray_cancel_does_not_stop_the_loop(self):
+        calls = []
+
+        async def coins():
+            calls.append(1)
+            if len(calls) == 1:
+                raise asyncio.CancelledError()
+            return []
+
+        async def nothing(*args):
+            return []
+
+        with tempfile.TemporaryDirectory() as folder:
+            clock = [1_000_000.0]
+            bot = pp.PaperBot(pp.Store(Path(folder) / "paper.json"), coins, nothing, nothing,
+                              now=lambda: clock[0], fees=FEES)
+            bot.reset(100)
+            bot.start()
+            old_poll = pp.POLL_SECONDS
+            pp.POLL_SECONDS = 0
+            try:
+                task = asyncio.create_task(bot.run_forever())
+                for _ in range(200):
+                    await asyncio.sleep(0.01)
+                    clock[0] += 61   # next 1-minute candle: a new scan is due
+                    if len(calls) >= 2:
+                        break
+                self.assertFalse(task.done())
+                self.assertGreaterEqual(len(calls), 2)
+                self.assertTrue(any(e["kind"] == "error" for e in bot.account["events"]))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                pp.POLL_SECONDS = old_poll
