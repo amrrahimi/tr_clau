@@ -21,6 +21,14 @@ fail=0
 curl -sf http://127.0.0.1:8765/ | grep -q '<div id="app">' && echo "screen: served" || { echo "screen: MISSING"; fail=1; }
 curl -sf http://127.0.0.1:8765/api/paper | grep -q '"status"' && echo "bot state: ok" || { echo "bot state: MISSING"; fail=1; }
 curl -sf http://127.0.0.1:8765/api/connection; echo
+# Opening the exchange connection loads ccxt with cryptography/cffi (native libraries). A missing
+# library shows up only here ("Could not start the exchange connection"), not in the health check.
+markets=$(curl -s "http://127.0.0.1:8765/api/markets?market_type=futures")
+if echo "$markets" | grep -q "Could not start the exchange connection"; then
+  echo "exchange connection: FAILED TO START: $markets"; fail=1
+else
+  echo "exchange connection: started (${markets:0:120})"
+fi
 adb shell dumpsys activity services $PKG/.EngineService | grep -q "isForeground=true" \
   && echo "service: in the foreground" || { echo "service: NOT foreground"; fail=1; }
 # Background: leave the app (home screen), wait, the engine must still answer.

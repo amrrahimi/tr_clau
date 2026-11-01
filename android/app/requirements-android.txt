@@ -26,6 +26,7 @@ charset-normalizer==3.4.0
 urllib3==2.2.3
 cryptography==42.0.8
 cffi==1.17.1
+chaquopy-libffi==3.3   # the native library cffi loads (libffi.so); --no-deps skips it, so it is listed here
 pycparser==2.22
 typing_extensions==4.12.2
 setuptools==75.6.0
