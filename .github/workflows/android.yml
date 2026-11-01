@@ -22,6 +22,14 @@ env:
   PROPCACHE_NO_EXTENSIONS: "1"
 
 jobs:
+  chaquopy-index:   # temporary: which compiled packages Chaquopy has for Android
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for p in cryptography cffi aiohttp multidict yarl frozenlist propcache coincurve orjson pydantic-core zlib-ng uvloop; do
+            echo "== $p"; curl -s "https://chaquo.com/pypi-13.1/$p/" | grep -o '[A-Za-z0-9_.+-]*cp312[A-Za-z0-9_.+-]*arm64_v8a\.whl' | sort -V | tail -4
+          done
+
   engine-check:
     name: Engine with the Android packages
     runs-on: ubuntu-latest
