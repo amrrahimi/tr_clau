@@ -17,6 +17,8 @@ android {
         versionName = "0.2.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
         ndk {
             abiFilters += listOf("arm64-v8a")   // practically every phone of the last years
+            // The CI emulator test also needs the PC-type build: gradle -PemulatorTest
+            if (project.hasProperty("emulatorTest")) abiFilters += listOf("x86_64")
         }
     }
 
