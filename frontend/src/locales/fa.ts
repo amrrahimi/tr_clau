@@ -353,6 +353,10 @@ export const fa: Record<MessageKey, string> = {
   "param.kijun": "طول کیجون (جابه‌جایی ابر)",
   "param.span_b": "طول اسپن B",
   "param.volume_mult": "حجم نسبت به میانگین (×)",
+  "bot.skip.unreliable": "قابل اعتماد نبود",
+  "bot.skip.benched": "استراتژی موقتاً کنار گذاشته شده",
+  "bot.skip.notChosen": "استراتژی در حالت دستی انتخاب نشده",
+  "bot.skip.paused": "ربات در مکث بود",
   "language.switch": "EN",
   "language.switchLabel": "تغییر به انگلیسی",
 };

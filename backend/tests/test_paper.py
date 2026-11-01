@@ -516,12 +516,11 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((flow["seen"], flow["opened"], flow["skipped"]), (12, 12, {}))
         self.assertEqual(fast.public()["timeframes"], ["1m"])
 
-    def test_slow_charts_need_a_much_better_record(self):
-        good = cand("A", 2.0, 25)
-        self.assertTrue(pp.strict_ok(good, "1h"))
-        self.assertFalse(pp.strict_ok(cand("A", 1.3, 25), "1h"))      # profit factor too low for 1h
-        self.assertFalse(pp.strict_ok(cand("A", 2.0, 12), "15m"))     # too few trades for 15m
-        self.assertTrue(pp.strict_ok(cand("A", 1.3, 12), "5m"))       # the fast charts keep the normal rule
+    def test_slow_charts_use_the_normal_rule_now(self):
+        # Owner 2026-11-01: the extra rule for 15m / 1h is off (too strict with the other filters).
+        self.assertTrue(pp.strict_ok(cand("A", 1.3, 12), "1h"))
+        self.assertEqual(pp.BOT_STRATEGIES, tuple(pp.STRATEGIES))
+        self.assertTrue(all(pp.BOT_STRATEGIES_BY_TF[tf] == tuple(pp.STRATEGIES) for tf in pp.TIMEFRAMES))
 
     async def test_half_way_advice_and_the_owners_answer(self):
         from unittest import mock
@@ -559,6 +558,19 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(scanned), {"1h": False, "15m": False, "5m": True, "3m": False, "1m": True})
         bot.reset(50)
         self.assertEqual(bot.public()["chosenTimeframes"], ["1m", "5m"])     # kept after start again
+
+    async def test_main_bot_counts_why_signals_were_not_traded(self):
+        from unittest import mock
+        bot = self.bot
+        bot.reset(100)
+        weak, good = cand("A", 0.5, 20), cand("A", 2.0, 20)
+        overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
+                    "rows": [{"strategy": "ema_cross", "stats": weak["stats"], "signal": weak["signal"]},
+                             {"strategy": "supertrend", "stats": good["stats"], "signal": good["signal"]}]}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=False)
+        flow = bot.public()["flow"]
+        self.assertEqual((flow["seen"], flow["skipped"]), (2, {"unreliable": 1, "full": 1}))
 
     async def test_brain_learning_round_writes_the_diary(self):
         class Quick:
@@ -615,16 +627,16 @@ class BotListTest(unittest.IsolatedAsyncioTestCase):
         expected = [tf for tf in pp.TIMEFRAMES if pp.BOT_STRATEGIES_BY_TF[tf]]
         self.assertEqual(sorted(scanned), sorted(expected))
 
-    def test_old_choice_keeps_only_listed_strategies(self):
+    def test_old_choice_keeps_only_known_strategies(self):
         with tempfile.TemporaryDirectory() as folder:
             store = pp.Store(Path(folder) / "paper.json")
             first = pp.PaperBot(store, None, None, None)
             first.account["mode"] = "manual"
-            first.account["strategies"] = ["bb_reversion", pp.BOT_STRATEGIES[0]]   # bb_reversion: off the list
+            first.account["strategies"] = ["gone_strategy", pp.BOT_STRATEGIES[0]]
             first.save()
             again = pp.PaperBot(store, None, None, None)
             self.assertEqual(again.account["strategies"], [pp.BOT_STRATEGIES[0]])
-            again.set_mode("manual", ["bb_reversion"])            # nothing left: back to the whole list
+            again.set_mode("manual", ["gone_strategy"])            # nothing left: back to the whole list
             self.assertEqual(again.account["strategies"], list(pp.BOT_STRATEGIES))
 
 

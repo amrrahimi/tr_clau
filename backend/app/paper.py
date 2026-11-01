@@ -64,7 +64,7 @@ MAX_SAME_SIDE = 4
 
 # Owner's rule: trades on the slow charts take long and move a lot, so they must be much surer.
 # A signal on 15m / 1h is traded only if its strategy did clearly well on that coin's history.
-STRICT_TIMEFRAMES = ("15m", "1h")
+STRICT_TIMEFRAMES: tuple[str, ...] = ()   # owner 2026-11-01: off (too strict with the other filters)
 STRICT_TRADES = 20          # at least this many past trades (10 elsewhere)
 STRICT_PROFIT_FACTOR = 1.5  # wins at least 1.5 times the losses (above 1 elsewhere)
 ADVICE_PART = 0.5           # at this share of the way to the target the bot advises: hold or close
@@ -289,19 +289,11 @@ def strict_ok(entry: dict, timeframe: str) -> bool:
 BREAKEVEN_BY_TF = {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5}
 
 
-# The strategies the main bot scans and trades, per timeframe. Chosen from the history test of
-# 2026-11-01 (all 18 strategies, 100 Toobit coins, 3,500 candles per chart, after fees and the
-# reward rule): only those at or near break-even on that timeframe (average >= -0.05R, 100+ trades).
-# None was clearly profitable: the best was +0.006R (volume breakout, 1h). On 1m every strategy lost
-# 0.065R or more per trade, so the bot does not trade 1m. The others stay in the code, the chart's
-# strategy table and the scanner; the barrage account still uses all of them.
-BOT_STRATEGIES_BY_TF: dict[str, tuple[str, ...]] = {
-    "1m": (),
-    "3m": ("sd_zone", "macd_ema", "squeeze", "supertrend"),
-    "5m": ("supertrend",),
-    "15m": ("donchian",),
-    "1h": ("volume_breakout", "macd_ema"),
-}
+# The strategies the main bot scans and trades, per timeframe. Owner (2026-11-01): the earlier short
+# list (only the strategies near break-even in the history test, none on 1m) stacked with the other
+# filters left the bot without a single trade for hours. Now every strategy on every timeframe; the
+# "reliable" rule, the brain's filter and the smart pause choose. The owner ticks the timeframes.
+BOT_STRATEGIES_BY_TF: dict[str, tuple[str, ...]] = {tf: tuple(STRATEGIES) for tf in TIMEFRAMES}
 BOT_STRATEGIES: tuple[str, ...] = tuple(k for k in STRATEGIES
                                         if any(k in kinds for kinds in BOT_STRATEGIES_BY_TF.values()))
 
@@ -485,7 +477,8 @@ class PaperBot:
                       "maxSlow": self.profile.slots["slow"], "maxSameSide": self.profile.max_same_side,
                       "maxLeverage": MAX_LEVERAGE, "smartPause": self.profile.smart_pause,
                       "allSignals": self.profile.all_signals,
-                      "strictTrades": STRICT_TRADES, "strictProfitFactor": STRICT_PROFIT_FACTOR,
+                      **({"strictTrades": STRICT_TRADES, "strictProfitFactor": STRICT_PROFIT_FACTOR}
+                         if STRICT_TIMEFRAMES else {}),
                       "pauseLosses": PAUSE_LOSSES, "pauseFall": PAUSE_FALL * 100,
                       "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
@@ -954,6 +947,7 @@ class PaperBot:
         memory = self.memory
         gate = asyncio.Semaphore(8)
         candidates: list[dict] = []
+        ticked = tf in self.chosen_timeframes()
         self.scanning = tf
 
         def work(symbol: str, base: str, rows: list[dict]) -> None:
@@ -977,6 +971,14 @@ class PaperBot:
                         if entry["chance"] is not None:
                             memory.set_chance(entry["memoryKey"], entry["chance"])
                 entry["reliable"] = ok
+                if ticked:   # the screen's counter: only timeframes the owner trades
+                    self._count("seen")
+                    if not ok:
+                        self._count("unreliable")
+                    elif row["strategy"] not in allowed:
+                        self._count("benched" if row["strategy"] in benched else "notChosen")
+                    elif not trade:
+                        self._count("paused" if self._paused(now) else "full")
                 # The bot trades reliable signals only, and on the slow charts only very sure ones.
                 if ok and row["strategy"] in allowed and strict_ok(entry, tf):
                     candidates.append(entry)
@@ -1003,6 +1005,7 @@ class PaperBot:
                     if memory is not None and c.get("memoryKey"):
                         memory.mark(c["memoryKey"], skip_reason="brain")
                 self._event("skip", reason="brain", timeframe=tf, count=len(weak))
+                self._count("brain", len(weak))
         open_coins = {p["symbol"] for p in self.account["positions"]}
         positions = self.account["positions"]
         chosen = pick(candidates, open_coins, free_slots(positions, tf, self.profile.slots),
@@ -1017,6 +1020,7 @@ class PaperBot:
         left = len({c["symbol"] for c in candidates} - open_coins) - len(chosen)
         if left > 0:
             self._event("skip", reason="full", timeframe=tf, count=left)
+            self._count("full", left)
 
     async def _open(self, c: dict, tf: str, now: float, params: dict) -> None:
         recent = await self.recent(c["symbol"], tf)

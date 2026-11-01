@@ -351,6 +351,10 @@ export const en = {
   "param.kijun": "Kijun length (cloud shift)",
   "param.span_b": "Span B length",
   "param.volume_mult": "Volume vs average (×)",
+  "bot.skip.unreliable": "not reliable",
+  "bot.skip.benched": "strategy benched for now",
+  "bot.skip.notChosen": "strategy not ticked (manual)",
+  "bot.skip.paused": "bot was pausing",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;
