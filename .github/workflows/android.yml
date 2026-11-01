@@ -23,8 +23,12 @@ env:
 
 jobs:
   engine-check:
-    name: Engine with the Android packages
+    name: Engine with the Android packages (ccxt ${{ matrix.ccxt }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ccxt: ["pinned", "4.5.37"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -33,6 +37,7 @@ jobs:
       - name: Install exactly what the phone gets
         run: |
           pip install --no-deps -r android/app/requirements-android.txt
+          if [ "${{ matrix.ccxt }}" != "pinned" ]; then pip install --no-deps "ccxt==${{ matrix.ccxt }}"; fi
           pip check || true
           pip install httpx   # only for the server tests
       - name: Backend tests
