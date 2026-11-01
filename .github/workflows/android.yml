@@ -9,6 +9,9 @@ on:
     tags: ["v*"]
     branches: [main]
 
+permissions:
+  contents: write   # to publish the APK as a release file
+
 concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
@@ -124,6 +127,21 @@ jobs:
         with:
           name: android
           path: out/*.apk
+      # A fixed download link for the phone (no login, no zip):
+      # https://github.com/<owner>/<repo>/releases/download/android-latest/TradingBot.apk
+      - name: Publish as "android-latest"
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp out/*.apk out/TradingBot.apk
+          notes="Android app, build ${{ github.run_number }} from ${GITHUB_SHA::7} ($(date -u '+%Y-%m-%d %H:%M UTC')). Install TradingBot.apk."
+          if gh release view android-latest > /dev/null 2>&1; then
+            gh release upload android-latest out/TradingBot.apk --clobber
+            gh release edit android-latest --notes "$notes"
+          else
+            gh release create android-latest out/TradingBot.apk --prerelease --title "Android app (latest)" --notes "$notes"
+          fi
 
   emulator-test:
     name: Start the app on an Android 14 emulator
