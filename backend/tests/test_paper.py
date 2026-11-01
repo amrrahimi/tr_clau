@@ -343,9 +343,11 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         from app.memory import Memory
         memory = Memory(Path(self.dir.name) / "memory.db")
         self.addCleanup(memory.close)
-        memory.db.execute("INSERT INTO signals (key, strategy, status, exit_time, pnl_percent) VALUES"
-                          " ('a', 'donchian', 'loss', ?, -1.5), ('b', 'supertrend', 'win', ?, 2.0)",
-                          (self.clock[0] - 100, self.clock[0] - 100))
+        t = self.clock[0] - 100
+        rows = [(f"d{i}", "donchian", "loss", t, -1.5) for i in range(pp.BENCH_MIN_RESULTS)]
+        rows += [("b", "supertrend", "win", t, 2.0), ("e", "ema_cross", "loss", t, -1.0)]  # one loss: too few
+        memory.db.executemany("INSERT INTO signals (key, strategy, status, exit_time, pnl_percent)"
+                              " VALUES (?, ?, ?, ?, ?)", rows)
         memory.db.commit()
         bot = self.bot
         bot.memory = memory

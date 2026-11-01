@@ -6,13 +6,13 @@
 import { BackendError, type Backend, type BotAccount, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView } from "./chart.ts";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "./botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, ConnectionState, PaperPosition, PaperState, PaperTrade, StrategyCard } from "./types.ts";
+import type { Candle, ConnectionState, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyStats } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -58,6 +58,37 @@ export class BotApp {
       void this.refresh();
       if (++this.polls % 12 === 0) void this.loadConnection(); // about once a minute
     }, POLL_MS);
+  }
+
+  /** Under each strategy in the manual list: how the bot, its signals and the brain's picks have done. */
+  private strategyStatsView(stats: StrategyStats | undefined): HTMLElement {
+    const el = (tag: string, cls: string, text = "") => {
+      const e = document.createElement(tag);
+      e.className = cls;
+      e.textContent = text;
+      return e;
+    };
+    const box = el("div", "bot-strategy-stats");
+    const pct = (v: number | null | undefined) => (v == null ? "–" : String(Math.round(v)));
+    const r = (v: number | null | undefined) => (v == null ? "–" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}`);
+    const tone = (v: number | null | undefined) => (v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "");
+    if (!stats || (!stats.bot && !stats.signals && !stats.brain)) {
+      box.append(el("div", "", this.t("bot.statNone")));
+      return box;
+    }
+    if (stats.signals) {
+      box.append(el("div", tone(stats.signals.avgR), this.t("bot.statSignals",
+        { n: String(stats.signals.count), win: pct(stats.signals.winRate), r: r(stats.signals.avgR) })));
+    }
+    if (stats.brain) {
+      box.append(el("div", tone(stats.brain.avgR), this.t("bot.statBrain",
+        { n: String(stats.brain.count), win: pct(stats.brain.winRate), r: r(stats.brain.avgR) })));
+    }
+    if (stats.bot) {
+      box.append(el("div", tone(stats.bot.netPnl), this.t("bot.statBot",
+        { n: String(stats.bot.count), win: pct(stats.bot.winRate), pnl: r(stats.bot.netPnl) })));
+    }
+    return box;
   }
 
   private t(key: MessageKey, params?: Record<string, string>): string {
@@ -397,8 +428,10 @@ export class BotApp {
     parts.push(el("div", "list-heading", t("bot.strategies")), modes);
     if (s.mode === "manual") {
       const list = el("div", "bot-strategies");
-      const kinds = this.cards.length ? this.cards.map((c) => c.type) : s.strategies;
+      const stats = s.strategyStats ?? {};
+      const kinds = strategyOrder(this.cards.length ? this.cards.map((c) => c.type) : s.strategies, stats);
       for (const kind of kinds) {
+        const row = el("div", "bot-strategy");
         const line = el("label", "");
         const box = document.createElement("input");
         box.type = "checkbox";
@@ -412,9 +445,10 @@ export class BotApp {
           void this.act({ kind: "mode", mode: "manual", strategies: chosen });
         });
         line.append(box, document.createTextNode(` ${t(`strat.${kind}` as MessageKey)}`));
-        list.append(line);
+        row.append(line, this.strategyStatsView(stats[kind]));
+        list.append(row);
       }
-      parts.push(list);
+      parts.push(list, el("div", "bot-hint", t("bot.statHint")));
     } else {
       parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: (s.chosenTimeframes ?? s.timeframes).join("، ") })));
     }
@@ -628,3 +662,4 @@ export class BotApp {
     box.replaceChildren(title, scroll);
   }
 }
+

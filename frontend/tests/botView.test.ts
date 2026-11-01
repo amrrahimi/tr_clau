@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -108,4 +108,20 @@ test("half-way advice in plain words", () => {
     "LIT2 3m: به نیمه‌ی راه حد سود رسید (+0.42 USDT). پیشنهاد: بستن. استراتژی «سوپرترند» الان سیگنال قابل اعتماد خلاف جهت داده.");
   assert.equal(eventText({ time: 0, kind: "advice", symbol: "LIT2", timeframe: "3m", suggest: "hold" }, t),
     "LIT2 3m به نیمه‌ی راه حد سود رسید؛ پیشنهاد ربات: ادامه");
+});
+
+test("manual list: strategies with the best signal results first, unknown ones last", () => {
+  const order = strategyOrder(["a", "b", "c", "d"], {
+    a: { signals: { count: 10, winRate: 30, avgR: -0.3 } },
+    c: { signals: { count: 5, winRate: 60, avgR: 0.2 } },
+    d: { bot: { count: 2, winRate: 50, netPnl: 1 } },
+  });
+  assert.deepEqual(order, ["c", "a", "b", "d"]);
+});
+
+test("strategy stat lines exist in both languages", () => {
+  for (const lang of ["fa", "en"] as const) {
+    assert.match(translate(lang, "bot.statSignals", { n: "3", win: "50", r: "+0.20" }), /3.*50.*\+0\.20/);
+    assert.match(translate(lang, "bot.statBrain", { n: "2", win: "40", r: "-0.10" }), /2.*40.*-0\.10/);
+  }
 });

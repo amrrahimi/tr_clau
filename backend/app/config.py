@@ -74,3 +74,9 @@ DEFAULT_FEES = {
     "futures": {"maker": 0.02, "taker": 0.06},
 }
 MAX_FEE = 1.0  # percent; anything above is surely a typing mistake
+
+# A trade must be able to win at least as much as it can lose, after the taker fee on the way in
+# and out: (target distance - fees) / (stop distance + fees) >= this. Reversion strategies aim
+# back at an average (VWAP, Bollinger middle) that is often much closer than their stop; without
+# this rule they won often but lost more on each stop than they made on each target.
+MIN_REWARD_RISK = 1.0

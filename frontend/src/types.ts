@@ -290,6 +290,13 @@ export interface ConnectionState {
   typed: string; // what the owner typed ("" = use the computer's setting)
 }
 
+/** One strategy's real results (manual mode list). R: result in units of the risk (-1R = the stop). */
+export interface StrategyStats {
+  bot?: { count: number; winRate: number; netPnl: number }; // the bot's own closed trades
+  signals?: { count: number; winRate: number | null; avgR: number | null }; // every reliable signal that ended
+  brain?: { count: number; winRate: number | null; avgR: number | null }; // those the brain's filter lets through
+}
+
 export interface PaperState {
   profile?: "main" | "fast"; // main bot, or the high-risk test account
   chosenTimeframes?: string[]; // ticked by the owner: the bot trades only on these
@@ -302,6 +309,7 @@ export interface PaperState {
   pausedUntil: number | null; // smart pause: no new trades until then (seconds)
   pauseReason: "streak" | "fall" | null;
   benched: Record<string, number>; // strategies left out until (seconds)
+  strategyStats?: Record<string, StrategyStats>;
   memory: {
     signals: number; // live signals the bot saw
     reliable?: number;

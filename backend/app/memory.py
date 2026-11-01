@@ -214,12 +214,55 @@ class Memory:
         self.db.commit()
 
     @_locked
+    def strategy_performance(self, brain_threshold: Optional[float] = None) -> dict[str, dict]:
+        """How each strategy has really done, for the owner to compare (manual mode list).
+
+        bot:     the paper bot's own closed trades (kept after "start again"): count, won %, net USDT.
+        signals: every reliable live signal that ended, traded or not: count, won %, average R.
+        brain:   the same signals that the brain's current filter lets through.
+        """
+        out: dict[str, dict] = {}
+
+        def block(n, wins, avg):
+            return {"count": n, "winRate": (wins or 0) / n * 100 if n else None, "avgR": avg}
+
+        done = "source = 'live' AND reliable = 1 AND status IN ('win','loss','breakeven') AND r IS NOT NULL"
+        for kind, n, wins, avg in self.db.execute(
+                f"SELECT strategy, COUNT(*), SUM(status = 'win'), AVG(r) FROM signals WHERE {done} GROUP BY strategy"):
+            out.setdefault(kind, {})["signals"] = block(n, wins, avg)
+        if brain_threshold is not None:
+            for kind, n, wins, avg in self.db.execute(
+                    f"SELECT strategy, COUNT(*), SUM(status = 'win'), AVG(r) FROM signals WHERE {done}"
+                    " AND chance IS NOT NULL AND chance >= ? GROUP BY strategy", (brain_threshold,)):
+                out.setdefault(kind, {})["brain"] = block(n, wins, avg)
+        bot: dict[str, list[float]] = {}
+        for (data,) in self.db.execute("SELECT data FROM trades"):
+            try:
+                trade = json.loads(data)
+                bot.setdefault(trade["strategy"], []).append(float(trade.get("pnl") or 0.0))
+            except (ValueError, KeyError, TypeError):
+                continue
+        for kind, results in bot.items():
+            out.setdefault(kind, {})["bot"] = {"count": len(results),
+                                               "winRate": sum(1 for r in results if r > 0) / len(results) * 100,
+                                               "netPnl": sum(results)}
+        return out
+
+    @_locked
     def strategy_results(self, since_exit_time: float) -> dict[str, float]:
         """Sum of results (percent) per strategy for signals that ended after a time."""
         rows = self.db.execute(
             "SELECT strategy, SUM(pnl_percent) FROM signals WHERE status IN ('win','loss','breakeven')"
             " AND source = 'live' AND reliable = 1 AND exit_time >= ? GROUP BY strategy", (since_exit_time,)).fetchall()
         return {k: v or 0.0 for k, v in rows}
+
+    @_locked
+    def strategy_counts(self, since_exit_time: float) -> dict[str, int]:
+        """How many signals per strategy ended after a time (same signals as strategy_results)."""
+        rows = self.db.execute(
+            "SELECT strategy, COUNT(*) FROM signals WHERE status IN ('win','loss','breakeven')"
+            " AND source = 'live' AND reliable = 1 AND exit_time >= ? GROUP BY strategy", (since_exit_time,)).fetchall()
+        return dict(rows)
 
     @_locked
     def outcomes_since(self, since: float) -> list[tuple]:

@@ -40,7 +40,9 @@ def compare_exits(candles: list[dict], settings: dict[str, dict], mode: str, fee
             "cap": (_capped(signals, candles, fees), 0),
         }
         for name, (sigs, breakeven) in runs.items():
-            trades, _ = simulate(candles, sigs, breakeven, int(params.get("max_candles", 0)), fees, ratio)
+            # min_reward=0: every exit method is compared on the same signals, the tiny-target ones too
+            trades, _ = simulate(candles, sigs, breakeven, int(params.get("max_candles", 0)), fees, ratio,
+                                 min_reward=0)
             for t in trades:
                 if t["result"] == "open" or t["r"] is None:
                     continue

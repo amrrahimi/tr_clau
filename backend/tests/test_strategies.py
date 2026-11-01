@@ -86,9 +86,25 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(trades, [])
 
     def test_fixed_target_price(self):
+        rows = [self.signal, bar(60, 100, 101.3, 99.5, 100.6)]
+        trades, _ = st.simulate(rows, [Signal(0, LONG, stop_price=99, target_price=101.2)])
+        self.assertEqual((trades[0]["result"], trades[0]["exitPrice"]), ("win", 101.2))
+
+    def test_target_closer_than_stop_is_skipped(self):
+        # Risk 1, reward 0.7: wins would be smaller than losses.
         rows = [self.signal, bar(60, 100, 100.8, 99.5, 100.6)]
         trades, _ = st.simulate(rows, [Signal(0, LONG, stop_price=99, target_price=100.7)])
-        self.assertEqual((trades[0]["result"], trades[0]["exitPrice"]), ("win", 100.7))
+        self.assertEqual(trades, [])
+        trades, _ = st.simulate(rows, [Signal(0, LONG, stop_price=99, target_price=100.7)], min_reward=0)
+        self.assertEqual(len(trades), 1)    # 0 = rule off
+
+    def test_reward_risk_counts_fees(self):
+        fees = st.Fees(0.02, 0.1)
+        self.assertAlmostEqual(st.reward_risk(100, 99, 101), 1.0)
+        # reward 1 - 0.201 fee, risk 1 + 0.199 fee
+        self.assertAlmostEqual(st.reward_risk(100, 99, 101, fees), (1 - 0.201) / (1 + 0.199))
+        self.assertFalse(st.reward_ok(100, 99, 101, fees))
+        self.assertTrue(st.reward_ok(100, 99, 101.5, fees))
 
     def test_run_describes_a_signal_on_the_last_candle(self):
         rows = [bar(i * 60, 100, 101, 99, 100) for i in range(25)] + [bar(1500, 100, 103.5, 100, 103)]
@@ -246,7 +262,7 @@ class FeeRatioTest(unittest.TestCase):
         self.assertFalse(st.fee_ok(100, 99.5, fees, 0.33))   # risk 0.5%: 0.2 > 0.165
         self.assertTrue(st.fee_ok(100, 99.9, fees, 0))       # 0 = off
         self.assertEqual(len(st.simulate(self.rows, self.long, fees=fees, fee_ratio=0.33)[0]), 1)
-        tight = [Signal(0, LONG, stop_distance=0.3, reward=2)]
+        tight = [Signal(0, LONG, stop_distance=0.3, reward=4)]
         self.assertEqual(st.simulate(self.rows, tight, fees=fees, fee_ratio=0.33)[0], [])
         self.assertEqual(len(st.simulate(self.rows, tight, fees=fees, fee_ratio=0)[0]), 1)
 

@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Optional
 
+from . import config
 from . import indicators as ind
 from .catalog import Candles, Param
 from .presets import LONG_EMA
@@ -561,6 +562,21 @@ def fee_ok(entry: float, stop: float, fees: Fees, ratio: float) -> bool:
     return 2 * fees.taker <= ratio * risk
 
 
+def reward_risk(entry: float, stop: float, target: float, fees: Fees = NO_FEES) -> float:
+    """What a trade can win for what it can lose, after the taker fee in and out."""
+    fee = entry * fees.taker / 100 + target * fees.taker / 100
+    reward = abs(target - entry) - fee
+    risk = abs(entry - stop) + entry * fees.taker / 100 + stop * fees.taker / 100
+    return reward / risk if risk > 0 else 0.0
+
+
+def reward_ok(entry: float, stop: float, target: float, fees: Fees = NO_FEES,
+              minimum: Optional[float] = None) -> bool:
+    """The reward-to-risk rule (config.MIN_REWARD_RISK unless another minimum is given; 0 = off)."""
+    minimum = config.MIN_REWARD_RISK if minimum is None else minimum
+    return not minimum or reward_risk(entry, stop, target, fees) >= minimum - 1e-9
+
+
 def simulate(
     candles: list[dict],
     signals: list[Signal],
@@ -568,6 +584,7 @@ def simulate(
     max_candles: int = 0,
     fees: Fees = NO_FEES,
     fee_ratio: float = 0,
+    min_reward: Optional[float] = None,
 ) -> tuple[list[dict], Optional[str]]:
     """Walk the candles and turn signals into trades under the common rules.
 
@@ -584,7 +601,8 @@ def simulate(
         sig = by_index.get(i - 1)
         if pos is None and sig is not None:
             levels = _levels(sig, c["open"])
-            if levels is not None and fee_ok(c["open"], levels[0], fees, fee_ratio):
+            if (levels is not None and fee_ok(c["open"], levels[0], fees, fee_ratio)
+                    and reward_ok(c["open"], levels[0], levels[1], fees, min_reward)):
                 pos = {"side": sig.side, "entryTime": c["time"], "entryPrice": c["open"],
                        "stopLoss": levels[0], "takeProfit": levels[1], "signalTime": candles[i - 1]["time"],
                        "breakevenTime": None, "_stop": levels[0], "_entryIndex": i}
@@ -696,7 +714,8 @@ def run(candles: list[dict], kind: str, params: dict, states: Optional[list[str]
         sig = signals[-1]
         entry = candles[-1]["close"]  # the next candle opens at (about) this price
         levels = _levels(sig, entry)
-        if levels is not None and fee_ok(entry, levels[0], fees, fee_ratio):
+        if (levels is not None and fee_ok(entry, levels[0], fees, fee_ratio)
+                and reward_ok(entry, levels[0], levels[1], fees)):
             step = candles[-1]["time"] - candles[-2]["time"] if len(candles) > 1 else 0
             signal = {"side": sig.side, "time": candles[-1]["time"], "entry": entry,
                       "stopLoss": levels[0], "takeProfit": levels[1],

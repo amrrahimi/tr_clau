@@ -49,7 +49,7 @@ from . import pretrain
 from .memory import Memory, features
 from .scanner import reliable
 from . import scalp
-from .strategies import LONG, STRATEGIES, Fees, _levels, breakeven_price, fee_ok, parse_params
+from .strategies import LONG, STRATEGIES, Fees, _levels, breakeven_price, fee_ok, parse_params, reward_ok
 
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
@@ -109,10 +109,12 @@ PAUSE_LOSSES = 4             # losing trades in a row
 PAUSE_FALL = 0.05            # fall since the last pause (or the start)
 PAUSE_SECONDS = 3 * 3600
 RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
-BENCH_SECONDS = 12 * 3600    # strategies that lost lately are left out this long
+BENCH_SECONDS = PAUSE_SECONDS  # strategies that lost lately are left out as long as the pause
+BENCH_MIN_RESULTS = 5        # ... but only with enough results to judge (a few unlucky signals are not enough)
 BENCH_LOOKBACK = 24 * 3600
 TOTAL_STOP = 0.30
 POLL_SECONDS = 10
+PERFORMANCE_SECONDS = 60      # per-strategy results on the screen are recounted at most this often
 
 
 def _really_cancelled() -> bool:
@@ -386,8 +388,21 @@ class PaperBot:
         self.prices: dict[str, float] = {}    # last price per position id (for the screen)
         self.scanning: Optional[str] = None   # timeframe being scanned
         self.lock = asyncio.Lock()
+        self._performance: Optional[tuple[float, dict]] = None   # (time, per-strategy results) cache
 
     # ---- what the screen sees
+
+    def strategy_performance(self) -> dict:
+        """Per-strategy results of the bot, the signals and the brain's filter (reused for a minute)."""
+        if self.memory is None:
+            return {}
+        now = self.now()
+        if self._performance is None or now - self._performance[0] >= PERFORMANCE_SECONDS:
+            threshold = None
+            if self.brain is not None and self.brain.active():
+                threshold = self.brain.champion.threshold
+            self._performance = (now, self.memory.strategy_performance(threshold))
+        return self._performance[1]
 
     def equity(self) -> float:
         a = self.account
@@ -431,6 +446,7 @@ class PaperBot:
                 "maxDrawdown": a["maxDrawdown"] * 100,
             },
             "scanning": self.scanning,
+            "strategyStats": self.strategy_performance(),
             "lastScan": a["lastScan"],
             "timeframes": list(self.profile.timeframes),
             "chosenTimeframes": self.chosen_timeframes(),
@@ -794,8 +810,9 @@ class PaperBot:
         a["pauseReason"] = reason
         benched = []
         if self.memory is not None:
+            counts = self.memory.strategy_counts(now - BENCH_LOOKBACK)
             for kind, result in self.memory.strategy_results(now - BENCH_LOOKBACK).items():
-                if result < 0:
+                if result < 0 and counts.get(kind, 0) >= BENCH_MIN_RESULTS:
                     a["benched"][kind] = now + BENCH_SECONDS
                     benched.append(kind)
         self._event("pause", reason=reason, until=a["pausedUntil"], strategies=benched)
@@ -992,6 +1009,9 @@ class PaperBot:
             return skip("stale")
         if not fee_ok(entry, stop, self.fees, params.get("fee_ratio", 0)):
             return skip("fee")
+        # Checked again at the price now: the price may have moved toward the target since the signal.
+        if not self.profile.barrage and not reward_ok(entry, stop, target, self.fees):
+            return skip("reward")
         used = sum(p["margin"] for p in self.account["positions"])
         equity = self.equity()
         size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.size_slots)

@@ -69,3 +69,36 @@ class MemoryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StrategyPerformanceTest(unittest.TestCase):
+    def test_bot_signals_and_brain_per_strategy(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from app.memory import Memory
+        with tempfile.TemporaryDirectory() as folder:
+            m = Memory(Path(folder) / "memory.db")
+            rows = [  # key, strategy, status, r, chance, source, reliable
+                ("a", "donchian", "win", 2.0, 0.6, "live", 1),
+                ("b", "donchian", "loss", -1.0, 0.2, "live", 1),
+                ("c", "donchian", "loss", -1.0, 0.5, "live", 1),
+                ("d", "donchian", "loss", -1.0, 0.9, "history", 1),   # rebuilt from history: not counted
+                ("e", "donchian", "win", 2.0, 0.9, "live", 0),        # not reliable: not counted
+                ("f", "squeeze", "open", None, 0.9, "live", 1),       # not ended: not counted
+            ]
+            m.db.executemany("INSERT INTO signals (key, strategy, status, r, chance, source, reliable)"
+                             " VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            m.db.execute("INSERT INTO trades (closed_at, data) VALUES (1, ?), (2, ?)",
+                         (json.dumps({"strategy": "donchian", "pnl": 1.5}), json.dumps({"strategy": "donchian", "pnl": -0.5})))
+            m.db.commit()
+            perf = m.strategy_performance(brain_threshold=0.5)
+            m.close()
+        d = perf["donchian"]
+        self.assertEqual(d["signals"]["count"], 3)
+        self.assertAlmostEqual(d["signals"]["avgR"], 0.0)
+        self.assertAlmostEqual(d["signals"]["winRate"], 100 / 3)
+        self.assertEqual(d["brain"]["count"], 2)            # chance 0.6 and 0.5
+        self.assertAlmostEqual(d["brain"]["avgR"], 0.5)
+        self.assertEqual((d["bot"]["count"], d["bot"]["winRate"], d["bot"]["netPnl"]), (2, 50.0, 1.0))
+        self.assertNotIn("squeeze", perf)
