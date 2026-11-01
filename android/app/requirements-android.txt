@@ -1,11 +1,43 @@
-# The engine's packages on the phone (Chaquopy). Same as backend/requirements.txt except:
+# The engine's packages on the phone (Chaquopy), installed with --no-deps: every package is
+# listed and pinned here. Compiled packages are the versions Chaquopy has for Android
+# (python 3.12, arm64): aiohttp 3.9.1, yarl 1.9.3, multidict 6.0.4, frozenlist 1.4.0,
+# cryptography 42.0.8, cffi 1.17.1. Everything else is pure Python.
+# Differences from the desktop app (backend/requirements.txt):
 # - pydantic 1 (pure Python): pydantic 2 needs pydantic-core, which has no Android build;
-#   FastAPI 0.115 still works with pydantic 1.
-# - plain uvicorn with wsproto for the live-candle WebSocket (uvloop/httptools do not build for Android).
-# CI runs the whole backend test suite with exactly these versions (android.yml, "engine-check").
-ccxt>=4.4
+#   FastAPI 0.115 still works with pydantic 1;
+# - plain uvicorn with wsproto (uvloop/httptools have no Android build);
+# - ccxt without its optional speed-ups (orjson, coincurve, uvloop, zlib-ng).
+# CI ("Engine with the Android packages") installs exactly this list the same way, runs all
+# backend tests and asks the real Toobit for tickers and candles.
+
+ccxt==4.5.91
+aiohttp==3.9.1
+aiosignal==1.3.2
+attrs==25.3.0
+frozenlist==1.4.0
+multidict==6.0.4
+yarl==1.9.3
+idna==3.10
+certifi==2025.8.3
+requests==2.32.3
+charset-normalizer==3.4.0
+urllib3==2.2.3
+cryptography==42.0.8
+cffi==1.17.1
+pycparser==2.22
+typing_extensions==4.12.2
+setuptools==75.6.0
+
 fastapi==0.115.12
-pydantic>=1.10.17,<2
+starlette==0.46.2
+pydantic==1.10.22
+anyio==4.6.2
+sniffio==1.3.1
+
 uvicorn==0.34.0
-wsproto>=1.2
-aiohttp-socks>=0.8
+h11==0.14.0
+click==8.1.7
+wsproto==1.2.0
+
+aiohttp-socks==0.8.4
+python-socks==2.4.4

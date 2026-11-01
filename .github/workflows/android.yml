@@ -22,14 +22,6 @@ env:
   PROPCACHE_NO_EXTENSIONS: "1"
 
 jobs:
-  chaquopy-index:   # temporary: which compiled packages Chaquopy has for Android
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          for p in cryptography cffi aiohttp multidict yarl frozenlist propcache coincurve orjson pydantic-core zlib-ng uvloop; do
-            echo "== $p"; curl -s "https://chaquo.com/pypi-13.1/$p/" | grep -o '[A-Za-z0-9_.+-]*cp312[A-Za-z0-9_.+-]*arm64_v8a\.whl' | sort -V | tail -4
-          done
-
   engine-check:
     name: Engine with the Android packages
     runs-on: ubuntu-latest
@@ -39,10 +31,34 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install exactly what the phone gets
-        run: pip install -r android/app/requirements-android.txt httpx
+        run: |
+          pip install --no-deps -r android/app/requirements-android.txt
+          pip check || true
+          pip install httpx   # only for the server tests
       - name: Backend tests
         working-directory: backend
         run: python -m unittest discover -s tests -t . -v
+      - name: Real Toobit through ccxt with these packages
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import asyncio
+          from app.exchange import MarketService, create_exchange
+
+          async def main():
+              service = MarketService(create_exchange("futures"), "futures")
+              try:
+                  top = await service.top_markets(5)
+                  candles = await service.fetch_candles(top[0].symbol, "5m", 50)
+                  print("::notice title=Android packages::Toobit OK:", [m.base for m in top], len(candles), "candles")
+                  assert top and len(candles) >= 40
+              finally:
+                  await service.close()
+
+          asyncio.run(main())
+          import aiohttp_socks, wsproto, uvicorn, fastapi, pydantic, ccxt
+          print("versions: ccxt", ccxt.__version__, "aiohttp", __import__("aiohttp").__version__, "pydantic", pydantic.VERSION)
+          PY
 
   apk:
     name: Build APK

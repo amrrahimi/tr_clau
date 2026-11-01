@@ -54,6 +54,7 @@ chaquopy {
     defaultConfig {
         version = "3.12"
         pip {
+            options("--no-deps")   // the list is complete and pinned (see the file)
             install("-r", "requirements-android.txt")
         }
     }
