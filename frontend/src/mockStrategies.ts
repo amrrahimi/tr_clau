@@ -915,5 +915,471 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       }
     ],
     "modeDefaults": {}
+  },
+  {
+    "type": "ema_pullback",
+    "name": "EMA Pullback",
+    "states": [
+      "trend_up",
+      "trend_down"
+    ],
+    "uses": [
+      "EMA",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "fast",
+        "default": 20,
+        "min": 1,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "slow",
+        "default": 50,
+        "min": 1,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "trend",
+        "default": 200,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "buffer",
+        "default": 0.2,
+        "min": 0,
+        "max": 5,
+        "step": 0.05
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {
+      "trend": {
+        "scalping": 50,
+        "daily": 200
+      }
+    }
+  },
+  {
+    "type": "dmi_adx",
+    "name": "DMI + ADX",
+    "states": [
+      "trend_up",
+      "trend_down",
+      "volatile"
+    ],
+    "uses": [
+      "DMI",
+      "ADX",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "length",
+        "default": 14,
+        "min": 2,
+        "max": 200,
+        "step": 1
+      },
+      {
+        "name": "min_adx",
+        "default": 20,
+        "min": 5,
+        "max": 80,
+        "step": 1
+      },
+      {
+        "name": "atr_mult",
+        "default": 2,
+        "min": 0.1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "reward",
+        "default": 2.5,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
+  },
+  {
+    "type": "ichimoku",
+    "name": "Ichimoku Cloud",
+    "states": [
+      "trend_up",
+      "trend_down"
+    ],
+    "uses": [
+      "Ichimoku",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "tenkan",
+        "default": 9,
+        "min": 2,
+        "max": 200,
+        "step": 1
+      },
+      {
+        "name": "kijun",
+        "default": 26,
+        "min": 2,
+        "max": 300,
+        "step": 1
+      },
+      {
+        "name": "span_b",
+        "default": 52,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
+  },
+  {
+    "type": "inside_bar",
+    "name": "Inside Bar Breakout",
+    "states": [
+      "trend_up",
+      "trend_down",
+      "volatile"
+    ],
+    "uses": [
+      "Price action",
+      "EMA"
+    ],
+    "params": [
+      {
+        "name": "trend",
+        "default": 200,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {
+      "trend": {
+        "scalping": 50,
+        "daily": 200
+      }
+    }
+  },
+  {
+    "type": "stoch_rsi_trend",
+    "name": "Stoch RSI Pullback",
+    "states": [
+      "trend_up",
+      "trend_down"
+    ],
+    "uses": [
+      "Stoch RSI",
+      "EMA",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "rsi_length",
+        "default": 14,
+        "min": 2,
+        "max": 200,
+        "step": 1
+      },
+      {
+        "name": "oversold",
+        "default": 20,
+        "min": 1,
+        "max": 99,
+        "step": 1
+      },
+      {
+        "name": "overbought",
+        "default": 80,
+        "min": 1,
+        "max": 99,
+        "step": 1
+      },
+      {
+        "name": "trend",
+        "default": 200,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "atr_mult",
+        "default": 1.5,
+        "min": 0.1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {
+      "trend": {
+        "scalping": 50,
+        "daily": 200
+      }
+    }
+  },
+  {
+    "type": "volume_breakout",
+    "name": "Volume Breakout",
+    "states": [
+      "trend_up",
+      "trend_down",
+      "volatile"
+    ],
+    "uses": [
+      "Keltner",
+      "Volume",
+      "EMA"
+    ],
+    "params": [
+      {
+        "name": "length",
+        "default": 20,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "kc_mult",
+        "default": 2,
+        "min": 0.1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "volume_mult",
+        "default": 2,
+        "min": 1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "trend",
+        "default": 200,
+        "min": 2,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "reward",
+        "default": 2,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {
+      "trend": {
+        "scalping": 50,
+        "daily": 200
+      }
+    }
   }
 ];

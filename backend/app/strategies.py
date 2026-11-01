@@ -406,6 +406,127 @@ def _vwap_reversion(c: Candles, p: dict) -> list[Signal]:
     return out
 
 
+# 13. EMA pullback: in a trend (EMA 50 above EMA 200, price above both), the price dips to the
+#     EMA 50 and closes back above the fast EMA -> join the trend. Mirror for shorts.
+def _ema_pullback(c: Candles, p: dict) -> list[Signal]:
+    fast = ind.ema(c.closes, p["fast"])
+    mid = ind.ema(c.closes, p["slow"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(fast[i], mid[i], trend[i], atr[i], mid[i - 1]):
+            continue
+        buf = p["buffer"] * atr[i]
+        touched_low = min(c.lows[i - 1], c.lows[i]) <= mid[i]
+        touched_high = max(c.highs[i - 1], c.highs[i]) >= mid[i]
+        if mid[i] > trend[i] and mid[i] > mid[i - 1] and touched_low and c.closes[i] > fast[i] > mid[i]:
+            out.append(Signal(i, LONG, stop_price=min(c.lows[i - 1], c.lows[i], mid[i]) - buf, reward=p["reward"]))
+        elif mid[i] < trend[i] and mid[i] < mid[i - 1] and touched_high and c.closes[i] < fast[i] < mid[i]:
+            out.append(Signal(i, SHORT, stop_price=max(c.highs[i - 1], c.highs[i], mid[i]) + buf, reward=p["reward"]))
+    return out
+
+
+# 14. DMI / ADX: +DI crosses above -DI while ADX shows a real trend -> long (mirror for short).
+def _dmi_adx(c: Candles, p: dict) -> list[Signal]:
+    plus, minus, adx = ind.dmi(c.highs, c.lows, c.closes, p["length"], p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(adx[i], atr[i]) or adx[i] < p["min_adx"]:
+            continue
+        stop = p["atr_mult"] * atr[i]
+        if _crossed_up(plus, minus, i):
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif _crossed_down(plus, minus, i):
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+def _midpoint(c: Candles, n: int) -> list:
+    hi, lo = ind.highest(c.highs, n), ind.lowest(c.lows, n)
+    return [None if h is None or l is None else (h + l) / 2 for h, l in zip(hi, lo)]
+
+
+# 15. Ichimoku: Tenkan crosses Kijun with the price above the cloud (below for shorts).
+#     The cloud at a candle is the one drawn 26 candles earlier, as on the chart.
+def _ichimoku(c: Candles, p: dict) -> list[Signal]:
+    tenkan, kijun = _midpoint(c, p["tenkan"]), _midpoint(c, p["kijun"])
+    span_b = _midpoint(c, p["span_b"])
+    span_a = [None if t is None or k is None else (t + k) / 2 for t, k in zip(tenkan, kijun)]
+    shift = p["kijun"]
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out = []
+    for i in range(max(1, shift), len(c.closes)):
+        a, b = span_a[i - shift], span_b[i - shift]
+        if not _ready(a, b, kijun[i], atr[i]):
+            continue
+        top, bottom = max(a, b), min(a, b)
+        buf = 0.2 * atr[i]
+        if _crossed_up(tenkan, kijun, i) and c.closes[i] > top:
+            out.append(Signal(i, LONG, stop_price=min(kijun[i], c.lows[i]) - buf, reward=p["reward"]))
+        elif _crossed_down(tenkan, kijun, i) and c.closes[i] < bottom:
+            out.append(Signal(i, SHORT, stop_price=max(kijun[i], c.highs[i]) + buf, reward=p["reward"]))
+    return out
+
+
+# 16. Inside bar breakout: a candle inside the previous one (a pause), then a close beyond the
+#     big candle in the trend's direction. Stop: the other side of the big candle.
+def _inside_bar(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    out = []
+    for i in range(2, len(c.closes)):
+        if not _ready(trend[i]):
+            continue
+        m = i - 2   # the big ("mother") candle, i - 1 the inside one
+        inside = c.highs[i - 1] < c.highs[m] and c.lows[i - 1] > c.lows[m]
+        if not inside:
+            continue
+        if c.closes[i] > c.highs[m] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=c.lows[m], reward=p["reward"]))
+        elif c.closes[i] < c.lows[m] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=c.highs[m], reward=p["reward"]))
+    return out
+
+
+# 17. Stochastic RSI pullback: in the trend's direction, %K crosses %D out of the oversold
+#     (long) or overbought (short) zone.
+def _stoch_rsi_trend(c: Candles, p: dict) -> list[Signal]:
+    k, d = ind.stoch_rsi(c.closes, 3, 3, p["rsi_length"], p["rsi_length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = ind.atr(c.highs, c.lows, c.closes, 14)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(k[i - 1], d[i - 1], trend[i], atr[i]):
+            continue
+        stop = p["atr_mult"] * atr[i]
+        if c.closes[i] > trend[i] and _crossed_up(k, d, i) and k[i - 1] < p["oversold"]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i] < trend[i] and _crossed_down(k, d, i) and k[i - 1] > p["overbought"]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 18. Volume breakout: a close outside the Keltner channel on clearly higher volume than usual,
+#     in the trend's direction. Stop: the channel's middle line.
+def _volume_breakout(c: Candles, p: dict) -> list[Signal]:
+    mid = ind.ema(c.closes, p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, p["length"])
+    avg_volume = ind.sma(c.volumes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(mid[i], atr[i], avg_volume[i - 1], trend[i]) or not avg_volume[i - 1]:
+            continue
+        loud = (c.volumes[i] or 0) >= p["volume_mult"] * avg_volume[i - 1]
+        upper, lower = mid[i] + p["kc_mult"] * atr[i], mid[i] - p["kc_mult"] * atr[i]
+        if loud and c.closes[i] > upper and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=mid[i], reward=p["reward"]))
+        elif loud and c.closes[i] < lower and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=mid[i], reward=p["reward"]))
+    return out
+
+
 def _ema_line(n, iid="trend") -> dict:
     return {"id": f"s-{iid}", "type": "ema", "params": {"length": n}}
 
@@ -462,6 +583,30 @@ _STRATEGIES = [
     Strategy("vwap_reversion", "VWAP Reversion", ("range",), ("VWAP", "ATR"),
              (Param("length", 96, 5, 2000), Param("band", 2, 0.5, 10, 0.1)),
              _vwap_reversion),
+    Strategy("ema_pullback", "EMA Pullback", ("trend_up", "trend_down"), ("EMA", "ATR"),
+             (Param("fast", 20, 1, 500), Param("slow", 50, 1, 500), TREND, BUFFER, _reward(2)),
+             _ema_pullback,
+             lambda p: [_ema_line(p["fast"], "fast"), _ema_line(p["slow"], "slow"), _ema_line(p["trend"])]),
+    Strategy("dmi_adx", "DMI + ADX", ("trend_up", "trend_down", "volatile"), ("DMI", "ADX", "ATR"),
+             (Param("length", 14, 2, 200), Param("min_adx", 20, 5, 80), _atr_mult(2), _reward(2.5)),
+             _dmi_adx),
+    Strategy("ichimoku", "Ichimoku Cloud", ("trend_up", "trend_down"), ("Ichimoku", "ATR"),
+             (Param("tenkan", 9, 2, 200), Param("kijun", 26, 2, 300), Param("span_b", 52, 2, 500), _reward(2)),
+             _ichimoku),
+    Strategy("inside_bar", "Inside Bar Breakout", ("trend_up", "trend_down", "volatile"), ("Price action", "EMA"),
+             (TREND, _reward(2)),
+             _inside_bar,
+             lambda p: [_ema_line(p["trend"])]),
+    Strategy("stoch_rsi_trend", "Stoch RSI Pullback", ("trend_up", "trend_down"), ("Stoch RSI", "EMA", "ATR"),
+             (Param("rsi_length", 14, 2, 200), Param("oversold", 20, 1, 99), Param("overbought", 80, 1, 99),
+              TREND, _atr_mult(1.5), _reward(2)),
+             _stoch_rsi_trend,
+             lambda p: [_ema_line(p["trend"])]),
+    Strategy("volume_breakout", "Volume Breakout", ("trend_up", "trend_down", "volatile"), ("Keltner", "Volume", "EMA"),
+             (Param("length", 20, 2, 500), Param("kc_mult", 2, 0.1, 10, 0.1), Param("volume_mult", 2, 1, 10, 0.1),
+              TREND, _reward(2)),
+             _volume_breakout,
+             lambda p: [_ema_line(p["length"], "mid"), _ema_line(p["trend"])]),
 ]
 
 STRATEGIES: dict[str, Strategy] = {s.type: s for s in _STRATEGIES}

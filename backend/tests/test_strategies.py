@@ -444,7 +444,9 @@ class PriceActionStrategiesTest(unittest.TestCase):
 class CardsAndSettingsTest(unittest.TestCase):
     def test_strategies_with_valid_defaults(self):
         self.assertEqual(list(st.STRATEGIES), ORIGINAL_SIX + ["liquidity_sweep", "fvg_retest", "order_block",
-                                                              "sd_zone", "squeeze", "vwap_reversion"])
+                                                              "sd_zone", "squeeze", "vwap_reversion",
+                                                          "ema_pullback", "dmi_adx", "ichimoku", "inside_bar",
+                                                          "stoch_rsi_trend", "volume_breakout"])
         for s in st.STRATEGIES.values():
             for p in s.params:
                 self.assertTrue(p.min <= p.default <= p.max, (s.type, p.name))
@@ -576,3 +578,58 @@ class OverviewTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewStrategiesTest(unittest.TestCase):
+    """The six strategies added on 2026-11-01."""
+
+    def walk(self, n=2500, seed=3):
+        import math
+        import random
+        rnd = random.Random(seed)
+        price, rows = 100.0, []
+        for i in range(n):
+            drift = 0.0006 if (i // 300) % 2 == 0 else -0.0006   # trends up and down in turn
+            o = price
+            price *= math.exp(rnd.gauss(drift, 0.004))
+            rows.append({"time": i * 300, "open": o, "close": price,
+                         "high": max(o, price) * (1 + abs(rnd.gauss(0, 0.002))),
+                         "low": min(o, price) * (1 - abs(rnd.gauss(0, 0.002))),
+                         "volume": abs(rnd.gauss(100, 60))})
+        return rows
+
+    def test_each_gives_signals_with_sensible_levels(self):
+        rows = self.walk()
+        data = st.Candles(opens=[r["open"] for r in rows], highs=[r["high"] for r in rows],
+                          lows=[r["low"] for r in rows], closes=[r["close"] for r in rows],
+                          volumes=[r["volume"] for r in rows])
+        for kind in ("ema_pullback", "dmi_adx", "ichimoku", "inside_bar", "stoch_rsi_trend", "volume_breakout"):
+            with self.subTest(kind):
+                params = st.parse_params(kind, {"state_filter": 0})
+                signals = st.STRATEGIES[kind].signals(data, params)
+                self.assertGreater(len(signals), 3)
+                for sig in signals:
+                    entry = rows[sig.index]["close"]
+                    levels = st._levels(sig, entry)
+                    if levels is None:
+                        continue   # stop on the wrong side at this price: skipped by the engine
+                    stop, target = levels
+                    if sig.side == LONG:
+                        self.assertLess(stop, entry)
+                        self.assertGreater(target, entry)
+                    else:
+                        self.assertGreater(stop, entry)
+                        self.assertLess(target, entry)
+                # Every one aims at least twice the risk: passes the reward rule before fees.
+                self.assertTrue(all((s.reward or 0) >= 2 for s in signals))
+
+    def test_inside_bar_breakout_by_hand(self):
+        flat = [bar(i * 60, 100, 100.5, 99.5, 100) for i in range(210)]   # trend EMA settles at 100
+        rows = flat + [bar(12600, 100, 103, 99, 102),        # big candle
+                       bar(12660, 102, 102.5, 100, 101),     # inside it
+                       bar(12720, 101, 104, 101, 103.5)]     # closes above the big one
+        data = st.Candles(opens=[r["open"] for r in rows], highs=[r["high"] for r in rows],
+                          lows=[r["low"] for r in rows], closes=[r["close"] for r in rows],
+                          volumes=[1.0] * len(rows))
+        signals = st.STRATEGIES["inside_bar"].signals(data, st.parse_params("inside_bar", {}))
+        self.assertEqual([(s.index, s.side, s.stop_price) for s in signals], [(len(rows) - 1, LONG, 99)])
