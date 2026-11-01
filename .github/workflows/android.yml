@@ -164,17 +164,4 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: |
-            adb install -r android/app/build/outputs/apk/release/app-release.apk
-            adb shell pm grant ir.amrrahimi.tradingbot android.permission.POST_NOTIFICATIONS || true
-            adb shell am start -n ir.amrrahimi.tradingbot/.MainActivity
-            adb forward tcp:8765 tcp:8765
-            ok=0; for i in $(seq 1 150); do if curl -sf http://127.0.0.1:8765/api/health; then ok=1; break; fi; sleep 2; done; echo "answered: $ok"
-            adb shell pidof ir.amrrahimi.tradingbot || echo "app process not running"
-            adb logcat -d | grep -a -i -E "tradingbot|chaquopy|python\.|FATAL|ForegroundService" | tail -150
-            adb shell dumpsys activity services ir.amrrahimi.tradingbot | head -40
-            test "$ok" = 1
-            curl -sf http://127.0.0.1:8765/ | head -c 300; echo
-            curl -sf http://127.0.0.1:8765/api/paper | head -c 300; echo
-            curl -sf http://127.0.0.1:8765/api/connection; echo
-            adb shell dumpsys activity services ir.amrrahimi.tradingbot | grep -i "isForeground=true" && echo "::notice title=Emulator::engine answered, screen served, service in the foreground"
+          script: bash android/emulator_check.sh
