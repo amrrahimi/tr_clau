@@ -526,3 +526,21 @@ button:hover { background: var(--border); }
 
 .bot-timeframes { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0; }
 .bot-timeframes label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px; }
+
+/* ---------- phone (the Android app): one column, the page scrolls ---------- */
+
+@media (max-width: 760px) {
+  .body { flex-direction: column; overflow-y: auto; }
+  .chart-column { flex: none; order: 1; }
+  .chart-area { flex: none; height: 52vh; min-height: 280px; }
+  .bot-panel, .watchlist {
+    order: 2; width: auto; flex: none; overflow: visible; border-inline-end: 0;
+    border-block-start: 1px solid var(--border);
+  }
+  .watchlist { max-height: 45vh; }
+  .bot-trades, .scanner, .strategy-table-wrap { overflow-x: auto; }
+  .topbar { gap: 6px; padding: 6px; }
+  .topbar .symbol { font-size: 12px; }
+  button { padding: 7px 10px; }          /* easier to hit with a finger */
+  .bot-strategies label { padding-block: 4px; }
+}

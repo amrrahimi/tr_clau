@@ -6,6 +6,8 @@ The WebSocket endpoint stays open and pushes each changed candle.
 
 from __future__ import annotations
 
+import os
+
 import asyncio
 import json
 from contextlib import asynccontextmanager
@@ -441,6 +443,13 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         except Exception as error:
             await websocket.send_json({"type": "error", "message": f"Live updates stopped: {error}"})
             await websocket.close()
+
+    # On the phone the engine also serves the screen (built frontend), so the page and the API share
+    # one address: http://127.0.0.1:8765/. Registered last: the /api routes above take precedence.
+    web = os.environ.get("TRADING_BOT_WEB")
+    if web and os.path.isdir(web):
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=web, html=True), name="web")
 
     return app
 

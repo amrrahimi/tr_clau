@@ -1,0 +1,9 @@
+# Filled by the build (see .github/workflows/android.yml): the engine and the built screen.
+app/src/main/python/app/
+app/src/main/assets/web/
+.gradle/
+build/
+app/build/
+local.properties
+*.keystore
+*.jks

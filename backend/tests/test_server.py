@@ -193,3 +193,23 @@ class ServerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_FASTAPI, "fastapi/httpx not installed")
+class PhoneWebTest(unittest.TestCase):
+    """On Android the engine serves the built screen next to the API."""
+
+    def test_static_screen_served_when_folder_given(self):
+        import os
+        import tempfile
+        from unittest import mock
+        from pathlib import Path
+        from app import server
+        with tempfile.TemporaryDirectory() as web:
+            with open(os.path.join(web, "index.html"), "w", encoding="utf-8") as f:
+                f.write("<html>bot</html>")
+            with mock.patch.dict(os.environ, {"TRADING_BOT_WEB": web}):
+                app = server.create_app(lambda market: None, paper_path=Path(web) / "paper.json", run_bot=False)
+            client = TestClient(app)
+            self.assertIn("bot", client.get("/").text)
+            self.assertEqual(client.get("/api/health").json()["status"], "ok")

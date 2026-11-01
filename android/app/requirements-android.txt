@@ -1,0 +1,11 @@
+# The engine's packages on the phone (Chaquopy). Same as backend/requirements.txt except:
+# - pydantic 1 (pure Python): pydantic 2 needs pydantic-core, which has no Android build;
+#   FastAPI 0.115 still works with pydantic 1.
+# - plain uvicorn with wsproto for the live-candle WebSocket (uvloop/httptools do not build for Android).
+# CI runs the whole backend test suite with exactly these versions (android.yml, "engine-check").
+ccxt>=4.4
+fastapi==0.115.12
+pydantic>=1.10.17,<2
+uvicorn==0.34.0
+wsproto>=1.2
+aiohttp-socks>=0.8

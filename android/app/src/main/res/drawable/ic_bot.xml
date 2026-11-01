@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A simple candle-chart icon (also used in the notification). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#26A69A" android:pathData="M5,6h2v2h1v7H7v3H5v-3H4V8h1z" />
+    <path android:fillColor="#F23645" android:pathData="M11,3h2v3h1v8h-1v3h-2v-3h-1V6h1z" />
+    <path android:fillColor="#26A69A" android:pathData="M17,8h2v2h1v6h-1v4h-2v-4h-1v-6h1z" />
+</vector>
