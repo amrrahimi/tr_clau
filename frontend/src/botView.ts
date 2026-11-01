@@ -1,7 +1,7 @@
 // Small pieces of the automatic (bot) screen without screen code, so they can be tested.
 
 import type { MessageKey } from "./locales/en.ts";
-import type { BrainState, PaperEvent, PaperPosition, PaperState, PaperTrade, StrategyStats, Trade } from "./types.ts";
+import type { BrainState, PaperEvent, PaperPosition, PaperState, PaperTrade, StrategyResults, Trade } from "./types.ts";
 
 export const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "1d": 86400,
@@ -143,7 +143,7 @@ export function adviceText(p: PaperPosition, t: (key: MessageKey, p?: Record<str
 
 
 /** Strategies with the best average result of their signals first; those without results keep their place at the end. */
-export function strategyOrder(kinds: string[], stats: Record<string, StrategyStats>): string[] {
+export function strategyOrder(kinds: string[], stats: Record<string, StrategyResults>): string[] {
   const score = (k: string) => stats[k]?.signals?.avgR;
   return [...kinds].sort((a, b) => {
     const sa = score(a), sb = score(b);

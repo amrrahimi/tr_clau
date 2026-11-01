@@ -12,7 +12,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, ConnectionState, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyStats } from "./types.ts";
+import type { Candle, ConnectionState, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -61,7 +61,7 @@ export class BotApp {
   }
 
   /** Under each strategy in the manual list: how the bot, its signals and the brain's picks have done. */
-  private strategyStatsView(stats: StrategyStats | undefined): HTMLElement {
+  private strategyStatsView(stats: StrategyResults | undefined): HTMLElement {
     const el = (tag: string, cls: string, text = "") => {
       const e = document.createElement(tag);
       e.className = cls;

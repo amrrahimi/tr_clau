@@ -291,7 +291,7 @@ export interface ConnectionState {
 }
 
 /** One strategy's real results (manual mode list). R: result in units of the risk (-1R = the stop). */
-export interface StrategyStats {
+export interface StrategyResults {
   bot?: { count: number; winRate: number; netPnl: number }; // the bot's own closed trades
   signals?: { count: number; winRate: number | null; avgR: number | null }; // every reliable signal that ended
   brain?: { count: number; winRate: number | null; avgR: number | null }; // those the brain's filter lets through
@@ -309,7 +309,7 @@ export interface PaperState {
   pausedUntil: number | null; // smart pause: no new trades until then (seconds)
   pauseReason: "streak" | "fall" | null;
   benched: Record<string, number>; // strategies left out until (seconds)
-  strategyStats?: Record<string, StrategyStats>;
+  strategyStats?: Record<string, StrategyResults>;
   memory: {
     signals: number; // live signals the bot saw
     reliable?: number;
