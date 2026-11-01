@@ -166,7 +166,9 @@ async def check_paper_bot() -> None:
             state = bot.public()
             errors = [e for e in state["events"] if e["kind"] == "error"]
             assert not errors, f"paper bot errors: {errors}"
-            assert set(state["lastScan"]) == set(TIMEFRAMES), f"not all timeframes scanned: {state['lastScan']}"
+            from app.paper import BOT_STRATEGIES_BY_TF
+            traded = {tf for tf in TIMEFRAMES if BOT_STRATEGIES_BY_TF.get(tf)}   # 1m has none on the list
+            assert set(state["lastScan"]) == traded, f"not all listed timeframes scanned: {state['lastScan']}"
             for p in state["positions"]:
                 assert p["leverage"] <= 10 and p["risk"] <= 1.0001, f"position too risky: {p}"
                 beyond = p["liquidation"] < p["stopLoss"] if p["side"] == "long" else p["liquidation"] > p["stopLoss"]

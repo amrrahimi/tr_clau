@@ -81,9 +81,12 @@ class EngineService : Service() {
     private fun runEngine() {
         try {
             val web = File(filesDir, "web")
+            Log.i("TradingBot", "copying the screen")
             copyScreen(web)
+            Log.i("TradingBot", "starting Python")
             if (!Python.isStarted()) Python.start(AndroidPlatform(this))
             val data = File(filesDir, "trading-bot")
+            Log.i("TradingBot", "starting the engine")
             // Blocks for as long as the engine runs.
             Python.getInstance().getModule("android_main").callAttr("run", data.absolutePath, web.absolutePath)
         } catch (error: Throwable) {

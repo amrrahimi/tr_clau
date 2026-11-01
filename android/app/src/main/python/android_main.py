@@ -22,10 +22,13 @@ def run(data_dir: str, web_dir: str) -> None:
     root.addHandler(handler)
     root.setLevel(logging.WARNING)
 
+    print("engine: importing", flush=True)
     import uvicorn
 
     from app import config
     from app.server import app
+
+    print("engine: serving on", config.HOST, config.PORT, flush=True)
 
     # asyncio + h11 + wsproto: the pure-Python choices that work on Android.
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning", log_config=None,
