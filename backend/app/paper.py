@@ -289,15 +289,39 @@ def strict_ok(entry: dict, timeframe: str) -> bool:
 BREAKEVEN_BY_TF = {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5}
 
 
-def bot_settings(tf: str) -> dict[str, dict]:
-    """Settings of every strategy as the bot uses them on this timeframe."""
+# The strategies the main bot scans and trades, per timeframe. Chosen from the history test of
+# 2026-11-01 (all 18 strategies, 100 Toobit coins, 3,500 candles per chart, after fees and the
+# reward rule): only those at or near break-even on that timeframe (average >= -0.05R, 100+ trades).
+# None was clearly profitable: the best was +0.006R (volume breakout, 1h). On 1m every strategy lost
+# 0.065R or more per trade, so the bot does not trade 1m. The others stay in the code, the chart's
+# strategy table and the scanner; the barrage account still uses all of them.
+BOT_STRATEGIES_BY_TF: dict[str, tuple[str, ...]] = {
+    "1m": (),
+    "3m": ("sd_zone", "macd_ema", "squeeze", "supertrend"),
+    "5m": ("supertrend",),
+    "15m": ("donchian",),
+    "1h": ("volume_breakout", "macd_ema"),
+}
+BOT_STRATEGIES: tuple[str, ...] = tuple(k for k in STRATEGIES
+                                        if any(k in kinds for kinds in BOT_STRATEGIES_BY_TF.values()))
+
+
+def all_settings(tf: str) -> dict[str, dict]:
+    """Settings of every strategy as the bot would use them on this timeframe."""
     settings = {k: parse_params(k, {}, MODE_OF[tf]) for k in STRATEGIES}
     for params in settings.values():
         params["breakeven"] = BREAKEVEN_BY_TF[tf]
     return settings
 
 
-STRATEGY_SET = str(len(STRATEGIES))   # changes when strategies are added
+def bot_settings(tf: str) -> dict[str, dict]:
+    """Settings of the strategies the main bot uses on this timeframe."""
+    chosen = BOT_STRATEGIES_BY_TF.get(tf, tuple(STRATEGIES))
+    return {k: v for k, v in all_settings(tf).items() if k in chosen}
+
+
+# Changes when strategies are added or the bot's list changes: every chart is pre-trained again once.
+STRATEGY_SET = f"{len(STRATEGIES)}b{len(BOT_STRATEGIES)}"
 EVEN_PART = 1e-4    # a result smaller than this share of the position counts as break-even
 
 
@@ -316,7 +340,7 @@ def new_account(capital: float, now: float) -> dict:
         "balance": capital,
         "status": "stopped",          # stopped | running | halted (30% loss)
         "mode": "auto",               # auto: all strategies | manual: the owner's choice
-        "strategies": list(STRATEGIES),
+        "strategies": list(BOT_STRATEGIES),
         "positions": [],
         "closed": [],
         "events": [],
@@ -385,6 +409,9 @@ class PaperBot:
             self.account["profitCap"] = profile.default_cap
         for k, v in new_account(self.account.get("capital", 100.0), now()).items():
             self.account.setdefault(k, v)  # files from older versions
+        # Strategies taken off the bot's list since the file was saved are dropped from the choice.
+        kept = [k for k in self.account.get("strategies") or [] if k in BOT_STRATEGIES]
+        self.account["strategies"] = kept if kept and self.account.get("mode") == "manual" else list(BOT_STRATEGIES)
         self.prices: dict[str, float] = {}    # last price per position id (for the screen)
         self.scanning: Optional[str] = None   # timeframe being scanned
         self.lock = asyncio.Lock()
@@ -447,6 +474,8 @@ class PaperBot:
             },
             "scanning": self.scanning,
             "strategyStats": self.strategy_performance(),
+            # The bot's list: which strategies it trades on which timeframe (empty: that timeframe is not traded).
+            "botStrategies": {} if self.profile.barrage else {tf: list(k) for tf, k in BOT_STRATEGIES_BY_TF.items()},
             "lastScan": a["lastScan"],
             "timeframes": list(self.profile.timeframes),
             "chosenTimeframes": self.chosen_timeframes(),
@@ -531,7 +560,8 @@ class PaperBot:
 
     def set_mode(self, mode: str, strategies: list[str]) -> None:
         self.account["mode"] = mode
-        self.account["strategies"] = list(STRATEGIES) if mode == "auto" else strategies
+        chosen = [k for k in strategies if k in BOT_STRATEGIES]
+        self.account["strategies"] = list(BOT_STRATEGIES) if mode == "auto" or not chosen else chosen
         self.save()
 
     # ---- the loop
@@ -684,7 +714,7 @@ class PaperBot:
         """The barrage account's own scan: scalp patterns plus the main strategies with loose rules,
         on every coin's newest closed candles; as many positions as there is room for."""
         mode = MODE_OF[tf]
-        settings = bot_settings(tf)
+        settings = all_settings(tf)   # the barrage account uses every strategy
         found: list[dict] = []
         gate = asyncio.Semaphore(8)
         self.scanning = tf
@@ -753,6 +783,8 @@ class PaperBot:
     def _due_timeframes(self, now: float) -> list[str]:
         due = []
         for tf in [t for t in SCAN_ORDER if t in self.profile.timeframes]:
+            if not self.profile.barrage and not BOT_STRATEGIES_BY_TF.get(tf, True):
+                continue   # no strategy of the bot's list on this timeframe: nothing to scan
             period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
             if self.account["lastScan"].get(tf, {}).get("period") != period:
                 self.account["lastScan"][tf] = {"period": period, "time": now}

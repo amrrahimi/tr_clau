@@ -112,6 +112,8 @@ def strategy_overview(
     rows = []
     all_trades = {}
     for kind in strategies.STRATEGIES:
+        if kind not in settings:
+            continue   # the bot passes only the strategies on its list
         result = strategies.run(closed, kind, settings[kind], states, fees)
         result.pop("lines")
         all_trades[kind] = result.pop("trades")

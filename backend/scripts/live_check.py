@@ -202,14 +202,14 @@ async def check_paper_bot() -> None:
                   f"opened {flow['opened']}, skipped {flow['skipped']}")
             # Every strategy (old and new) on the history of 100 coins, as the bot runs it, per timeframe.
             from app.research import add, strategy_results
-            from app.paper import SCAN_ORDER, bot_settings, MODE_OF
+            from app.paper import SCAN_ORDER, all_settings, MODE_OF
             started = time.time()
             coins_list = await coins()
             for tf in SCAN_ORDER:
                 total: dict = {}
                 for sym, _ in coins_list:
                     rows = await history_of(sym, tf)
-                    add(total, await asyncio.to_thread(strategy_results, rows[:-1], bot_settings(tf), MODE_OF[tf], bot.fees))
+                    add(total, await asyncio.to_thread(strategy_results, rows[:-1], all_settings(tf), MODE_OF[tf], bot.fees))
                 ranked = sorted(((r["sumR"] / r["count"], k, r) for k, r in total.items() if r["count"]), reverse=True)
                 print(f"::notice title=Strategies {tf}::" + " | ".join(
                     f"{k} {avg:+.3f}R n={r['count']} win {r['wins'] / r['count'] * 100:.0f}%" for avg, k, r in ranked))

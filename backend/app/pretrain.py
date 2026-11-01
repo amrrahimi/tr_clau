@@ -35,6 +35,8 @@ def history_signals(symbol: str, base: str, timeframe: str, candles: list[dict],
     index = {c["time"]: i for i, c in enumerate(candles)}
     out = []
     for kind in STRATEGIES:
+        if kind not in settings:
+            continue
         trades = run(candles, kind, settings[kind], states, fees)["trades"]
         finished = [t for t in trades if t["result"] != "open"]
         by_exit = sorted(finished, key=lambda t: t["exitTime"])

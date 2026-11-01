@@ -481,6 +481,7 @@ button:hover { background: var(--border); }
 .bot-hint { color: var(--muted); font-size: 11px; line-height: 1.7; }
 .bot-strategies { display: flex; flex-direction: column; gap: 4px; }
 .bot-strategy { display: flex; flex-direction: column; gap: 1px; padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.bot-strategy-tfs { margin-inline-start: 8px; font-size: 11px; color: var(--muted); direction: ltr; unicode-bidi: isolate; }
 .bot-strategy-stats { font-size: 11px; color: var(--muted, #8a8f98); padding-inline-start: 22px; line-height: 1.5; }
 .bot-strategy-stats .up { color: var(--up); }
 .bot-strategy-stats .down { color: var(--down); }

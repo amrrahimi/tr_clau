@@ -115,6 +115,13 @@ class SlotsTest(unittest.TestCase):
 
 class BotTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        # These tests are about the loop, not the bot's strategy list: every strategy on every timeframe.
+        from unittest import mock
+        every = tuple(pp.STRATEGIES)
+        for name, value in (("BOT_STRATEGIES_BY_TF", {tf: every for tf in pp.TIMEFRAMES}), ("BOT_STRATEGIES", every)):
+            patcher = mock.patch.object(pp, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.dir = tempfile.TemporaryDirectory()
         self.path = Path(self.dir.name) / "paper.json"
         self.clock = [1_000_000.0]
@@ -580,8 +587,45 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
 
 class BotSettingsTest(unittest.TestCase):
     def test_break_even_only_on_the_hour_chart(self):
-        self.assertEqual({tf: pp.bot_settings(tf)["donchian"]["breakeven"] for tf in pp.TIMEFRAMES},
+        self.assertEqual({tf: pp.all_settings(tf)["donchian"]["breakeven"] for tf in pp.TIMEFRAMES},
                          {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5})
+
+
+class BotListTest(unittest.IsolatedAsyncioTestCase):
+    """The bot's own strategy list per timeframe (chosen from the history test)."""
+
+    def test_list_only_has_known_strategies(self):
+        for tf, kinds in pp.BOT_STRATEGIES_BY_TF.items():
+            self.assertIn(tf, pp.TIMEFRAMES)
+            self.assertTrue(set(kinds) <= set(pp.STRATEGIES))
+            self.assertEqual(set(pp.bot_settings(tf)), set(kinds))
+        self.assertEqual(len(pp.all_settings("5m")), len(pp.STRATEGIES))
+
+    async def test_timeframe_without_strategies_is_not_scanned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            bot = pp.PaperBot(pp.Store(Path(folder) / "paper.json"), None, None, None, now=lambda: 1_000_000.0)
+            bot.reset(100)
+            bot.start()
+            scanned = []
+
+            async def fake_scan(tf, now, trade=True):
+                scanned.append(tf)
+            bot._scan_and_open = fake_scan
+            await bot.step()
+        expected = [tf for tf in pp.TIMEFRAMES if pp.BOT_STRATEGIES_BY_TF[tf]]
+        self.assertEqual(sorted(scanned), sorted(expected))
+
+    def test_old_choice_keeps_only_listed_strategies(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = pp.Store(Path(folder) / "paper.json")
+            first = pp.PaperBot(store, None, None, None)
+            first.account["mode"] = "manual"
+            first.account["strategies"] = ["bb_reversion", pp.BOT_STRATEGIES[0]]   # bb_reversion: off the list
+            first.save()
+            again = pp.PaperBot(store, None, None, None)
+            self.assertEqual(again.account["strategies"], [pp.BOT_STRATEGIES[0]])
+            again.set_mode("manual", ["bb_reversion"])            # nothing left: back to the whole list
+            self.assertEqual(again.account["strategies"], list(pp.BOT_STRATEGIES))
 
 
 if __name__ == "__main__":

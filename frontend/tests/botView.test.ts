@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -71,7 +71,7 @@ test("skipped signals say why", () => {
 test("pause in the diary", () => {
   const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
   assert.equal(eventText({ time: 0, kind: "pause", reason: "streak", strategies: ["donchian"] }, t),
-    "مکث ۳ ساعته: ۴ باخت پشت سر هم. کنار گذاشته شد برای ۱۲ ساعت: شکست کانال");
+    "مکث ۳ ساعته: ۴ باخت پشت سر هم. کنار گذاشته شد برای ۳ ساعت: شکست کانال");
 });
 
 test("the brain in the panel and the diary", () => {
@@ -124,4 +124,9 @@ test("strategy stat lines exist in both languages", () => {
     assert.match(translate(lang, "bot.statSignals", { n: "3", win: "50", r: "+0.20" }), /3.*50.*\+0\.20/);
     assert.match(translate(lang, "bot.statBrain", { n: "2", win: "40", r: "-0.10" }), /2.*40.*-0\.10/);
   }
+});
+
+test("bot list: the timeframes each strategy is traded on, fastest first", () => {
+  assert.deepEqual(timeframesOf({ "1h": ["macd_ema"], "1m": [], "3m": ["macd_ema", "sd_zone"] }),
+    { macd_ema: ["3m", "1h"], sd_zone: ["3m"] });
 });

@@ -153,3 +153,12 @@ export function strategyOrder(kinds: string[], stats: Record<string, StrategyRes
     return sb - sa;
   });
 }
+
+/** Timeframes each strategy is traded on, from the bot's list (timeframe -> strategies). */
+export function timeframesOf(botStrategies: Record<string, string[]>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const tf of Object.keys(TIMEFRAME_SECONDS)) {
+    for (const kind of botStrategies[tf] ?? []) (out[kind] ??= []).push(tf);
+  }
+  return out;
+}

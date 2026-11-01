@@ -310,6 +310,7 @@ export interface PaperState {
   pauseReason: "streak" | "fall" | null;
   benched: Record<string, number>; // strategies left out until (seconds)
   strategyStats?: Record<string, StrategyResults>;
+  botStrategies?: Record<string, string[]>; // timeframe -> strategies the bot trades there ([] = not traded)
   memory: {
     signals: number; // live signals the bot saw
     reliable?: number;

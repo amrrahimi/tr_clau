@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type BotAccount, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView } from "./chart.ts";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, tradeOutcome } from "./botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -429,7 +429,10 @@ export class BotApp {
     if (s.mode === "manual") {
       const list = el("div", "bot-strategies");
       const stats = s.strategyStats ?? {};
-      const kinds = strategyOrder(this.cards.length ? this.cards.map((c) => c.type) : s.strategies, stats);
+      const onTf = timeframesOf(s.botStrategies ?? {});
+      const all = this.cards.length ? this.cards.map((c) => c.type) : s.strategies;
+      const listed = s.botStrategies ? all.filter((k) => onTf[k]) : all;
+      const kinds = strategyOrder(listed, stats);
       for (const kind of kinds) {
         const row = el("div", "bot-strategy");
         const line = el("label", "");
@@ -445,12 +448,22 @@ export class BotApp {
           void this.act({ kind: "mode", mode: "manual", strategies: chosen });
         });
         line.append(box, document.createTextNode(` ${t(`strat.${kind}` as MessageKey)}`));
+        if (onTf[kind]) line.append(el("span", "bot-strategy-tfs", onTf[kind].join(" · ")));
         row.append(line, this.strategyStatsView(stats[kind]));
         list.append(row);
       }
       parts.push(list, el("div", "bot-hint", t("bot.statHint")));
+      const retired = all.filter((k) => s.botStrategies && !onTf[k]);
+      if (retired.length) {
+        parts.push(el("div", "bot-hint", t("bot.retired", { list: retired.map((k) => t(`strat.${k}` as MessageKey)).join("، ") })));
+      }
     } else {
-      parts.push(el("div", "bot-hint", t("bot.autoHint", { tfs: (s.chosenTimeframes ?? s.timeframes).join("، ") })));
+      const chosen = s.chosenTimeframes ?? s.timeframes;
+      const byTf = s.botStrategies ?? {};
+      const list = chosen.map((tf) => `${tf}: ${(byTf[tf] ?? []).length
+        ? (byTf[tf] ?? []).map((k) => t(`strat.${k}` as MessageKey)).join("، ")
+        : t("bot.noStrategy")}`).join(" · ");
+      parts.push(el("div", "bot-hint", t("bot.autoHint", { list })));
     }
     if (s.profile === "fast") {
       parts.push(el("div", "bot-hint warn", t("bot.fastHint", { cap: String(s.rules.profitCap ?? 0.05) })));
