@@ -357,6 +357,10 @@ export const fa: Record<MessageKey, string> = {
   "bot.skip.benched": "استراتژی موقتاً کنار گذاشته شده",
   "bot.skip.notChosen": "استراتژی در حالت دستی انتخاب نشده",
   "bot.skip.paused": "ربات در مکث بود",
+  "bot.level.entry": "ورود",
+  "bot.level.stop": "حد ضرر",
+  "bot.level.breakeven": "حد ضرر (سربه‌سر)",
+  "bot.level.target": "حد سود",
   "language.switch": "EN",
   "language.switchLabel": "تغییر به انگلیسی",
 };

@@ -355,6 +355,10 @@ export const en = {
   "bot.skip.benched": "strategy benched for now",
   "bot.skip.notChosen": "strategy not ticked (manual)",
   "bot.skip.paused": "bot was pausing",
+  "bot.level.entry": "Entry",
+  "bot.level.stop": "Stop",
+  "bot.level.breakeven": "Stop (break-even)",
+  "bot.level.target": "Target",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;

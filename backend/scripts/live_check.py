@@ -184,6 +184,15 @@ async def check_paper_bot() -> None:
             added = await bot.pretrain_round()
             took = time.time() - started
             assert added > 0, "pre-training found no past signals"
+            # How often signals come, per timeframe, over the rebuilt history of 100 coins
+            # (owner: "hours without a signal on 1m / 5m").
+            rates = []
+            for tf, n, rel, first, last in memory.db.execute(
+                    "SELECT timeframe, COUNT(*), SUM(reliable), MIN(signal_time), MAX(signal_time) FROM signals"
+                    " WHERE source = 'history' GROUP BY timeframe"):
+                hours = max((last - first) / 3600, 1e-9)
+                rates.append(f"{tf}: {n / hours:.1f}/h all, {rel / hours:.2f}/h reliable ({rel}/{n})")
+            print("::notice title=Signals per hour::" + " | ".join(rates))
             started = time.time()
             outcome = brain.train()
             learn = time.time() - started

@@ -5,7 +5,7 @@
 
 import { BackendError, type Backend, type BotAccount, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
-import { ChartView } from "./chart.ts";
+import { ChartView, THEME } from "./chart.ts";
 import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
@@ -244,6 +244,12 @@ export class BotApp {
       .sort((a, b) => a.entryTime - b.entryTime);
     this.chart.setTrades(trades, this.candles[this.candles.length - 1].time,
       { long: this.t("strategies.long"), short: this.t("strategies.short") });
+    // Open positions of this chart: entry, stop-loss and take-profit on the price axis.
+    this.chart.setLevels(this.state.positions.filter(same).flatMap((p) => [
+      { price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entry") },
+      { price: p.stop, color: THEME.down, title: this.t(p.breakevenAt ? "bot.level.breakeven" : "bot.level.stop") },
+      { price: p.takeProfit, color: THEME.up, title: this.t("bot.level.target") },
+    ]));
   }
 
   // ---------- screen ----------

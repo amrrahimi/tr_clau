@@ -12,6 +12,7 @@ import {
   createChart,
   createSeriesMarkers,
   type IChartApi,
+  type IPriceLine,
   type IPrimitivePaneRenderer,
   type IPrimitivePaneView,
   type ISeriesApi,
@@ -78,6 +79,7 @@ export class ChartView {
   private signature = "";
   private readonly markers: ISeriesMarkersPluginApi<Time>;
   private readonly boxes = new PositionBoxes();
+  private levelLines: IPriceLine[] = [];
 
   constructor(container: HTMLElement, private readonly onNeedOlder: () => void) {
     this.chart = createChart(container, {
@@ -240,6 +242,17 @@ export class ChartView {
     }
     this.markers.setMarkers(markers.map((m) => ({ ...m, time: m.time as UTCTimestamp })));
     this.boxes.setBoxes(boxes);
+  }
+
+  /**
+   * Price levels of open positions on the price axis (entry, stop-loss, take-profit): a dotted line
+   * across the chart and the price in a coloured label on the axis, like the current price.
+   */
+  setLevels(levels: { price: number; color: string; title: string }[]): void {
+    for (const line of this.levelLines) this.series.removePriceLine(line);
+    this.levelLines = levels.map((l) => this.series.createPriceLine({
+      price: l.price, color: l.color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: l.title,
+    }));
   }
 
   /** Update the latest candle, or add a new one. */
