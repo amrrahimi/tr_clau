@@ -161,14 +161,20 @@ async def check_paper_bot() -> None:
             bot.reset(100)
             bot.start()
             started = time.time()
-            await bot.step()
+            from app.paper import BOT_STRATEGIES_BY_TF
+            traded = {tf for tf in bot.chosen_timeframes() if BOT_STRATEGIES_BY_TF.get(tf)}
+            # A new 1m candle may interrupt the slower scans (they come in the next loop): loop until
+            # every ticked timeframe was scanned once.
+            for _ in range(10):
+                await bot.step()
+                if set(bot.account["lastScan"]) >= traded:
+                    break
             took = time.time() - started
             state = bot.public()
+            print(f"::notice title=Scan times::{state['scanSeconds']}")
             errors = [e for e in state["events"] if e["kind"] == "error"]
             assert not errors, f"paper bot errors: {errors}"
-            from app.paper import BOT_STRATEGIES_BY_TF
-            traded = {tf for tf in TIMEFRAMES if BOT_STRATEGIES_BY_TF.get(tf)}   # 1m has none on the list
-            assert set(state["lastScan"]) == traded, f"not all listed timeframes scanned: {state['lastScan']}"
+            assert set(state["lastScan"]) >= traded, f"not all listed timeframes scanned: {state['lastScan']}"
             for p in state["positions"]:
                 assert p["leverage"] <= 10 and p["risk"] <= 1.0001, f"position too risky: {p}"
                 beyond = p["liquidation"] < p["stopLoss"] if p["side"] == "long" else p["liquidation"] > p["stopLoss"]
