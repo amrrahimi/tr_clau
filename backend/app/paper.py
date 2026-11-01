@@ -384,7 +384,8 @@ class PaperBot:
                  memory: Optional[Memory] = None, brain: Optional[Brain] = None, profile: Profile = MAIN):
         self.store = store
         self.profile = profile
-        self.flow: list[tuple[float, str]] = []  # (time, "seen" | "opened" | skip reason) for the counter
+        self.flow: list[tuple[float, str]] = []
+        self.scan_seconds: dict[str, float] = {}   # how long the last scan of each timeframe took  # (time, "seen" | "opened" | skip reason) for the counter
         self.memory = memory
         self.brain = brain                    # the learning signal filter (step B)
         self.training: Optional[asyncio.Task] = None
@@ -473,6 +474,7 @@ class PaperBot:
             "chosenTimeframes": self.chosen_timeframes(),
             "profile": self.profile.name,
             "flow": self.flow_summary(),
+            "scanSeconds": self.scan_seconds,
             "rules": {"risk": RISK * 100, "maxOpen": self.profile.max_open, "maxFast": self.profile.slots["fast"],
                       "maxSlow": self.profile.slots["slow"], "maxSameSide": self.profile.max_same_side,
                       "maxLeverage": MAX_LEVERAGE, "smartPause": self.profile.smart_pause,
@@ -664,15 +666,32 @@ class PaperBot:
                 return
             if self.profile.smart_pause:
                 self._update_pause(now, equity)
+            before = {k: dict(v) for k, v in self.account["lastScan"].items()}
             due = self._trading_order(self._due_timeframes(now))
+            # Only the ticked timeframes are scanned while trading: scanning all five took minutes
+            # (on a phone much longer), so 1m / 5m signals came late or not at all. The others still
+            # learn every day from the pre-training.
+            chosen = self.chosen_timeframes()
+            due = [tf for tf in due if tf in chosen or self.profile.barrage]
             self.save()
         # One timeframe at a time, each under the lock on its own: the buttons (stop, start again,
         # close) wait for one chart scan at most, not for a whole round of five timeframes.
-        for tf in due:
+        for i, tf in enumerate(due):
             async with self.lock:
                 if self.account is not account or account["status"] != "running":
                     return   # started again or stopped meanwhile
                 now = self.now()
+                fastest = min(due, key=lambda x: config.TIMEFRAME_SECONDS[x])
+                if i and tf != fastest and self._new_period(fastest, now):
+                    # A new candle of the fastest ticked timeframe closed meanwhile: it goes first.
+                    # The rest of this round waits for the next loop (not lost).
+                    for later in due[i:]:
+                        if later in before:
+                            self.account["lastScan"][later] = before[later]
+                        else:
+                            self.account["lastScan"].pop(later, None)
+                    return
+                started = time.time()
                 if self.profile.barrage:
                     await self._barrage_scan(tf, now)
                 else:
@@ -681,7 +700,12 @@ class PaperBot:
                     trade = (not self._paused(now) and tf in self.chosen_timeframes()
                              and free_slots(self.account["positions"], tf, self.profile.slots) > 0)
                     await self._scan_and_open(tf, now, trade=trade)
+                self.scan_seconds[tf] = round(time.time() - started, 1)
                 self.save()
+
+    def _new_period(self, tf: str, now: float) -> bool:
+        period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
+        return self.account["lastScan"].get(tf, {}).get("period") != period
 
     def _trading_order(self, due: list[str]) -> list[str]:
         """The ticked timeframes first, fastest first (a 1-minute signal goes stale soonest), then the rest."""

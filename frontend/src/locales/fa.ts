@@ -317,7 +317,7 @@ export const fa: Record<MessageKey, string> = {
   "bot.flow": "۱۰ دقیقه‌ی اخیر: {seen} سیگنال دیده شد، {opened} پوزیشن باز شد.",
   "bot.flowSkipped": "رد شده: {list}",
   "bot.timeframes": "تایم‌فریم‌های معامله",
-  "bot.timeframesHint": "ربات فقط روی تایم‌فریم‌های تیک‌خورده معامله می‌کند. بقیه را فقط برای یادگیری حافظه و هوش ربات بررسی می‌کند.",
+  "bot.timeframesHint": "ربات فقط تایم‌فریم‌های تیک‌خورده را بررسی و معامله می‌کند. هرچه تیک‌ها کمتر باشد، بررسی سریع‌تر است و سیگنال‌ها تازه‌تر می‌رسند. بقیه‌ی تایم‌فریم‌ها روزی یک بار با پیش‌آموزش در حافظه یاد گرفته می‌شوند.",
   "strat.liquidity_sweep": "شکار نقدینگی",
   "strat.fvg_retest": "برگشت به FVG",
   "strat.order_block": "اوردر بلاک",
@@ -361,6 +361,7 @@ export const fa: Record<MessageKey, string> = {
   "bot.level.stop": "حد ضرر",
   "bot.level.breakeven": "حد ضرر (سربه‌سر)",
   "bot.level.target": "حد سود",
+  "bot.scanTimes": "مدت آخرین بررسی همه‌ی ارزها: {list}",
   "language.switch": "EN",
   "language.switchLabel": "تغییر به انگلیسی",
 };

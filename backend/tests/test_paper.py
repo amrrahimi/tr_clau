@@ -215,7 +215,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             scanned.append(tf)
         bot._scan_and_open = fake_scan
         await bot.step()
-        self.assertEqual(scanned, ["15m", "1m", "3m", "5m", "1h"])
+        self.assertEqual(scanned, ["15m"])        # only the ticked timeframe while trading
 
     async def test_reset_during_a_round_stops_the_round(self):
         bot = self.bot
@@ -543,7 +543,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(p["advice"]["answer"], "hold")
         self.assertEqual(len(bot.account["positions"]), 1)                              # it goes on
 
-    async def test_only_ticked_timeframes_are_traded_but_all_are_scanned(self):
+    async def test_only_ticked_timeframes_are_scanned_while_trading(self):
         bot = self.bot
         bot.reset(100)
         bot.start()
@@ -555,9 +555,27 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             scanned.append((tf, trade))
         bot._scan_and_open = fake_scan
         await bot.step()
-        self.assertEqual(dict(scanned), {"1h": False, "15m": False, "5m": True, "3m": False, "1m": True})
+        self.assertEqual(scanned, [("1m", True), ("5m", True)])
+        self.assertEqual(set(bot.public()["scanSeconds"]), {"1m", "5m"})
         bot.reset(50)
         self.assertEqual(bot.public()["chosenTimeframes"], ["1m", "5m"])     # kept after start again
+
+    async def test_a_new_1m_candle_jumps_ahead_of_slower_scans(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        bot.set_timeframes(["1m", "15m"])
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append(tf)
+            if tf == "1m" and len(scanned) == 1:
+                self.clock[0] += 60            # the 1m scan took a whole minute
+        bot._scan_and_open = fake_scan
+        await bot.step()
+        self.assertEqual(scanned, ["1m"])        # 15m waits, a fresh 1m candle comes first
+        await bot.step()
+        self.assertEqual(scanned, ["1m", "1m", "15m"])
 
     async def test_main_bot_counts_why_signals_were_not_traded(self):
         from unittest import mock

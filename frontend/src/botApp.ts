@@ -334,6 +334,10 @@ export class BotApp {
     // What happened to the signals lately (most useful for the barrage account).
     if (s.flow) {
       parts.push(el("div", "bot-hint", t("bot.flow", { seen: String(s.flow.seen), opened: String(s.flow.opened) })));
+      const times = Object.entries(s.scanSeconds ?? {});
+      if (times.length) {
+        parts.push(el("div", "bot-hint", t("bot.scanTimes", { list: times.map(([tf, sec]) => `${tf}: ${sec}s`).join("، ") })));
+      }
       const skipped = Object.entries(s.flow.skipped);
       if (skipped.length) {
         parts.push(el("div", "bot-hint", t("bot.flowSkipped", {

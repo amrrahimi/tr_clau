@@ -315,7 +315,7 @@ export const en = {
   "bot.flow": "Last 10 minutes: {seen} signals seen, {opened} positions opened.",
   "bot.flowSkipped": "Skipped: {list}",
   "bot.timeframes": "Timeframes to trade",
-  "bot.timeframesHint": "The bot trades only on the ticked timeframes. The others are still watched, only so the memory and brain keep learning.",
+  "bot.timeframesHint": "The bot scans and trades only the ticked timeframes. Fewer ticks mean faster scans and fresher signals. The other timeframes are still learned once a day by the pre-training.",
   "strat.liquidity_sweep": "Liquidity Sweep",
   "strat.fvg_retest": "FVG Retest",
   "strat.order_block": "Order Block",
@@ -359,6 +359,7 @@ export const en = {
   "bot.level.stop": "Stop",
   "bot.level.breakeven": "Stop (break-even)",
   "bot.level.target": "Target",
+  "bot.scanTimes": "Last scan of all coins took: {list}",
   "language.switch": "FA",
   "language.switchLabel": "Switch to Persian",
 } as const;
