@@ -344,7 +344,7 @@ export interface PaperState {
   scanning: string | null; // timeframe being scanned now
   lastScan: Record<string, { period: number; time: number }>;
   timeframes: string[];
-  rules: { risk: number; maxOpen: number; maxFast?: number; maxSlow?: number; maxSameSide?: number;
+  rules: { risk: number; maxOpen: number | null; maxFast?: number; maxSlow?: number; maxSameSide?: number | null; brainThreshold?: number | null;
     maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
     smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
     fees: { maker: number; taker: number } };

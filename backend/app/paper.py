@@ -59,9 +59,12 @@ MODE_OF = {"1m": "scalping", "3m": "scalping", "5m": "scalping", "15m": "daily",
 MARKET = "futures"            # long and short (spot cannot short)
 RISK = 0.01                   # of the account, per trade
 GROUP = {"1m": "fast", "3m": "fast", "5m": "fast", "15m": "slow", "30m": "slow", "1h": "slow", "4h": "slow"}
-GROUP_SLOTS = {"fast": 3, "slow": 3}
-MAX_OPEN = sum(GROUP_SLOTS.values())
-MAX_SAME_SIDE = 4
+# Owner 2026-11-02: no limit on the number of open positions, per group or per direction (one per
+# coin; it stops when the free margin runs out). Easy to bring back: put numbers here.
+UNLIMITED = 1000
+GROUP_SLOTS = {"fast": UNLIMITED, "slow": UNLIMITED}
+MAX_SAME_SIDE = UNLIMITED
+MAX_OPEN = 6                  # sizing only: one position may lock at most a sixth of the money as margin
 
 # Owner's rule: trades on the slow charts take long and move a lot, so they must be much surer.
 # A signal on 15m / 1h is traded only if its strategy did clearly well on that coin's history.
@@ -76,7 +79,7 @@ class Profile:
     """How the bot trades (one account since the barrage account was removed on 2026-11-02)."""
     name: str = "main"
     timeframes: tuple[str, ...] = tuple(TIMEFRAMES)
-    group_slots: tuple[tuple[str, int], ...] = (("fast", 3), ("slow", 3))
+    group_slots: tuple[tuple[str, int], ...] = tuple(GROUP_SLOTS.items())
     max_same_side: int = MAX_SAME_SIDE
     all_signals: bool = False     # True: not only reliable signals
     smart_pause: bool = True
@@ -102,6 +105,7 @@ PAUSE_LOSSES = 4             # default: losing trades in a row (the owner can ch
 PAUSE_FALL = 0.05            # default: fall since the last pause or the start (owner can change it, 0 = off)
 MAX_PAUSE_LOSSES = 50
 MAX_PAUSE_FALL = 50.0        # percent
+MAX_BRAIN_THRESHOLD = 0.6    # the owner's brain knob goes from 0 (off) to this
 PAUSE_SECONDS = 3 * 3600
 RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
 BENCH_SECONDS = PAUSE_SECONDS  # strategies that lost lately are left out as long as the pause
@@ -352,6 +356,7 @@ def new_account(capital: float, now: float) -> dict:
         "profitCap": 0.0,        # owner's option: close a position once it is this many USDT in profit (0 = off)
         "pauseLosses": PAUSE_LOSSES,       # owner's option: pause after this many losses in a row (0 = off)
         "pauseFall": PAUSE_FALL * 100,     # owner's option: pause after this % fall (0 = off)
+        "brainThreshold": None,            # owner's option: least chance the brain must give (None = its own)
         "pausedUntil": None,
         "pausedAt": None,
         "pauseReason": None,
@@ -495,8 +500,10 @@ class PaperBot:
             "profile": self.profile.name,
             "flow": self.flow_summary(),
             "scanSeconds": self.scan_seconds,
-            "rules": {"risk": RISK * 100, "maxOpen": self.profile.max_open, "maxFast": self.profile.slots["fast"],
-                      "maxSlow": self.profile.slots["slow"], "maxSameSide": self.profile.max_same_side,
+            "rules": {"risk": RISK * 100,
+                      "maxOpen": None if self.profile.max_open >= UNLIMITED else self.profile.max_open,
+                      "maxSameSide": None if self.profile.max_same_side >= UNLIMITED else self.profile.max_same_side,
+                      "brainThreshold": a.get("brainThreshold"),
                       "maxLeverage": MAX_LEVERAGE, "smartPause": self.profile.smart_pause,
                       "allSignals": self.profile.all_signals,
                       **({"strictTrades": STRICT_TRADES, "strictProfitFactor": STRICT_PROFIT_FACTOR}
@@ -528,7 +535,8 @@ class PaperBot:
             self.save()
 
     def reset(self, capital: float) -> None:
-        kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall") if k in self.account}
+        kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold")
+                if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
         self.account.update(kept)   # settings, not results: kept
@@ -549,6 +557,11 @@ class PaperBot:
 
     def set_profit_cap(self, usd: float) -> None:
         self.account["profitCap"] = max(0.0, float(usd))
+        self.save()
+
+    def set_brain_threshold(self, threshold: Optional[float]) -> None:
+        """Owner's knob: the least chance a signal needs (0 = brain off), or None for the brain's own."""
+        self.account["brainThreshold"] = None if threshold is None else min(MAX_BRAIN_THRESHOLD, max(0.0, float(threshold)))
         self.save()
 
     def set_pause_rules(self, losses: int, fall: float) -> None:
@@ -997,11 +1010,16 @@ class PaperBot:
         finally:
             self.scanning = None
         if not trade:
+            if ticked and memory is not None:   # why the bot's signals were not traded
+                reason = "paused" if self._paused(now) else "full"
+                for c in candidates:
+                    memory.mark(c["memoryKey"], skip_reason=reason)
             return
         if self.brain is not None:  # the brain's filter: skip signals with a low chance of profit
-            weak = [c for c in candidates if not self.brain.allows(c.get("chance"))]
+            knob = self.account.get("brainThreshold")
+            weak = [c for c in candidates if not self.brain.allows(c.get("chance"), knob)]
             if weak:
-                candidates = [c for c in candidates if self.brain.allows(c.get("chance"))]
+                candidates = [c for c in candidates if self.brain.allows(c.get("chance"), knob)]
                 for c in weak:
                     if memory is not None and c.get("memoryKey"):
                         memory.mark(c["memoryKey"], skip_reason="brain")
@@ -1052,7 +1070,7 @@ class PaperBot:
         equity = self.equity()
         size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.size_slots)
         if size is None or size.notional <= 0:
-            return
+            return skip("full")   # no free money left for another position
         a = self.account
         position = {
             "id": a["nextId"], "symbol": c["symbol"], "base": c["base"], "timeframe": tf,

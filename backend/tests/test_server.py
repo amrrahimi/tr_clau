@@ -137,6 +137,11 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((rules["pauseLosses"], rules["pauseFall"]), (0, 8))
         self.assertEqual(client.post("/api/paper/pause", json={"losses": -1, "fall": 5}).status_code, 400)
         self.assertEqual(client.post("/api/paper/pause", json={"losses": 4, "fall": 80}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/brain", json={"threshold": 0.2}).json()["rules"]["brainThreshold"], 0.2)
+        self.assertIsNone(client.post("/api/paper/brain", json={"threshold": None}).json()["rules"]["brainThreshold"])
+        self.assertEqual(client.post("/api/paper/brain", json={"threshold": 0.9}).status_code, 400)
+        rules = client.get("/api/paper").json()["rules"]
+        self.assertEqual((rules["maxOpen"], rules["maxSameSide"]), (None, None))     # no limits
         client.post("/api/paper/start")
         self.assertEqual(client.post("/api/paper/close-all").json()["status"], "stopped")
         with mock.patch.dict(os.environ, {"TRADING_BOT_DATA": self._tmp.name, "https_proxy": "", "http_proxy": "",

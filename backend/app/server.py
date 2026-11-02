@@ -24,7 +24,7 @@ from .history import HistoryCache
 from . import connection
 from .brain import Brain
 from .memory import Memory
-from .paper import MARKET, MAX_PAUSE_FALL, MAX_PAUSE_LOSSES, TIMEFRAMES, PaperBot, Store, default_path
+from .paper import MARKET, MAX_BRAIN_THRESHOLD, MAX_PAUSE_FALL, MAX_PAUSE_LOSSES, TIMEFRAMES, PaperBot, Store, default_path
 from .scanner import Scanner, run_scan
 from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
@@ -166,6 +166,14 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             if not 0 <= losses <= MAX_PAUSE_LOSSES or not 0 <= fall <= MAX_PAUSE_FALL:
                 raise HTTPException(400, f"losses must be 0-{MAX_PAUSE_LOSSES}, fall 0-{MAX_PAUSE_FALL:g}")
             b.set_pause_rules(losses, fall)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/brain")
+        async def paper_brain(threshold: Optional[float] = Body(None, embed=True)):
+            """The owner's brain knob: least chance a signal needs (0 = off), null = the brain's own."""
+            if threshold is not None and not 0 <= threshold <= MAX_BRAIN_THRESHOLD:
+                raise HTTPException(400, f"threshold must be 0-{MAX_BRAIN_THRESHOLD:g} or null")
+            b.set_brain_threshold(threshold)
             return b.public()
 
         @app.post(f"/api/{prefix}/advice")

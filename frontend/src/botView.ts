@@ -175,3 +175,12 @@ export function pauseRuleText(
   if (fall > 0) return t("bot.pauseRule.fall", p);
   return t("bot.pauseRule.off");
 }
+
+/** The line under the brain knob: what the bot uses now. */
+export function brainKnobHint(
+  set: number | null | undefined, own: number | null, t: (key: MessageKey, p?: Record<string, string>) => string,
+): string {
+  if (set == null) return t("bot.brainHint.auto", { own: own == null ? "–" : String(own) });
+  if (set <= 0) return t("bot.brainHint.off");
+  return t("bot.brainHint.set", { value: String(Math.round(set * 100)), own: own == null ? "–" : String(own) });
+}

@@ -122,6 +122,8 @@ export class MockBackend implements Backend {
       state.chosenTimeframes = state.timeframes.filter((tf) => action.timeframes.includes(tf));
     } else if (action.kind === "cap") {
       state.rules.profitCap = action.usd;
+    } else if (action.kind === "brain") {
+      state.rules.brainThreshold = action.threshold;
     } else if (action.kind === "pause") {
       state.rules.pauseLosses = action.losses;
       state.rules.pauseFall = action.fall;
@@ -169,7 +171,7 @@ export class MockBackend implements Backend {
       strategies: MOCK_STRATEGIES.map((c) => c.type), positions: [], closed: [], events: [],
       stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
       scanning: null, lastScan: {}, timeframes: ["1m", "3m", "5m", "15m", "30m", "1h", "4h"],
-      rules: { risk: 1, maxOpen: 6, maxFast: 3, maxSlow: 3, maxSameSide: 4,
+      rules: { risk: 1, maxOpen: null, maxSameSide: null, brainThreshold: null,
         maxLeverage: 10, pauseLosses: 4, pauseFall: 5, pauseHours: 3, totalStop: 30, profitCap: 0,
         smartPause: true, allSignals: false, strictTrades: 20, strictProfitFactor: 1.5, fees: { maker: 0.02, taker: 0.06 } },
     };

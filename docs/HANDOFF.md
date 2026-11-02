@@ -20,6 +20,10 @@ download links. The repository is public: never commit keys, passwords or accoun
   early after 2 wins; break-even is not a loss); 1% risk; break-even off on 1m-30m, 50% on 1h/4h;
   fee limit per timeframe FEE_RATIO_BY_TF (round-trip fee / stop distance: 3m 10%, others 5%; was 33%);
   half-way advice (hold / close); close buttons; optional profit cap.
+- No limit on the number of open positions, per group or per direction (owner 2026-11-02; one per
+  coin, stops when free margin runs out; margin per position still at most 1/6 of the money).
+  Owner's brain knob in the panel: least chance 0-60% (0 = brain off) or "auto" (the model's own).
+  Signals not traded because of a pause / no money are marked in memory (paused / full).
 - Barrage account: removed 2026-11-02 (owner). An old paper-fast.json on disk is no longer used.
 - Only ticked timeframes are scanned; a new 1m candle may put a slower scan off once (fix of
   2026-11-02: before it, slow computers never scanned 5m-1h).

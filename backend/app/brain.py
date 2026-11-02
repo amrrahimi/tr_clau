@@ -240,8 +240,11 @@ class Brain:
             return None
         return self.champion.chance(feats, strategy, timeframe, side)
 
-    def allows(self, chance: Optional[float]) -> bool:
-        return not self.active() or chance is None or chance >= self.champion.threshold
+    def allows(self, chance: Optional[float], threshold: Optional[float] = None) -> bool:
+        """threshold: the owner's knob (0 = let everything through); None = the model's own."""
+        if not self.active() or chance is None:
+            return True
+        return chance >= (self.champion.threshold if threshold is None else threshold)
 
     def due(self, now: float) -> bool:
         return (self.last is None or now - self.last.get("time", 0) >= RETRAIN_SECONDS

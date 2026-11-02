@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainKnobHint, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -139,4 +139,11 @@ test("pause rule text follows the owner's numbers (0 = off)", () => {
   assert.match(pauseRuleText({ ...rules, pauseLosses: 4, pauseFall: 0 }, tr), /after 4 losses in a row \(/);
   assert.equal(pauseRuleText({ ...rules, pauseLosses: 0, pauseFall: 0 }, tr), "automatic pause off");
   assert.match(pauseRuleText(rules, tr), /after 4 losses in a row or a 5% fall/);   // defaults
+});
+
+test("brain knob hint: auto, owner's number, off", () => {
+  const tr = (key: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("en", key, p);
+  assert.match(brainKnobHint(null, 34, tr), /^Auto: the brain's own threshold \(34%\)/);
+  assert.match(brainKnobHint(0.25, 34, tr), /^Your threshold: 25% \(the brain's own is 34%\)/);
+  assert.match(brainKnobHint(0, 34, tr), /^0%: the brain filter is off/);
 });

@@ -543,3 +543,6 @@ button:hover { background: var(--border); }
   button { padding: 7px 10px; }          /* easier to hit with a finger */
   .bot-strategies label { padding-block: 4px; }
 }
+.bot-capital input[type="range"] { flex: 1; min-width: 120px; }
+.bot-knob-value { min-width: 3em; text-align: center; font-variant-numeric: tabular-nums; }
+.bot-reset.active { outline: 2px solid currentColor; }

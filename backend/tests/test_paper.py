@@ -99,11 +99,17 @@ class PickTest(unittest.TestCase):
 
 
 class SlotsTest(unittest.TestCase):
-    def test_fast_and_slow_places_are_separate(self):
+    def test_no_limit_on_open_positions(self):
+        # Owner 2026-11-02: no limit per group or per direction (only one per coin and the free money).
         positions = [{"timeframe": "1m", "side": LONG}, {"timeframe": "5m", "side": LONG}, {"timeframe": "3m", "side": SHORT}]
-        self.assertEqual(pp.free_slots(positions, "1m"), 0)       # fast places full
-        self.assertEqual(pp.free_slots(positions, "1h"), 3)       # slow places still free
-        self.assertEqual(pp.side_room(positions), {"long": 2, "short": 3})
+        self.assertGreater(pp.free_slots(positions, "1m"), 100)
+        self.assertGreater(pp.free_slots(positions, "1h"), 100)
+        self.assertGreater(pp.side_room(positions)["long"], 100)
+        cs = [cand(c, 3.0 - i * 0.1, 20) for i, c in enumerate("ABCDEFGHIJ")]
+        self.assertEqual(len(pp.pick(cs, set(), pp.free_slots([], "1h"), pp.side_room([]))), 10)
+        # The old limits still work as numbers, if they come back.
+        three = [{"timeframe": "1m", "side": LONG}] * 3
+        self.assertEqual(pp.free_slots(three, "1m", {"fast": 3, "slow": 3}), 0)
 
     def test_at_most_four_in_one_direction(self):
         cs = [cand(c, 3.0 - i * 0.1, 20) for i, c in enumerate("ABCDEF")]
@@ -329,6 +335,32 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.set_pause_rules(500, 99)                    # limited
         self.assertEqual((bot.account["pauseLosses"], bot.account["pauseFall"]), (pp.MAX_PAUSE_LOSSES, pp.MAX_PAUSE_FALL))
 
+    async def test_owner_brain_knob(self):
+        class FakeBrain:
+            threshold = 0.34
+            def active(self):
+                return True
+        from app.brain import Brain
+        brain = FakeBrain()
+        brain.champion = FakeBrain()
+        allows = Brain.allows.__get__(brain)
+        self.assertFalse(allows(0.30))                 # the brain's own threshold
+        self.assertTrue(allows(0.30, 0.25))            # the owner's knob, looser
+        self.assertFalse(allows(0.30, 0.40))           # stricter
+        self.assertTrue(allows(0.01, 0.0))             # 0 = brain off
+        self.assertTrue(allows(None, 0.5))             # no chance known: not blocked
+        bot = self.bot
+        bot.reset(100)
+        self.assertIsNone(bot.public()["rules"]["brainThreshold"])
+        bot.set_brain_threshold(0.25)
+        self.assertEqual(bot.public()["rules"]["brainThreshold"], 0.25)
+        bot.reset(50)                                   # a setting survives "start again"
+        self.assertEqual(bot.account["brainThreshold"], 0.25)
+        bot.set_brain_threshold(5)
+        self.assertEqual(bot.account["brainThreshold"], pp.MAX_BRAIN_THRESHOLD)
+        bot.set_brain_threshold(None)
+        self.assertIsNone(bot.account["brainThreshold"])
+
     async def test_break_even_trades_do_not_count_as_losses(self):
         bot = self.bot
         bot.reset(100)
@@ -436,8 +468,8 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             def chance(self, feats, strategy, tf, side):
                 return 0.1
 
-            def allows(self, chance):
-                return chance is None or chance >= 0.5
+            def allows(self, chance, threshold=None):
+                return chance is None or chance >= (0.5 if threshold is None else threshold)
 
         bot = self.bot
         bot.memory, bot.brain = memory, Picky()
@@ -451,6 +483,33 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.account["events"][-1]["reason"], "brain")
         chance, reason = memory.db.execute("SELECT chance, skip_reason FROM signals").fetchone()
         self.assertEqual((chance, reason), (0.1, "brain"))
+        # The owner's knob lets it through (0 = brain off).
+        bot.set_brain_threshold(0.0)
+        memory.db.execute("DELETE FROM signals")
+        self.clock[0] += 60
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=True)
+        # Past the brain now: it reaches the next rule (here the fee limit or a position).
+        self.assertNotEqual(memory.db.execute("SELECT skip_reason FROM signals").fetchone()[0], "brain")
+        self.assertNotEqual(bot.account["events"][-1]["reason"] if bot.account["events"][-1]["kind"] == "skip" else "",
+                            "brain")
+
+    async def test_signals_not_traded_while_paused_are_marked(self):
+        from unittest import mock
+        from app.memory import Memory
+
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+        bot = self.bot
+        bot.memory = memory
+        bot.reset(100)
+        bot.account["pausedUntil"] = self.clock[0] + 600
+        c = cand("A", 2.0, 20)
+        overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
+                    "rows": [{"strategy": "ema_cross", "stats": c["stats"], "signal": c["signal"]}]}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=False)
+        self.assertEqual(memory.db.execute("SELECT skip_reason FROM signals").fetchone()[0], "paused")
 
     async def test_pretraining_round_fills_the_memory_once_a_day(self):
         from app.memory import Memory
