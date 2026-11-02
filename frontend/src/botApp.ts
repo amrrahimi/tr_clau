@@ -3,7 +3,7 @@
 // The bot itself runs in the backend; this screen only shows it and sends
 // the button presses.
 
-import { BackendError, type Backend, type BotAccount, type LiveConnection, type PaperAction } from "./api.ts";
+import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME } from "./chart.ts";
 import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
@@ -37,7 +37,6 @@ export class BotApp {
   private proxyDraft: string | null = null;
   private confirmCloseAll = false;
   private failures = 0; // polls in a row without an answer from the engine
-  private account: BotAccount = "main"; // which virtual account the screen shows
   private connection: ConnectionState | null = null;
   private polls = 0;
   private error: string | null = null;
@@ -151,9 +150,7 @@ export class BotApp {
 
   private async refresh(): Promise<void> {
     try {
-      const account = this.account;
-      const state = await this.backend.getPaper(account);
-      if (account !== this.account) return; // the owner switched accounts meanwhile
+      const state = await this.backend.getPaper();
       this.state = state;
       this.error = null;
       this.failures = 0;
@@ -194,7 +191,7 @@ export class BotApp {
 
   private async act(action: PaperAction): Promise<void> {
     try {
-      this.state = await this.backend.paperAction(action, this.account);
+      this.state = await this.backend.paperAction(action);
       this.error = null;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -287,24 +284,6 @@ export class BotApp {
     };
 
     parts.push(el("div", "section-title", t("bot.title")));
-    // Two accounts: the main bot, and the owner's high-risk test account (its own virtual money).
-    const accounts = el("div", "segmented small bot-accounts");
-    for (const account of ["main", "fast"] as const) {
-      const b = el("button", this.account === account ? "active" : "", t(account === "main" ? "bot.account.main" : "bot.account.fast"));
-      b.addEventListener("click", () => {
-        if (this.account === account) return;
-        this.account = account;
-        this.state = null;
-        this.pinned = false;
-        this.capDraft = null;
-        this.pauseDraft = null;
-        this.capitalDraft = null;
-        this.render();
-        void this.refresh();
-      });
-      accounts.append(b);
-    }
-    parts.push(accounts);
     // Start / Stop.
     const running = s.status === "running";
     const power = el("button", `bot-power ${running ? "on" : ""}`, t(running ? "bot.stopButton" : "bot.startButton"));
@@ -333,7 +312,7 @@ export class BotApp {
         parts.push(card);
       }
     }
-    // What happened to the signals lately (most useful for the barrage account).
+    // What happened to the signals lately.
     if (s.flow) {
       parts.push(el("div", "bot-hint", t("bot.flow", { seen: String(s.flow.seen), opened: String(s.flow.opened) })));
       const times = Object.entries(s.scanSeconds ?? {});
@@ -477,9 +456,7 @@ export class BotApp {
         : t("bot.noStrategy")}`).join(" · ");
       parts.push(el("div", "bot-hint", t("bot.autoHint", { list })));
     }
-    if (s.profile === "fast") {
-      parts.push(el("div", "bot-hint warn", t("bot.fastHint", { cap: String(s.rules.profitCap ?? 0.05) })));
-    } else if (s.rules.strictTrades) {
+    if (s.rules.strictTrades) {
       parts.push(el("div", "bot-hint", t("bot.strictHint", { trades: String(s.rules.strictTrades),
         pf: String(s.rules.strictProfitFactor ?? 1.5) })));
     }

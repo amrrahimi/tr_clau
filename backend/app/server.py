@@ -24,7 +24,7 @@ from .history import HistoryCache
 from . import connection
 from .brain import Brain
 from .memory import Memory
-from .paper import FAST, MARKET, MAX_PAUSE_FALL, MAX_PAUSE_LOSSES, TIMEFRAMES, PaperBot, Store, default_path
+from .paper import MARKET, MAX_PAUSE_FALL, MAX_PAUSE_LOSSES, TIMEFRAMES, PaperBot, Store, default_path
 from .scanner import Scanner, run_scan
 from .strategies import RULES, STRATEGIES, Fees, parse_params, public_strategies
 from .exchange import MarketDataError, MarketService, create_exchange
@@ -86,13 +86,10 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     store_path = paper_path or default_path()
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
-    # The owner's high-risk test account: its own virtual money, its own 1-minute barrage scan.
-    fast = PaperBot(Store(store_path.with_name("paper-fast.json")), bot_coins, bot_history_of, bot_recent,
-                    profile=FAST)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        tasks = [asyncio.create_task(b.run_forever()) for b in (bot, fast)] if run_bot else []
+        tasks = [asyncio.create_task(bot.run_forever())] if run_bot else []
         yield
         for task in tasks:
             task.cancel()
@@ -108,7 +105,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     )
 
     def paper_routes(prefix: str, b: PaperBot) -> None:
-        """The account's buttons: /api/paper (the main bot) and /api/fast (the high-risk account)."""
+        """The bot's buttons under /api/paper (the barrage account /api/fast was removed 2026-11-02)."""
 
         @app.get(f"/api/{prefix}")
         async def paper_state():
@@ -185,7 +182,6 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             return b.public()
 
     paper_routes("paper", bot)
-    paper_routes("fast", fast)
 
     @app.get("/api/connection")
     async def connection_state():

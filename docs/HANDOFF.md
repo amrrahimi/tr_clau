@@ -7,10 +7,10 @@ download links. The repository is public: never commit keys, passwords or accoun
 ## Where things are
 - Branch `main` holds everything (desktop build runs only on `main`; Android on every branch).
 - Desktop: GitHub Actions "Build desktop apps" (Artifacts). Android: release `android-latest`
-  (`TradingBot.apk`, installs over the old one). Data: `~/.trading-bot/` (paper.json, paper-fast.json,
+  (`TradingBot.apk`, installs over the old one). Data: `~/.trading-bot/` (paper.json,
   memory.db, settings.json, backend.log); Android keeps the same files in the app's data folder.
 - Backend: `backend/app/` (paper.py bot, strategies.py 18 strategies, brain.py ML filter,
-  pretrain.py, memory.py, scalp.py barrage signals, connection.py proxy, research.py experiments).
+  pretrain.py, memory.py, connection.py proxy, research.py experiments).
   Tests: `cd backend && python -m unittest discover -s tests -t .`; live Toobit check in CI.
 
 ## State of the bot
@@ -20,8 +20,7 @@ download links. The repository is public: never commit keys, passwords or accoun
   early after 2 wins; break-even is not a loss); 1% risk; break-even off on 1m-30m, 50% on 1h/4h;
   fee limit per timeframe FEE_RATIO_BY_TF (round-trip fee / stop distance: 3m 10%, others 5%; was 33%);
   half-way advice (hold / close); close buttons; optional profit cap.
-- Barrage account (high risk, own money): 1m scalp signals + loose main signals, no position limit,
-  closes at +0.05 USDT.
+- Barrage account: removed 2026-11-02 (owner). An old paper-fast.json on disk is no longer used.
 - Only ticked timeframes are scanned; a new 1m candle may put a slower scan off once (fix of
   2026-11-02: before it, slow computers never scanned 5m-1h).
 - Panel shows: signals counter (seen / opened / skipped and why), scan times, entry/stop/target lines.
@@ -38,6 +37,10 @@ signals hit the stop (reversing them would also lose: fees and the reward ratio)
   1:1 change the shape, not the result.
 - Only pattern stable in both time halves: fee share of the stop distance. Under 5% about break-even,
   above 20% strongly negative. Market state, side, hour, strategy flip between halves (noise).
+
+## Profit cap test of 2026-11-02 (15 top coins, 18 strategies, fee limit 5%, no break-even)
+- 4h (5 months, 1056 trades): normal exit +0.11 R (both halves positive), exit at +0.3 R 0.00, +0.5 R +0.04.
+- 1h (6 weeks): normal -0.19 R, +0.3 R cap -0.06 R. 30m: too few trades. Owner postponed the decision.
 
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance

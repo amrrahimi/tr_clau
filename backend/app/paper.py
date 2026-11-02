@@ -48,8 +48,7 @@ from .brain import Brain
 from . import pretrain
 from .memory import Memory, features
 from .scanner import reliable
-from . import scalp
-from .strategies import LONG, STRATEGIES, Fees, _levels, breakeven_price, fee_ok, parse_params, reward_ok
+from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params, reward_ok
 
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
@@ -74,14 +73,12 @@ ADVICE_PART = 0.5           # at this share of the way to the target the bot adv
 
 @dataclass(frozen=True)
 class Profile:
-    """How an account trades. "main": the careful bot. "fast": the owner's high-risk test account
-    (every signal on the fast charts, many positions at once, closed at a tiny profit)."""
+    """How the bot trades (one account since the barrage account was removed on 2026-11-02)."""
     name: str = "main"
     timeframes: tuple[str, ...] = tuple(TIMEFRAMES)
     group_slots: tuple[tuple[str, int], ...] = (("fast", 3), ("slow", 3))
     max_same_side: int = MAX_SAME_SIDE
     all_signals: bool = False     # True: not only reliable signals
-    barrage: bool = False         # True: its own 1-minute scan with the scalp signals and loose rules
     smart_pause: bool = True
     advice: bool = True
     default_cap: float = 0.0
@@ -97,13 +94,7 @@ class Profile:
 
 
 MAIN = Profile()
-# Owner: no limit on open positions here (one per coin still; it stops when the free margin runs out).
-UNLIMITED = 1000
-FAST = Profile(name="fast", timeframes=("1m",), group_slots=(("fast", UNLIMITED), ("slow", 0)),
-               max_same_side=UNLIMITED, all_signals=True, barrage=True, smart_pause=False, advice=False,
-               default_cap=0.05, size_slots=25)   # margin per position at most 1/25 of the money
 FLOW_SECONDS = 600          # the screen's counter: what happened to the signals in the last 10 minutes
-NO_FEE_RULE = {"fee_ratio": 0, "breakeven": 0, "max_candles": 0}
 MAX_LEVERAGE = 10
 MAINTENANCE = 0.005           # part of the position the exchange keeps as a minimum (liquidation)
 LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liquidation price
@@ -297,7 +288,7 @@ BREAKEVEN_BY_TF = {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "30m": 0.0, "1h"
 # bot's memory on 2026-11-02 (169k history signals, checked on the first 60% and again on the last 40%
 # of each timeframe): signals whose fee took under 5% of the stop distance were about break-even on
 # 1m/5m/15m/1h, everything above lost more the higher the share; on 3m the 5-10% group held up too.
-# The old common limit was 0.33. The barrage account keeps the strategies' own limit.
+# The old common limit was 0.33.
 # 30m and 4h: no data yet, the limit of their neighbours (15m and 1h).
 FEE_RATIO_BY_TF = {"1m": 0.05, "3m": 0.10, "5m": 0.05, "15m": 0.05, "30m": 0.05, "1h": 0.05, "4h": 0.05}
 
@@ -497,7 +488,7 @@ class PaperBot:
             "scanning": self.scanning,
             "strategyStats": self.strategy_performance(),
             # The bot's list: which strategies it trades on which timeframe (empty: that timeframe is not traded).
-            "botStrategies": {} if self.profile.barrage else {tf: list(k) for tf, k in BOT_STRATEGIES_BY_TF.items()},
+            "botStrategies": {tf: list(k) for tf, k in BOT_STRATEGIES_BY_TF.items()},
             "lastScan": a["lastScan"],
             "timeframes": list(self.profile.timeframes),
             "chosenTimeframes": self.chosen_timeframes(),
@@ -707,7 +698,7 @@ class PaperBot:
             # (on a phone much longer), so 1m / 5m signals came late or not at all. The others still
             # learn every day from the pre-training.
             chosen = self.chosen_timeframes()
-            due = [tf for tf in due if tf in chosen or self.profile.barrage]
+            due = [tf for tf in due if tf in chosen]
             self.save()
         # One timeframe at a time, each under the lock on its own: the buttons (stop, start again,
         # close) wait for one chart scan at most, not for a whole round of five timeframes.
@@ -732,14 +723,11 @@ class PaperBot:
                     return
                 started = time.time()
                 self.postponed.discard(tf)
-                if self.profile.barrage:
-                    await self._barrage_scan(tf, now)
-                else:
-                    # Scanned even when there is no free place or the owner did not tick this timeframe:
-                    # the memory still learns from the signals. Trades only on the ticked timeframes.
-                    trade = (not self._paused(now) and tf in self.chosen_timeframes()
-                             and free_slots(self.account["positions"], tf, self.profile.slots) > 0)
-                    await self._scan_and_open(tf, now, trade=trade)
+                # Scanned even when there is no free place or the owner did not tick this timeframe:
+                # the memory still learns from the signals. Trades only on the ticked timeframes.
+                trade = (not self._paused(now) and tf in self.chosen_timeframes()
+                         and free_slots(self.account["positions"], tf, self.profile.slots) > 0)
+                await self._scan_and_open(tf, now, trade=trade)
                 self.scan_seconds[tf] = round(time.time() - started, 1)
                 self.save()
 
@@ -767,61 +755,8 @@ class PaperBot:
         return {"minutes": FLOW_SECONDS // 60, "seen": recent.count("seen"), "opened": recent.count("opened"),
                 "skipped": skipped}
 
-    async def _barrage_scan(self, tf: str, now: float) -> None:
-        """The barrage account's own scan: scalp patterns plus the main strategies with loose rules,
-        on every coin's newest closed candles; as many positions as there is room for."""
-        mode = MODE_OF[tf]
-        settings = all_settings(tf)   # the barrage account uses every strategy
-        found: list[dict] = []
-        gate = asyncio.Semaphore(8)
-        self.scanning = tf
-
-        def work(symbol: str, base: str, rows: list[dict]) -> None:
-            closed = closed_only(rows, tf, now)[-600:]
-            if len(closed) < 60:
-                return
-            signals = scalp.scalp_signals(closed) + scalp.loose_signals(closed, settings, mode)
-            step = closed[-1]["time"] - closed[-2]["time"]
-            for kind, sig in signals:
-                c = closed[sig.index]
-                levels = _levels(sig, c["close"])
-                if levels is None:
-                    continue
-                found.append({"symbol": symbol, "base": base, "strategy": kind, "marketState": None,
-                              "stats": {"profitFactor": None, "trades": 0},
-                              "signal": {"side": sig.side, "time": c["time"], "entry": c["close"],
-                                         "stopLoss": levels[0], "takeProfit": levels[1],
-                                         "confirmedAt": c["time"] + step}})
-
-        async def one(symbol: str, base: str) -> None:
-            async with gate:
-                try:
-                    rows = await self.history(symbol, tf)
-                    await asyncio.to_thread(work, symbol, base, rows)
-                except Exception:
-                    return
-
-        try:
-            await asyncio.gather(*(one(s, b) for s, b in await self.coins()))
-        finally:
-            self.scanning = None
-        self._count("seen", len(found))
-        positions = self.account["positions"]
-        open_coins = {p["symbol"] for p in positions}
-        # Newest signals first; one per coin.
-        found.sort(key=lambda e: e["signal"]["time"], reverse=True)
-        chosen = pick(found, open_coins, free_slots(positions, tf, self.profile.slots),
-                      side_room(positions, self.profile.max_same_side))
-        coins_left = len({e["symbol"] for e in found} - open_coins) - len(chosen)
-        if coins_left > 0:
-            self._count("full", coins_left)
-        for c in chosen:
-            await self._open(c, tf, now, NO_FEE_RULE)
-
     async def learn_only(self) -> None:
         """Bot switched off: keep scanning so the memory keeps learning, open nothing."""
-        if self.profile.barrage:
-            return   # the barrage account learns nothing and opens nothing while off
         async with self.lock:
             account = self.account
             due = self._due_timeframes(self.now())
@@ -840,7 +775,7 @@ class PaperBot:
     def _due_timeframes(self, now: float) -> list[str]:
         due = []
         for tf in [t for t in SCAN_ORDER if t in self.profile.timeframes]:
-            if not self.profile.barrage and not BOT_STRATEGIES_BY_TF.get(tf, True):
+            if not BOT_STRATEGIES_BY_TF.get(tf, True):
                 continue   # no strategy of the bot's list on this timeframe: nothing to scan
             period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
             if self.account["lastScan"].get(tf, {}).get("period") != period:
@@ -1098,8 +1033,7 @@ class PaperBot:
         long_ = s["side"] == LONG
         def skip(reason: str) -> None:
             self._count(reason)
-            if not self.profile.barrage:   # the barrage account would fill the diary with these
-                self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
+            self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
             if self.memory is not None and c.get("memoryKey"):
                 self.memory.mark(c["memoryKey"], skip_reason=reason)
 
@@ -1112,13 +1046,11 @@ class PaperBot:
         if not fee_ok(entry, stop, self.fees, params.get("fee_ratio", 0)):
             return skip("fee")
         # Checked again at the price now: the price may have moved toward the target since the signal.
-        if not self.profile.barrage and not reward_ok(entry, stop, target, self.fees):
+        if not reward_ok(entry, stop, target, self.fees):
             return skip("reward")
         used = sum(p["margin"] for p in self.account["positions"])
         equity = self.equity()
         size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.size_slots)
-        if size is None and self.profile.barrage:
-            return skip("margin")   # no free money left for another position
         if size is None or size.notional <= 0:
             return
         a = self.account

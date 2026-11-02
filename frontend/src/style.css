@@ -514,7 +514,6 @@ button:hover { background: var(--border); }
 .bot-close:hover { color: #fff; background: var(--down); border-color: var(--down); }
 .bot-table td.even-stop { color: #f5c542; }
 
-.bot-accounts { margin-bottom: 10px; }
 .bot-hint.warn { color: #f5c542; }
 .bot-advice { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 13px; line-height: 1.6; }
 .bot-advice.close { border-color: #f5c542; background: rgba(245, 197, 66, 0.08); }

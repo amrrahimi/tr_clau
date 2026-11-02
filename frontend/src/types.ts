@@ -298,7 +298,7 @@ export interface StrategyResults {
 }
 
 export interface PaperState {
-  profile?: "main" | "fast"; // main bot, or the high-risk test account
+  profile?: "main"; // the bot (the barrage account was removed 2026-11-02)
   scanSeconds?: Record<string, number>; // how long the last scan of each timeframe took
   chosenTimeframes?: string[]; // ticked by the owner: the bot trades only on these
   /** What happened to the signals in the last minutes (skipped: reason -> count). */

@@ -531,35 +531,6 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.reset(50)
         self.assertEqual(bot.account["profitCap"], 0.1)                  # a setting survives "start again"
 
-    async def test_barrage_account_opens_many_and_counts_what_happened(self):
-        from unittest import mock
-        from app.strategies import Signal
-        coins_list = [(f"C{i}/USDT:USDT", f"C{i}") for i in range(12)]
-        candles = [bar(1_000_000 - 60 * (80 - k), 100, 100.1, 99.9, 100) for k in range(80)]
-        self.clock[0] = candles[-1]["time"] + 60 + 30        # the last candle has closed
-
-        async def coins():
-            return coins_list
-
-        async def history(symbol, tf):
-            return candles
-
-        async def recent(symbol, tf):
-            return candles[-1:]
-        fast = pp.PaperBot(pp.Store(Path(self.dir.name) / "fast.json"), coins, history, recent,
-                           now=lambda: self.clock[0], fees=FEES, profile=pp.FAST)
-        self.assertEqual((fast.account["profitCap"], fast.profile.timeframes), (0.05, ("1m",)))
-        fast.start()
-        signal = [("scalp_bb", Signal(79, LONG, stop_distance=0.5, reward=1.0))]
-        with mock.patch.object(pp.scalp, "scalp_signals", return_value=signal), \
-                mock.patch.object(pp.scalp, "loose_signals", return_value=[]):
-            await fast.step()
-        self.assertEqual(len(fast.account["positions"]), 12)               # one per coin, no limit
-        self.assertEqual({p["strategy"] for p in fast.account["positions"]}, {"scalp_bb"})
-        flow = fast.public()["flow"]
-        self.assertEqual((flow["seen"], flow["opened"], flow["skipped"]), (12, 12, {}))
-        self.assertEqual(fast.public()["timeframes"], ["1m"])
-
     def test_slow_charts_use_the_normal_rule_now(self):
         # Owner 2026-11-01: the extra rule for 15m / 1h is off (too strict with the other filters).
         self.assertTrue(pp.strict_ok(cand("A", 1.3, 12), "1h"))
@@ -685,7 +656,7 @@ class BotSettingsTest(unittest.TestCase):
             self.assertEqual({p["fee_ratio"] for p in pp.bot_settings(tf).values()}, {pp.FEE_RATIO_BY_TF[tf]})
         self.assertEqual(pp.FEE_RATIO_BY_TF["3m"], 0.10)
         self.assertEqual(pp.FEE_RATIO_BY_TF["15m"], 0.05)
-        # The barrage account keeps the strategies' own limit.
+        # The strategies' own limit stays for the screens outside the bot.
         self.assertEqual({p["fee_ratio"] for p in pp.all_settings("1m").values()}, {0.33})
 
     def test_fee_limit_rejects_a_near_stop(self):

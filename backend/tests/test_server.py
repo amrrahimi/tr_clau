@@ -145,18 +145,15 @@ class ServerTest(unittest.TestCase):
             self.assertEqual((body["proxy"], body["source"]), ("http://127.0.0.1:10809", "app"))
             self.assertEqual(client.get("/api/connection").json()["typed"], "127.0.0.1:10809")
 
-    def test_fast_account_has_its_own_money_and_buttons(self):
+    def test_one_account_and_its_buttons(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
-        fast = client.get("/api/fast").json()
-        self.assertEqual((fast["profile"], fast["rules"]["maxOpen"], fast["rules"]["profitCap"]), ("fast", 1000, 0.05))
-        self.assertEqual((fast["timeframes"], fast["flow"]["seen"]), (["1m"], 0))
-        self.assertEqual(client.post("/api/fast/reset", json={"capital": 50}).json()["capital"], 50)
-        self.assertEqual(client.get("/api/paper").json()["capital"], 100)          # the main account is untouched
+        self.assertEqual(client.get("/api/fast").status_code, 404)                 # barrage account removed
+        self.assertEqual(client.post("/api/fast/reset", json={"capital": 50}).status_code, 404)
+        self.assertEqual(client.get("/api/paper").json()["capital"], 100)
         self.assertEqual(client.post("/api/paper/advice", json={"position_id": 1, "answer": "hold"}).status_code, 404)
         body = client.post("/api/paper/timeframes", json={"timeframes": ["1m", "1h"]}).json()
         self.assertEqual(body["chosenTimeframes"], ["1m", "1h"])
         self.assertEqual(client.post("/api/paper/timeframes", json={"timeframes": []}).status_code, 400)
-        self.assertEqual(client.post("/api/fast/timeframes", json={"timeframes": ["5m"]}).status_code, 400)
         self.assertEqual(client.post("/api/paper/advice", json={"position_id": 1, "answer": "maybe"}).status_code, 400)
 
     def test_catalog_endpoint(self):
