@@ -385,7 +385,8 @@ class PaperBot:
         self.store = store
         self.profile = profile
         self.flow: list[tuple[float, str]] = []
-        self.scan_seconds: dict[str, float] = {}   # how long the last scan of each timeframe took  # (time, "seen" | "opened" | skip reason) for the counter
+        self.scan_seconds: dict[str, float] = {}
+        self.postponed: set[str] = set()           # timeframes already put off once for a new 1m candle   # how long the last scan of each timeframe took  # (time, "seen" | "opened" | skip reason) for the counter
         self.memory = memory
         self.brain = brain                    # the learning signal filter (step B)
         self.training: Optional[asyncio.Task] = None
@@ -682,9 +683,13 @@ class PaperBot:
                     return   # started again or stopped meanwhile
                 now = self.now()
                 fastest = min(due, key=lambda x: config.TIMEFRAME_SECONDS[x])
-                if i and tf != fastest and self._new_period(fastest, now):
+                waited = [x for x in due[i:] if x in self.postponed]
+                if i and tf != fastest and not waited and self._new_period(fastest, now):
                     # A new candle of the fastest ticked timeframe closed meanwhile: it goes first.
-                    # The rest of this round waits for the next loop (not lost).
+                    # The rest of this round waits for the next loop (not lost), but only once: when
+                    # one scan takes longer than a 1m candle (slow computer or phone), waiting every
+                    # time would starve the slower timeframes (owner saw only 1m / 3m signals).
+                    self.postponed.update(due[i:])
                     for later in due[i:]:
                         if later in before:
                             self.account["lastScan"][later] = before[later]
@@ -692,6 +697,7 @@ class PaperBot:
                             self.account["lastScan"].pop(later, None)
                     return
                 started = time.time()
+                self.postponed.discard(tf)
                 if self.profile.barrage:
                     await self._barrage_scan(tf, now)
                 else:

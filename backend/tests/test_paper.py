@@ -577,6 +577,22 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         await bot.step()
         self.assertEqual(scanned, ["1m", "1m", "15m"])
 
+    async def test_slow_scans_do_not_starve_the_slower_timeframes(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+        bot.set_timeframes(["1m", "5m", "15m"])
+        scanned = []
+
+        async def fake_scan(tf, now, trade=True):
+            scanned.append(tf)
+            self.clock[0] += 70                 # every scan is slower than a 1m candle
+        bot._scan_and_open = fake_scan
+        for _ in range(3):
+            await bot.step()
+        self.assertIn("5m", scanned)
+        self.assertIn("15m", scanned)
+
     async def test_main_bot_counts_why_signals_were_not_traded(self):
         from unittest import mock
         bot = self.bot
