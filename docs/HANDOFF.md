@@ -14,9 +14,12 @@ download links. The repository is public: never commit keys, passwords or accoun
   Tests: `cd backend && python -m unittest discover -s tests -t .`; live Toobit check in CI.
 
 ## State of the bot
-- Main bot: all 18 strategies on the ticked timeframes; "reliable" rule + brain filter + smart pause
-  (4 losses / 5% fall -> 3 h, ends early after 2 wins; break-even is not a loss); 1% risk; break-even
-  off on 1m-15m, 50% on 1h; half-way advice (hold / close); close buttons; optional profit cap.
+- Main bot: all 18 strategies on the ticked timeframes 1m, 3m, 5m, 15m, 30m, 1h, 4h (30m and 4h added
+  2026-11-02; brain signature changed, it learns again from memory); "reliable" rule + brain filter +
+  smart pause (owner sets losses in a row / % fall in the panel, 0 = off; defaults 4 / 5%; 3 h; ends
+  early after 2 wins; break-even is not a loss); 1% risk; break-even off on 1m-30m, 50% on 1h/4h;
+  fee limit per timeframe FEE_RATIO_BY_TF (round-trip fee / stop distance: 3m 10%, others 5%; was 33%);
+  half-way advice (hold / close); close buttons; optional profit cap.
 - Barrage account (high risk, own money): 1m scalp signals + loose main signals, no position limit,
   closes at +0.05 USDT.
 - Only ticked timeframes are scanned; a new 1m candle may put a slower scan off once (fix of
@@ -28,8 +31,17 @@ History tests (100 Toobit coins, after fees): no strategy has a clear edge; the 
 break-even; shorter timeframes are worse (fees). The brain filter helps a little. Owner noticed most
 signals hit the stop (reversing them would also lose: fees and the reward ratio).
 
+## Findings of 2026-11-02 (bot memory, 169k history + 10k live signals)
+- Live signals lose about twice as much as history (-0.16..-0.28 R vs -0.08..-0.15 R): signal delay
+  (1m 22 s, 15m 105 s, 1h 6 min after the candle close) and a hard 3-day period.
+- With stop = target distance the signals win 50-51%: no direction edge yet. Wider stops (1.5x, 2x) or
+  1:1 change the shape, not the result.
+- Only pattern stable in both time halves: fee share of the stop distance. Under 5% about break-even,
+  above 20% strongly negative. Market state, side, hour, strategy flip between halves (noise).
+
 ## Next steps proposed to the owner
-1. Test limit (maker) entries on the history: entry fee 0.02% instead of 0.06%.
-2. Focus on 15m / 1h.
+1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
+   (short) / support (long) against it between signal and entry.
+2. Test limit (maker) entries on the history: entry fee 0.02% instead of 0.06% (saves only ~0.02-0.05 R).
 3. Crowd data (funding, open interest, long/short ratio) and later order flow as brain features.
 4. VPN at home (Happ): engine needs TUN mode or the proxy address in "Connection to the exchange".

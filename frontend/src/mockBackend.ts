@@ -122,6 +122,9 @@ export class MockBackend implements Backend {
       state.chosenTimeframes = state.timeframes.filter((tf) => action.timeframes.includes(tf));
     } else if (action.kind === "cap") {
       state.rules.profitCap = action.usd;
+    } else if (action.kind === "pause") {
+      state.rules.pauseLosses = action.losses;
+      state.rules.pauseFall = action.fall;
     } else if (action.kind === "close" || action.kind === "close-all") {
       const ids = action.kind === "close" ? [action.position_id] : state.positions.map((p) => p.id);
       for (const id of ids) {
@@ -166,7 +169,7 @@ export class MockBackend implements Backend {
       mode: "auto",
       strategies: MOCK_STRATEGIES.map((c) => c.type), positions: [], closed: [], events: [],
       stats: { trades: 0, wins: 0, winRate: null, netPnl: 0, netPercent: 0, todayPnl: 0, fees: 0, maxDrawdown: 0 },
-      scanning: null, lastScan: {}, timeframes: fast ? ["1m"] : ["1m", "3m", "5m", "15m", "1h"],
+      scanning: null, lastScan: {}, timeframes: fast ? ["1m"] : ["1m", "3m", "5m", "15m", "30m", "1h", "4h"],
       rules: { risk: 1, maxOpen: fast ? 1000 : 6, maxFast: fast ? 1000 : 3, maxSlow: fast ? 0 : 3, maxSameSide: fast ? 1000 : 4,
         maxLeverage: 10, pauseLosses: 4, pauseFall: 5, pauseHours: 3, totalStop: 30, profitCap: fast ? 0.05 : 0,
         smartPause: !fast, allSignals: fast, strictTrades: 20, strictProfitFactor: 1.5, fees: { maker: 0.02, taker: 0.06 } },

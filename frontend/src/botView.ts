@@ -162,3 +162,17 @@ export function timeframesOf(botStrategies: Record<string, string[]>): Record<st
   }
   return out;
 }
+
+/** The smart-pause part of the rules line; a rule set to 0 by the owner is off. */
+export function pauseRuleText(
+  rules: PaperState["rules"], t: (key: MessageKey, p?: Record<string, string>) => string,
+): string {
+  const losses = rules.pauseLosses ?? 4;
+  const fall = rules.pauseFall ?? 5;
+  const p = { losses: String(losses), fall: String(fall), hours: String(rules.pauseHours ?? 3),
+    wins: String(rules.recoverWins ?? 2) };
+  if (losses > 0 && fall > 0) return t("bot.pauseRule.both", p);
+  if (losses > 0) return t("bot.pauseRule.losses", p);
+  if (fall > 0) return t("bot.pauseRule.fall", p);
+  return t("bot.pauseRule.off");
+}

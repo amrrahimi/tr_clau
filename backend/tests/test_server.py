@@ -133,6 +133,10 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(client.post("/api/paper/close", json={"position_id": 99}).status_code, 404)
         self.assertEqual(client.post("/api/paper/cap", json={"usd": 0.1}).json()["rules"]["profitCap"], 0.1)
         self.assertEqual(client.post("/api/paper/cap", json={"usd": -1}).status_code, 400)
+        rules = client.post("/api/paper/pause", json={"losses": 0, "fall": 8}).json()["rules"]
+        self.assertEqual((rules["pauseLosses"], rules["pauseFall"]), (0, 8))
+        self.assertEqual(client.post("/api/paper/pause", json={"losses": -1, "fall": 5}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/pause", json={"losses": 4, "fall": 80}).status_code, 400)
         client.post("/api/paper/start")
         self.assertEqual(client.post("/api/paper/close-all").json()["status"], "stopped")
         with mock.patch.dict(os.environ, {"TRADING_BOT_DATA": self._tmp.name, "https_proxy": "", "http_proxy": "",

@@ -33,7 +33,7 @@ from typing import Optional
 from .presets import STATES
 from .strategies import STRATEGIES
 
-TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]
+TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
 MIN_SAMPLES = 300        # finished signals needed before the first model
 MIN_TEST = 60            # unseen signals needed to judge a model
 MIN_KEPT = 10            # a model must let at least this many test signals through

@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type BotAccount, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME } from "./chart.ts";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -33,6 +33,7 @@ export class BotApp {
   private confirmReset = false;
   private capitalDraft: string | null = null; // what the owner typed, kept across redraws
   private capDraft: string | null = null;
+  private pauseDraft: { losses: string; fall: string } | null = null;
   private proxyDraft: string | null = null;
   private confirmCloseAll = false;
   private failures = 0; // polls in a row without an answer from the engine
@@ -296,6 +297,7 @@ export class BotApp {
         this.state = null;
         this.pinned = false;
         this.capDraft = null;
+        this.pauseDraft = null;
         this.capitalDraft = null;
         this.render();
         void this.refresh();
@@ -504,12 +506,51 @@ export class BotApp {
     capBox.append(el("label", "", t("bot.cap")), capInput, capSave);
     parts.push(capBox, el("div", "bot-hint", t("bot.capHint")));
 
+    // Smart pause rules (owner's option, 0 = off).
+    if (s.rules.smartPause !== false) {
+      const draft = this.pauseDraft ?? {
+        losses: String(s.rules.pauseLosses ?? 4), fall: String(s.rules.pauseFall ?? 5),
+      };
+      const pauseBox = el("div", "bot-capital");
+      const number = (value: string, step: string, max: string, key: "losses" | "fall") => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "0";
+        input.max = max;
+        input.step = step;
+        input.dir = "ltr";
+        input.value = value;
+        input.addEventListener("input", () => {
+          this.pauseDraft = { ...(this.pauseDraft ?? draft), [key]: input.value };
+          input.classList.remove("invalid");
+        });
+        return input;
+      };
+      const lossesInput = number(draft.losses, "1", "50", "losses");
+      const fallInput = number(draft.fall, "0.5", "50", "fall");
+      const pauseSave = el("button", "bot-reset", t("bot.save"));
+      pauseSave.addEventListener("click", () => {
+        const losses = Number(lossesInput.value);
+        const fall = Number(fallInput.value);
+        const badLosses = !Number.isInteger(losses) || losses < 0 || losses > 50;
+        const badFall = !Number.isFinite(fall) || fall < 0 || fall > 50;
+        lossesInput.classList.toggle("invalid", badLosses);
+        fallInput.classList.toggle("invalid", badFall);
+        if (badLosses || badFall) return;
+        this.pauseDraft = null;
+        void this.act({ kind: "pause", losses, fall });
+      });
+      pauseBox.append(el("label", "", t("bot.pauseLosses")), lossesInput,
+        el("label", "", t("bot.pauseFall")), fallInput, pauseSave);
+      parts.push(pauseBox, el("div", "bot-hint", t("bot.pauseHint")));
+    }
+
     // Rules in one line.
     parts.push(el("div", "bot-hint rules", t("bot.rules", {
       risk: String(s.rules.risk), open: String(s.rules.maxOpen), fast: String(s.rules.maxFast ?? 3),
       slow: String(s.rules.maxSlow ?? 3), side: String(s.rules.maxSameSide ?? 4), lev: String(s.rules.maxLeverage),
-      losses: String(s.rules.pauseLosses ?? 4), fall: String(s.rules.pauseFall ?? 5),
-      hours: String(s.rules.pauseHours ?? 3), total: String(s.rules.totalStop), wins: String(s.rules.recoverWins ?? 2),
+      pause: pauseRuleText(s.rules, t),
+      total: String(s.rules.totalStop),
     })));
 
     // The bot's memory: experience kept forever (not cleared by "start again").

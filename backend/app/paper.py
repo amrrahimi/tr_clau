@@ -51,13 +51,15 @@ from .scanner import reliable
 from . import scalp
 from .strategies import LONG, STRATEGIES, Fees, _levels, breakeven_price, fee_ok, parse_params, reward_ok
 
-TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]
+TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
+OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
 STALE_PART = 0.25             # of the stop distance: further than this from the signal price = too late
-MODE_OF = {"1m": "scalping", "3m": "scalping", "5m": "scalping", "15m": "daily", "1h": "daily"}
+MODE_OF = {"1m": "scalping", "3m": "scalping", "5m": "scalping", "15m": "daily", "30m": "daily", "1h": "daily",
+           "4h": "daily"}
 MARKET = "futures"            # long and short (spot cannot short)
 RISK = 0.01                   # of the account, per trade
-GROUP = {"1m": "fast", "3m": "fast", "5m": "fast", "15m": "slow", "1h": "slow"}
+GROUP = {"1m": "fast", "3m": "fast", "5m": "fast", "15m": "slow", "30m": "slow", "1h": "slow", "4h": "slow"}
 GROUP_SLOTS = {"fast": 3, "slow": 3}
 MAX_OPEN = sum(GROUP_SLOTS.values())
 MAX_SAME_SIDE = 4
@@ -75,7 +77,7 @@ class Profile:
     """How an account trades. "main": the careful bot. "fast": the owner's high-risk test account
     (every signal on the fast charts, many positions at once, closed at a tiny profit)."""
     name: str = "main"
-    timeframes: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h")
+    timeframes: tuple[str, ...] = tuple(TIMEFRAMES)
     group_slots: tuple[tuple[str, int], ...] = (("fast", 3), ("slow", 3))
     max_same_side: int = MAX_SAME_SIDE
     all_signals: bool = False     # True: not only reliable signals
@@ -105,8 +107,10 @@ NO_FEE_RULE = {"fee_ratio": 0, "breakeven": 0, "max_candles": 0}
 MAX_LEVERAGE = 10
 MAINTENANCE = 0.005           # part of the position the exchange keeps as a minimum (liquidation)
 LIQ_BUFFER = 0.005            # extra distance between the stop-loss and the liquidation price
-PAUSE_LOSSES = 4             # losing trades in a row
-PAUSE_FALL = 0.05            # fall since the last pause (or the start)
+PAUSE_LOSSES = 4             # default: losing trades in a row (the owner can change it, 0 = off)
+PAUSE_FALL = 0.05            # default: fall since the last pause or the start (owner can change it, 0 = off)
+MAX_PAUSE_LOSSES = 50
+MAX_PAUSE_FALL = 50.0        # percent
 PAUSE_SECONDS = 3 * 3600
 RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
 BENCH_SECONDS = PAUSE_SECONDS  # strategies that lost lately are left out as long as the pause
@@ -286,7 +290,16 @@ def strict_ok(entry: dict, timeframe: str) -> bool:
 # Break-even per timeframe, chosen from the history test of 2026-10-31 (all strategies, 100 coins,
 # after fees, avg R): off was best on 3m / 5m / 15m (and the fast charts are noisy), at 50% was best
 # on 1h. The differences were small; the owner saw fast trades closed at break-even just before the target.
-BREAKEVEN_BY_TF = {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5}
+# 30m and 4h (added 2026-11-02, owner: trade the slower charts) have no test yet: 30m like 15m, 4h like 1h.
+BREAKEVEN_BY_TF = {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "30m": 0.0, "1h": 0.5, "4h": 0.5}
+
+# Most of the stop distance the round-trip fee may take, per timeframe (main bot only). Chosen from the
+# bot's memory on 2026-11-02 (169k history signals, checked on the first 60% and again on the last 40%
+# of each timeframe): signals whose fee took under 5% of the stop distance were about break-even on
+# 1m/5m/15m/1h, everything above lost more the higher the share; on 3m the 5-10% group held up too.
+# The old common limit was 0.33. The barrage account keeps the strategies' own limit.
+# 30m and 4h: no data yet, the limit of their neighbours (15m and 1h).
+FEE_RATIO_BY_TF = {"1m": 0.05, "3m": 0.10, "5m": 0.05, "15m": 0.05, "30m": 0.05, "1h": 0.05, "4h": 0.05}
 
 
 # The strategies the main bot scans and trades, per timeframe. Owner (2026-11-01): the earlier short
@@ -309,7 +322,11 @@ def all_settings(tf: str) -> dict[str, dict]:
 def bot_settings(tf: str) -> dict[str, dict]:
     """Settings of the strategies the main bot uses on this timeframe."""
     chosen = BOT_STRATEGIES_BY_TF.get(tf, tuple(STRATEGIES))
-    return {k: v for k, v in all_settings(tf).items() if k in chosen}
+    settings = {k: v for k, v in all_settings(tf).items() if k in chosen}
+    if tf in FEE_RATIO_BY_TF:
+        for params in settings.values():
+            params["fee_ratio"] = FEE_RATIO_BY_TF[tf]
+    return settings
 
 
 # Changes when strategies are added or the bot's list changes: every chart is pre-trained again once.
@@ -342,6 +359,8 @@ def new_account(capital: float, now: float) -> dict:
         "dayStartEquity": capital,
         "lossStreak": 0,
         "profitCap": 0.0,        # owner's option: close a position once it is this many USDT in profit (0 = off)
+        "pauseLosses": PAUSE_LOSSES,       # owner's option: pause after this many losses in a row (0 = off)
+        "pauseFall": PAUSE_FALL * 100,     # owner's option: pause after this % fall (0 = off)
         "pausedUntil": None,
         "pausedAt": None,
         "pauseReason": None,
@@ -403,6 +422,15 @@ class PaperBot:
             self.account["profitCap"] = profile.default_cap
         for k, v in new_account(self.account.get("capital", 100.0), now()).items():
             self.account.setdefault(k, v)  # files from older versions
+        # Timeframes added to the bot since the owner's choice was saved start ticked (owner 2026-11-02:
+        # trade the slower charts); the ones the owner unticked stay unticked.
+        chosen = self.account.get("chosenTimeframes")
+        if chosen:
+            known = self.account.get("knownTimeframes") or OLD_TIMEFRAMES
+            new = [tf for tf in profile.timeframes if tf not in known and tf not in chosen]
+            if new:
+                self.account["chosenTimeframes"] = [tf for tf in profile.timeframes if tf in chosen or tf in new]
+        self.account["knownTimeframes"] = list(profile.timeframes)
         # Strategies taken off the bot's list since the file was saved are dropped from the choice.
         kept = [k for k in self.account.get("strategies") or [] if k in BOT_STRATEGIES]
         self.account["strategies"] = kept if kept and self.account.get("mode") == "manual" else list(BOT_STRATEGIES)
@@ -482,7 +510,7 @@ class PaperBot:
                       "allSignals": self.profile.all_signals,
                       **({"strictTrades": STRICT_TRADES, "strictProfitFactor": STRICT_PROFIT_FACTOR}
                          if STRICT_TIMEFRAMES else {}),
-                      "pauseLosses": PAUSE_LOSSES, "pauseFall": PAUSE_FALL * 100,
+                      "pauseLosses": a.get("pauseLosses", PAUSE_LOSSES), "pauseFall": a.get("pauseFall", PAUSE_FALL * 100),
                       "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
@@ -509,10 +537,10 @@ class PaperBot:
             self.save()
 
     def reset(self, capital: float) -> None:
-        cap = self.account.get("profitCap", 0.0)
+        kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall") if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
-        self.account["profitCap"] = cap   # settings, not results: kept
+        self.account.update(kept)   # settings, not results: kept
         if chosen:
             self.account["chosenTimeframes"] = chosen
         self.prices.clear()
@@ -530,6 +558,12 @@ class PaperBot:
 
     def set_profit_cap(self, usd: float) -> None:
         self.account["profitCap"] = max(0.0, float(usd))
+        self.save()
+
+    def set_pause_rules(self, losses: int, fall: float) -> None:
+        """Owner's option: pause after this many losses in a row / this % fall (0 turns a rule off)."""
+        self.account["pauseLosses"] = min(MAX_PAUSE_LOSSES, max(0, int(losses)))
+        self.account["pauseFall"] = min(MAX_PAUSE_FALL, max(0.0, float(fall)))
         self.save()
 
     async def close_position(self, position_id: int) -> bool:
@@ -854,9 +888,11 @@ class PaperBot:
         if a["pausedUntil"] is not None:
             return
         reason = None
-        if a["lossStreak"] >= PAUSE_LOSSES:
+        losses = int(a.get("pauseLosses", PAUSE_LOSSES) or 0)
+        fall = float(a.get("pauseFall", PAUSE_FALL * 100) or 0) / 100
+        if losses and a["lossStreak"] >= losses:
             reason = "streak"
-        elif equity <= a["pauseBase"] * (1 - PAUSE_FALL):
+        elif fall and equity <= a["pauseBase"] * (1 - fall):
             reason = "fall"
         if reason is None:
             return

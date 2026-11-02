@@ -196,13 +196,29 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             scanned.append((tf, trade))
         bot._scan_and_open = fake_scan
         await bot.step()
-        self.assertEqual([tf for tf, _ in scanned], ["1m", "3m", "5m", "15m", "1h"])   # fastest first
+        self.assertEqual([tf for tf, _ in scanned], pp.TIMEFRAMES)   # fastest first
+        self.assertEqual(pp.TIMEFRAMES, ["1m", "3m", "5m", "15m", "30m", "1h", "4h"])
         self.assertTrue(all(trade for _, trade in scanned))
         await bot.step()
-        self.assertEqual(len(scanned), 5)                             # same candles: no new scan
+        self.assertEqual(len(scanned), 7)                             # same candles: no new scan
         self.clock[0] += 60
         await bot.step()
-        self.assertIn(("1m", True), scanned[5:])
+        self.assertIn(("1m", True), scanned[7:])
+
+    async def test_new_timeframes_start_ticked_in_old_files(self):
+        old = pp.new_account(100, self.clock[0])
+        old["chosenTimeframes"] = ["1m", "15m", "1h"]      # saved before 30m and 4h; 3m and 5m unticked
+        old.pop("knownTimeframes", None)
+        path = Path(self.dir.name) / "old.json"
+        pp.Store(path).save(old)
+        bot = pp.PaperBot(pp.Store(path), self.bot.coins, self.bot.history, self.bot.recent,
+                          now=lambda: self.clock[0], fees=FEES)
+        self.assertEqual(bot.chosen_timeframes(), ["1m", "15m", "30m", "1h", "4h"])
+        bot.set_timeframes(["1h"])                          # the owner's later choice stays
+        bot.save()
+        again = pp.PaperBot(pp.Store(path), self.bot.coins, self.bot.history, self.bot.recent,
+                            now=lambda: self.clock[0], fees=FEES)
+        self.assertEqual(again.chosen_timeframes(), ["1h"])
 
     async def test_ticked_timeframes_scanned_first(self):
         bot = self.bot
@@ -243,7 +259,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             bot.start()                # pressed while the learning round runs
         bot._scan_and_open = fake_scan
         await bot.learn_only()
-        self.assertEqual(scanned, [("1h", False)])
+        self.assertEqual(scanned, [("4h", False)])     # biggest first
         await bot.step()               # the next round trades straight away
         self.assertTrue(any(trade for _, trade in scanned[1:]))
 
@@ -284,6 +300,34 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.account["lossStreak"], 0)
         self.assertTrue(all(trade for _, trade in scanned))
         self.assertEqual([e["kind"] for e in bot.account["events"]][-2:], ["pause", "resume"])
+
+    async def test_owner_pause_rules(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.start()
+
+        async def fake_scan(tf, now, trade=True):
+            pass
+        bot._scan_and_open = fake_scan
+        self.assertEqual((bot.public()["rules"]["pauseLosses"], bot.public()["rules"]["pauseFall"]), (4, 5.0))
+        bot.set_pause_rules(0, 5)                       # losses rule off
+        bot.account["lossStreak"] = 9
+        await bot.step()
+        self.assertIsNone(bot.account["pausedUntil"])
+        bot.set_pause_rules(6, 0)                       # 6 losses, fall rule off
+        bot.account["balance"] = 80                     # a 20% fall: no pause with the rule off
+        bot.account["lossStreak"] = 5
+        await bot.step()
+        self.assertIsNone(bot.account["pausedUntil"])
+        bot.account["lossStreak"] = 6
+        await bot.step()
+        self.assertEqual(bot.account["pauseReason"], "streak")
+        rules = bot.public()["rules"]
+        self.assertEqual((rules["pauseLosses"], rules["pauseFall"]), (6, 0.0))
+        bot.reset(100)                                  # settings, not results: kept
+        self.assertEqual((bot.account["pauseLosses"], bot.account["pauseFall"]), (6, 0.0))
+        bot.set_pause_rules(500, 99)                    # limited
+        self.assertEqual((bot.account["pauseLosses"], bot.account["pauseFall"]), (pp.MAX_PAUSE_LOSSES, pp.MAX_PAUSE_FALL))
 
     async def test_break_even_trades_do_not_count_as_losses(self):
         bot = self.bot
@@ -378,7 +422,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             scanned.append((tf, trade))
         bot._scan_and_open = fake_scan
         await bot.learn_only()
-        self.assertEqual(len(scanned), 5)
+        self.assertEqual(len(scanned), 7)
         self.assertFalse(any(trade for _, trade in scanned))
 
     async def test_brain_skips_weak_signals_and_remembers_why(self):
@@ -431,7 +475,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         added = await bot.pretrain_round()
         self.assertGreater(added, 0)
         self.assertEqual(memory.summary()["history"], added)
-        self.assertEqual(bot.pretrain_progress, {"done": 5, "total": 5, "running": False})
+        self.assertEqual(bot.pretrain_progress, {"done": 7, "total": 7, "running": False})
         self.assertEqual(bot.account["events"][-1]["kind"], "pretrain")
         self.assertIsNone(bot.brain.last)                 # the brain learns right away
         self.assertEqual(await bot.pretrain_round(), 0)   # charts done today are skipped
@@ -634,7 +678,22 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
 class BotSettingsTest(unittest.TestCase):
     def test_break_even_only_on_the_hour_chart(self):
         self.assertEqual({tf: pp.all_settings(tf)["donchian"]["breakeven"] for tf in pp.TIMEFRAMES},
-                         {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "1h": 0.5})
+                         {"1m": 0.0, "3m": 0.0, "5m": 0.0, "15m": 0.0, "30m": 0.0, "1h": 0.5, "4h": 0.5})
+
+    def test_main_bot_fee_limit_per_timeframe(self):
+        for tf in pp.TIMEFRAMES:
+            self.assertEqual({p["fee_ratio"] for p in pp.bot_settings(tf).values()}, {pp.FEE_RATIO_BY_TF[tf]})
+        self.assertEqual(pp.FEE_RATIO_BY_TF["3m"], 0.10)
+        self.assertEqual(pp.FEE_RATIO_BY_TF["15m"], 0.05)
+        # The barrage account keeps the strategies' own limit.
+        self.assertEqual({p["fee_ratio"] for p in pp.all_settings("1m").values()}, {0.33})
+
+    def test_fee_limit_rejects_a_near_stop(self):
+        fees = pp.Fees(maker=0.02, taker=0.06)
+        # Round trip 0.12%: a 2% stop gives a 6% share (over 5%), a 3% stop gives 4%.
+        self.assertFalse(pp.fee_ok(100, 98, fees, pp.FEE_RATIO_BY_TF["15m"]))
+        self.assertTrue(pp.fee_ok(100, 97, fees, pp.FEE_RATIO_BY_TF["15m"]))
+        self.assertTrue(pp.fee_ok(100, 98, fees, pp.FEE_RATIO_BY_TF["3m"]))
 
 
 class BotListTest(unittest.IsolatedAsyncioTestCase):

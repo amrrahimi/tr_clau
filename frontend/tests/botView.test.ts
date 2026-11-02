@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -71,7 +71,7 @@ test("skipped signals say why", () => {
 test("pause in the diary", () => {
   const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
   assert.equal(eventText({ time: 0, kind: "pause", reason: "streak", strategies: ["donchian"] }, t),
-    "مکث ۳ ساعته: ۴ باخت پشت سر هم. کنار گذاشته شد برای ۳ ساعت: شکست کانال");
+    "مکث ۳ ساعته: باخت‌های پشت سر هم. کنار گذاشته شد برای ۳ ساعت: شکست کانال");
 });
 
 test("the brain in the panel and the diary", () => {
@@ -129,4 +129,14 @@ test("strategy stat lines exist in both languages", () => {
 test("bot list: the timeframes each strategy is traded on, fastest first", () => {
   assert.deepEqual(timeframesOf({ "1h": ["macd_ema"], "1m": [], "3m": ["macd_ema", "sd_zone"] }),
     { macd_ema: ["3m", "1h"], sd_zone: ["3m"] });
+});
+
+test("pause rule text follows the owner's numbers (0 = off)", () => {
+  const tr = (key: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("en", key, p);
+  const rules = state().rules;
+  assert.match(pauseRuleText({ ...rules, pauseLosses: 6, pauseFall: 8 }, tr), /after 6 losses in a row or a 8% fall/);
+  assert.match(pauseRuleText({ ...rules, pauseLosses: 0, pauseFall: 5 }, tr), /^3-hour pause after a 5% fall/);
+  assert.match(pauseRuleText({ ...rules, pauseLosses: 4, pauseFall: 0 }, tr), /after 4 losses in a row \(/);
+  assert.equal(pauseRuleText({ ...rules, pauseLosses: 0, pauseFall: 0 }, tr), "automatic pause off");
+  assert.match(pauseRuleText(rules, tr), /after 4 losses in a row or a 5% fall/);   // defaults
 });
