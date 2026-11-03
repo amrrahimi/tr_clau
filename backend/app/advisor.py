@@ -9,6 +9,7 @@ answers "too many requests" (429) the next one is tried.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -20,7 +21,7 @@ from . import connection
 # users"). The bot tries these in order and remembers the first one the owner's key may use.
 MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
 MODEL = MODELS[0]
-TIMEOUT_SECONDS = 25.0
+TIMEOUT_SECONDS = 40.0   # a "thinking" model through the VPN can take a while (owner saw timeouts at 25 s)
 MAX_KEYS = 4
 DEFAULT_TIMEFRAMES = ["15m", "30m", "1h", "4h"]   # 1m / 3m: the answer comes too late; 5m: allowed if ticked
 CONTEXT_TIMEFRAMES = ["15m", "1h", "4h", "1d"]
@@ -66,6 +67,17 @@ def save_model(model: str) -> None:
 
 
 OVERLOADED = (500, 502, 503, 504)   # "high demand, try again later" (owner saw 503 on 2026-11-03)
+
+
+def with_model(body: dict, model: str) -> dict:
+    """Ask for little "thinking": a yes/no on one trade does not need long reasoning, and thinking
+    made the answer slow (timeouts). Gemini 3 uses thinkingLevel, 2.5 a thinking budget."""
+    config = dict(body.get("generationConfig") or {})
+    if model.startswith("gemini-3"):
+        config["thinkingConfig"] = {"thinkingLevel": "low"}
+    elif model.startswith("gemini-2.5"):
+        config["thinkingConfig"] = {"thinkingBudget": 0}
+    return {**body, "generationConfig": config}
 
 
 def model_order(first: str) -> list[str]:
@@ -256,9 +268,18 @@ async def _call(body: dict, keys: list[str], model: Optional[str], post: Post,
         for key in keys:
             try:
                 status, text = await post(URL.format(model=name), {"x-goog-api-key": key,
-                                                                   "Content-Type": "application/json"}, body)
-            except Exception as error:   # network, proxy, timeout: another key or model will not do better
+                                                                   "Content-Type": "application/json"},
+                                          with_model(body, name))
+            except (asyncio.TimeoutError, TimeoutError) as error:   # too slow: a lighter model may be quicker
+                last = f"TimeoutError ({name}) after {TIMEOUT_SECONDS:.0f} s"
+                gone = len(keys)
+                break
+            except Exception as error:   # network, proxy: another key or model will not do better
                 raise AdvisorUnavailable(f"{type(error).__name__}: {error}"[:200]) from error
+            if status == 400 and "thinking" in (text or "").lower():
+                # This model does not take the thinking setting: ask once more without it.
+                status, text = await post(URL.format(model=name), {"x-goog-api-key": key,
+                                                                   "Content-Type": "application/json"}, body)
             if status == 200:
                 try:
                     answer = json.loads(text)["candidates"][0]["content"]["parts"][0]["text"]

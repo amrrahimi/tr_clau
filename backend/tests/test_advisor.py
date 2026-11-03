@@ -155,3 +155,39 @@ class OverloadTest(unittest.IsolatedAsyncioTestCase):
         await advisor._call({}, ["k1", "k2"], advisor.MODELS[0], post, used.append)
         self.assertEqual(tried, [(advisor.MODELS[0], "k1"), (advisor.MODELS[1], "k1")])   # no second key on 503
         self.assertEqual(used, [advisor.MODELS[1]])
+
+
+class SpeedTest(unittest.IsolatedAsyncioTestCase):
+    def test_little_thinking(self):
+        body = {"contents": [], "generationConfig": {"temperature": 0.2}}
+        self.assertEqual(advisor.with_model(body, "gemini-3.8-flash")["generationConfig"]["thinkingConfig"],
+                         {"thinkingLevel": "low"})
+        self.assertEqual(advisor.with_model(body, "gemini-2.5-flash")["generationConfig"]["thinkingConfig"],
+                         {"thinkingBudget": 0})
+        self.assertNotIn("thinkingConfig", body["generationConfig"])          # the original is not changed
+
+    async def test_a_slow_model_moves_on(self):
+        tried = []
+
+        async def post(url, headers, body):
+            name = url.split("/models/")[1].split(":")[0]
+            tried.append(name)
+            if name == advisor.MODELS[0]:
+                raise asyncio.TimeoutError()
+            return 200, gemini_reply({"approve": True, "confidence": 70, "reason": "ok"})
+        used = []
+        await advisor._call({}, ["k1"], advisor.MODELS[0], post, used.append)
+        self.assertEqual(used, [advisor.MODELS[1]])
+
+
+class ThinkingRefusedTest(unittest.IsolatedAsyncioTestCase):
+    async def test_asked_again_without_the_thinking_setting(self):
+        bodies = []
+
+        async def post(url, headers, body):
+            bodies.append(body)
+            if "thinkingConfig" in body["generationConfig"]:
+                return 400, json.dumps({"error": {"message": "Unknown name thinkingConfig"}})
+            return 200, gemini_reply({"approve": True, "confidence": 70, "reason": "ok"})
+        await advisor._call({"generationConfig": {}}, ["k1"], advisor.MODELS[0], post, None)
+        self.assertEqual(len(bodies), 2)

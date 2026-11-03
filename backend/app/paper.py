@@ -1107,7 +1107,7 @@ class PaperBot:
                 self.memory.set_ai(key, "unavailable", None, str(error))
             ask_id = self.account.get("nextAskId", 1)
             self.account["nextAskId"] = ask_id + 1
-            expires = now + ASK_AUTO_SECONDS
+            expires = self.now() + ASK_AUTO_SECONDS   # from now: the scan and the AI call took time already
             self.account.setdefault("pendingAsks", []).append(
                 {"id": ask_id, "tf": tf, "c": c, "expires": expires, "error": str(error)})
             self._event("ask", symbol=c["base"], timeframe=tf, strategy=c["strategy"], reason=str(error))
