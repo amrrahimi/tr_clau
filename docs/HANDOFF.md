@@ -35,7 +35,7 @@ download links. The repository is public: never commit keys, passwords or accoun
   timeframes (default 15m-4h; 1m/3m too slow) goes to Gemini (gemini-2.5-flash, free tier) with the
   coin on 15m/1h/4h/1d, Bitcoin 1h/4h, nearest swings, last 30 candles and the strategy's record.
   Approve -> trade; reject -> skipped with its Persian reason in the diary; no answer -> the owner is
-  asked in the panel (open / skip, expires after a quarter candle, max 15 min). Keys: settings.json
+  asked in the panel (open / skip); with no answer in 30 s it opens by itself. Keys: settings.json
   on the owner's computer only (aiKeys), next key on 429. Every decision is stored in memory
   (ai_decision / ai_confidence / ai_reason) and the panel compares approved vs rejected results.
 - Barrage account: removed 2026-11-02 (owner). An old paper-fast.json on disk is no longer used.

@@ -299,7 +299,7 @@ export class BotApp {
     for (const q of s.pendingAsks ?? []) {
       const box = el("div", "bot-ask");
       const digits = pricePrecision(q.entry);
-      const left = Math.max(0, Math.round((q.expires - Date.now() / 1000) / 60));
+      const left = Math.max(0, Math.round(q.expires - Date.now() / 1000));   // seconds until it opens by itself
       box.append(el("div", "bot-ask-title", t("bot.ask.title")), el("div", "bot-hint", t("bot.ask.line", {
         coin: q.base, tf: q.timeframe, side: t(q.side === "long" ? "strategies.long" : "strategies.short"),
         strategy: t(`strat.${q.strategy}` as MessageKey), entry: formatPrice(q.entry, digits),

@@ -245,7 +245,7 @@ export interface PaperEvent {
   approve?: boolean; // ai: Gemini's answer
   confidence?: number | null; // ai
   text?: string; // ai: its one-line reason
-  answer?: "open" | "skip"; // askAnswer: the owner's answer
+  answer?: "open" | "skip" | "auto"; // askAnswer: the owner's answer, or "auto" after 30 s
   suggest?: "hold" | "close"; // advice
   detail?: string; // advice: the strategy or market state behind it
   version?: number; // brain: model number

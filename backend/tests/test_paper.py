@@ -381,6 +381,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.memory = memory
         bot.reset(100)
         bot.ai_keys = lambda: ["k"]
+        bot.ask_timers = False          # the test moves the clock itself
         rule = {"fee_ratio": 0.33, "breakeven": 0}
         self.assertFalse(bot._ai_on("1h"))
         bot.set_ai(True, ["15m", "1h", "nope"])
@@ -422,15 +423,24 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         wide = signal("C")      # the owner's "open" uses the bot's own 1h rules: a stop far enough for the fees
         wide["signal"].update(stopLoss=97, takeProfit=106)
         await bot._ai_review(wide, "1h", self.clock[0], rule)
-        await bot._ai_review(signal("D"), "1h", self.clock[0], rule)
+        wide_d = signal("D")
+        wide_d["signal"].update(stopLoss=97, takeProfit=106)
+        await bot._ai_review(wide_d, "1h", self.clock[0], rule)
         asks = bot.public()["pendingAsks"]
         self.assertEqual([q["base"] for q in asks], ["C", "D"])
         self.assertEqual(bot.public()["ai"]["lastError"], "HTTP 429")
         self.assertTrue(await bot.answer_ask(asks[0]["id"], "open"))
         self.assertEqual(sorted(p["base"] for p in bot.account["positions"]), ["A", "C"])
-        self.clock[0] += pp.ASK_MAX_SECONDS + 1
-        self.assertFalse(await bot.answer_ask(asks[1]["id"], "open"))     # too old
+        # No answer from the owner either: after 30 seconds the trade opens by itself.
+        self.clock[0] += pp.ASK_AUTO_SECONDS - 1
+        await bot._auto_open_asks(self.clock[0])
+        self.assertEqual(len(bot.public()["pendingAsks"]), 1)
+        self.clock[0] += 2
+        await bot._auto_open_asks(self.clock[0])
         self.assertEqual(bot.public()["pendingAsks"], [])
+        self.assertEqual(sorted(p["base"] for p in bot.account["positions"]), ["A", "C", "D"])
+        self.assertFalse(await bot.answer_ask(asks[1]["id"], "skip"))     # already decided
+        self.assertEqual(bot.account["events"][-1]["kind"], "open")
         self.assertEqual(set(memory.ai_summary()), set())                  # nothing finished yet
         bot.reset(50)                                                       # the settings stay
         self.assertEqual((bot.account["aiEnabled"], bot.account["aiTimeframes"]), (True, ["15m", "1h"]))

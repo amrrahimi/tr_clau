@@ -107,8 +107,9 @@ MAX_PAUSE_LOSSES = 50
 MAX_PAUSE_FALL = 50.0        # percent
 MAX_BRAIN_THRESHOLD = 0.6    # the owner's brain knob goes from 0 (off) to this
 BTC = "BTC/USDT:USDT"        # the market's direction, part of the AI's context
-ASK_PART = 0.25              # the owner may answer for a quarter of the signal's candle ...
-ASK_MAX_SECONDS = 900.0      # ... but at most 15 minutes: after that the signal is old
+# When the AI does not answer the owner is asked; owner 2026-11-03: with no answer from him either,
+# the trade opens by itself after ASK_AUTO_SECONDS (the usual price checks still decide at that moment).
+ASK_AUTO_SECONDS = 30.0
 PAUSE_SECONDS = 3 * 3600
 RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
 BENCH_SECONDS = PAUSE_SECONDS  # strategies that lost lately are left out as long as the pause
@@ -445,6 +446,7 @@ class PaperBot:
         self.ai_ask = advisor.ask            # replaced in tests
         self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
         self.ai_error: Optional[str] = None  # the last reason Gemini did not answer (for the screen)
+        self.ask_timers = True               # open an unanswered question after ASK_AUTO_SECONDS (off in tests)
 
     # ---- what the screen sees
 
@@ -725,7 +727,7 @@ class PaperBot:
             account = self.account
             now = self.now()
             self._new_day(now)
-            self._expire_asks(now)
+            await self._auto_open_asks(now)
             await self._watch_positions(now)
             equity = self.equity()
             self._track_drawdown(equity)
@@ -1105,11 +1107,13 @@ class PaperBot:
                 self.memory.set_ai(key, "unavailable", None, str(error))
             ask_id = self.account.get("nextAskId", 1)
             self.account["nextAskId"] = ask_id + 1
-            expires = now + min(config.TIMEFRAME_SECONDS[tf] * ASK_PART, ASK_MAX_SECONDS)
+            expires = now + ASK_AUTO_SECONDS
             self.account.setdefault("pendingAsks", []).append(
                 {"id": ask_id, "tf": tf, "c": c, "expires": expires, "error": str(error)})
             self._event("ask", symbol=c["base"], timeframe=tf, strategy=c["strategy"], reason=str(error))
             self._count("ask")
+            if self.ask_timers:
+                asyncio.get_running_loop().create_task(self._ask_timer())
             return
         self.ai_error = None
         if self.memory is not None and key:
@@ -1124,18 +1128,31 @@ class PaperBot:
             if self.memory is not None and key:
                 self.memory.mark(key, skip_reason="ai")
 
-    def _expire_asks(self, now: float) -> None:
+    async def _ask_timer(self) -> None:
+        """Wakes up when a question's 30 seconds are over (the bot's loop may be busy scanning).
+        The lock waits for a running chart scan, so it can be a little later than 30 seconds."""
+        await asyncio.sleep(ASK_AUTO_SECONDS + 0.5)
+        try:
+            async with self.lock:
+                await self._auto_open_asks(self.now())
+                self.save()
+        except Exception:
+            logging.getLogger("trading_bot").exception("opening an unanswered signal failed")
+
+    async def _auto_open_asks(self, now: float) -> None:
+        """No answer from the AI nor from the owner within ASK_AUTO_SECONDS: the trade opens."""
         asks = self.account.get("pendingAsks") or []
-        for q in [q for q in asks if q["expires"] <= now]:
-            if self.memory is not None and q["c"].get("memoryKey"):
-                self.memory.mark(q["c"]["memoryKey"], skip_reason="noAnswer")
+        due = [q for q in asks if q["expires"] <= now]
         self.account["pendingAsks"] = [q for q in asks if q["expires"] > now]
+        for q in due:
+            self._event("askAnswer", symbol=q["c"]["base"], timeframe=q["tf"], answer="auto")
+            await self._open(q["c"], q["tf"], now, bot_settings(q["tf"])[q["c"]["strategy"]])
 
     async def answer_ask(self, ask_id: int, answer: str) -> bool:
         """The owner's answer when the AI did not answer: open the trade or skip it."""
         async with self.lock:
             now = self.now()
-            self._expire_asks(now)
+            await self._auto_open_asks(now)
             q = next((q for q in self.account.get("pendingAsks", []) if q["id"] == ask_id), None)
             if q is None:
                 return False
