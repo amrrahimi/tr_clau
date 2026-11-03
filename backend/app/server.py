@@ -220,6 +220,14 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             advisor.save_keys(keys)
             return b.public()
 
+        @app.post(f"/api/{prefix}/ai/test")
+        async def paper_ai_test():
+            """Test connection: one tiny request to Gemini with each saved key."""
+            results = await advisor.test_keys(advisor.load_keys())
+            failed = [r["error"] for r in results if not r["ok"]]
+            b.ai_error = failed[0] if failed else None
+            return {"results": results}
+
         @app.post(f"/api/{prefix}/ask")
         async def paper_ask(id: int = Body(...), answer: str = Body(...)):
             """The owner's answer when the AI did not answer: open or skip."""

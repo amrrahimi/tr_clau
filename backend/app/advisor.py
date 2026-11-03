@@ -223,3 +223,31 @@ async def ask(data: dict, keys: list[str], model: str = MODEL, post: Optional[Po
             raise AdvisorUnavailable("unexpected reply") from error
         return parse(answer)
     raise AdvisorUnavailable(last)
+
+
+async def test_keys(keys: list[str], model: str = MODEL, post: Optional[Post] = None) -> list[dict]:
+    """The panel's "test connection": one tiny request per key -> [{key, ok, seconds, error}]."""
+    import time
+    post = post or default_post
+    body = {"contents": [{"parts": [{"text": 'Reply with the single word "OK".'}]}],
+            "generationConfig": {"temperature": 0}}
+    results = []
+    for key in keys:
+        started = time.monotonic()
+        entry = {"key": masked([key])[0], "ok": False, "seconds": None, "error": None}
+        try:
+            status, text = await post(URL.format(model=model), {"x-goog-api-key": key,
+                                                                "Content-Type": "application/json"}, body)
+            entry["seconds"] = round(time.monotonic() - started, 1)
+            if status == 200:
+                entry["ok"] = True
+            else:
+                try:
+                    message = json.loads(text).get("error", {}).get("message", "")
+                except (ValueError, AttributeError):
+                    message = text
+                entry["error"] = f"HTTP {status}: {message}"[:200]
+        except Exception as error:
+            entry["error"] = f"{type(error).__name__}: {error}"[:200]
+        results.append(entry)
+    return results

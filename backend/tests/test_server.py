@@ -164,6 +164,16 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(client.post("/api/paper/ai", json={"enabled": True, "timeframes": ["2m"]}).status_code, 400)
             self.assertEqual(client.post("/api/paper/ask", json={"id": 1, "answer": "open"}).status_code, 404)
             self.assertEqual(client.post("/api/paper/ask", json={"id": 1, "answer": "maybe"}).status_code, 400)
+            from unittest import mock as m2
+            from app import advisor as adv
+
+            async def fake_test(keys, model=adv.MODEL, post=None):
+                return [{"key": adv.masked([k])[0], "ok": k.endswith("1234"), "seconds": 0.1,
+                         "error": None if k.endswith("1234") else "HTTP 400: bad"} for k in keys]
+            with m2.patch.object(adv, "test_keys", fake_test):
+                body = client.post("/api/paper/ai/test").json()
+            self.assertEqual([r["ok"] for r in body["results"]], [True, False])
+            self.assertEqual(client.get("/api/paper").json()["ai"]["lastError"], "HTTP 400: bad")
 
     def test_one_account_and_its_buttons(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))

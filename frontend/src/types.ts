@@ -312,6 +312,13 @@ export interface AiState {
   results: Record<string, { count: number; avgR: number | null; winRate: number | null }>;
 }
 
+export interface AiTestResult {
+  key: string; // last 4 characters only
+  ok: boolean;
+  seconds: number | null;
+  error: string | null;
+}
+
 export interface PendingAsk {
   id: number; symbol: string; base: string; timeframe: string; strategy: string; side: Side;
   entry: number; stopLoss: number; takeProfit: number; expires: number; error?: string | null;

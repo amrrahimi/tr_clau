@@ -79,3 +79,19 @@ class AskTest(unittest.IsolatedAsyncioTestCase):
 
     def test_keys_are_masked_for_the_screen(self):
         self.assertEqual(advisor.masked(["abcdefgh1234"]), ["…1234"])
+
+
+class TestKeysTest(unittest.IsolatedAsyncioTestCase):
+    async def test_each_key_is_tried(self):
+        async def post(url, headers, body):
+            if headers["x-goog-api-key"] == "good-key-1111":
+                return 200, gemini_reply({"text": "OK"})
+            if headers["x-goog-api-key"] == "bad-key-2222":
+                return 400, json.dumps({"error": {"message": "API key not valid"}})
+            raise ConnectionError("proxy refused")
+        results = await advisor.test_keys(["good-key-1111", "bad-key-2222", "net-key-3333"], post=post)
+        self.assertEqual([r["ok"] for r in results], [True, False, False])
+        self.assertEqual([r["key"] for r in results], ["…1111", "…2222", "…3333"])
+        self.assertEqual(results[1]["error"], "HTTP 400: API key not valid")
+        self.assertIn("proxy refused", results[2]["error"])
+        self.assertEqual(await advisor.test_keys([]), [])

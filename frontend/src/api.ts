@@ -4,7 +4,7 @@
 import type {
   Analysis, Candle, CatalogSpec, ConnectionState, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
   StrategyOverview,
-} from "./types.ts";
+ AiTestResult } from "./types.ts";
 
 export interface AnalysisRequest {
   marketType: MarketType;
@@ -75,6 +75,8 @@ export interface Backend {
   /** Bot buttons: start, stop, reset (with capital), mode (auto/manual with strategies). */
   paperAction(action: PaperAction): Promise<PaperState>;
   setAiKeys(keys: string[]): Promise<PaperState>;
+  /** One tiny request to Gemini with each saved key. */
+  testAi(): Promise<{ results: AiTestResult[] }>;
   getConnection(): Promise<ConnectionState>;
   setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
@@ -183,6 +185,10 @@ export class HttpBackend implements Backend {
   }
 
   /** The owner's Gemini keys: sent once, kept on this computer, never shown again. */
+  async testAi(): Promise<{ results: AiTestResult[] }> {
+    return this.post<{ results: AiTestResult[] }>(`${PAPER_PATH}/ai/test`, {});
+  }
+
   async setAiKeys(keys: string[]): Promise<PaperState> {
     return this.post<PaperState>(`${PAPER_PATH}/ai/keys`, { keys });
   }

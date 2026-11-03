@@ -26,6 +26,7 @@ export class BotApp {
   private coinQuery = "";                         // the owner's search in the coin list
   private coinFound: MarketInfo[] = [];
   private coinManualOpen = false;
+  private aiTest: string | null = null;   // the last "test connection" result line
   private chart!: ChartView;
   private els!: Record<string, HTMLElement>;
   private target: { symbol: string; timeframe: string; id: number | null } | null = null;
@@ -479,6 +480,25 @@ export class BotApp {
       });
       keysBox.append(el("label", "", t("bot.ai.keys")), area, saveKeys);
       parts.push(keysBox, el("div", "bot-hint", ai.keys.length ? t("bot.ai.keysSaved", { list: ai.keys.join("، ") }) : t("bot.ai.noKeys")));
+      const testRow = el("div", "bot-ask-buttons");
+      const testButton = el("button", "bot-reset", t("bot.ai.test"));
+      testButton.addEventListener("click", async () => {
+        this.aiTest = t("bot.ai.testing");
+        this.renderPanel();
+        try {
+          const { results } = await this.backend.testAi();
+          this.aiTest = results.length
+            ? results.map((r) => r.ok ? t("bot.ai.testOk", { key: r.key, s: String(r.seconds ?? "") })
+              : t("bot.ai.testFail", { key: r.key, error: r.error ?? "" })).join(" · ")
+            : t("bot.ai.noKeys");
+        } catch (error) {
+          this.aiTest = t("bot.ai.testFail", { key: "", error: error instanceof Error ? error.message : String(error) });
+        }
+        this.renderPanel();
+      });
+      testRow.append(testButton);
+      parts.push(testRow);
+      if (this.aiTest) parts.push(el("div", "bot-hint", this.aiTest));
       parts.push(el("div", "bot-hint", t("bot.ai.hint", { model: ai.model })));
       if (ai.lastError) parts.push(el("div", "bot-hint warn", t("bot.ai.error", { error: ai.lastError })));
       const res = (k: string) => {

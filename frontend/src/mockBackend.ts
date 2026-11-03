@@ -8,8 +8,7 @@ import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, ConnectionState, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
-  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade,
-} from "./types.ts";
+  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade, AiTestResult } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -152,6 +151,11 @@ export class MockBackend implements Backend {
       if (!state.positions.length && !state.closed.length) await this.sampleTrades(state);
     }
     return this.paper!;
+  }
+
+  async testAi(): Promise<{ results: AiTestResult[] }> {
+    const state = await this.getPaper();
+    return { results: (state.ai?.keys ?? []).map((key) => ({ key, ok: true, seconds: 0.8, error: null })) };
   }
 
   async setAiKeys(keys: string[]): Promise<PaperState> {
