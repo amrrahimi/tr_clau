@@ -191,3 +191,27 @@ class ThinkingRefusedTest(unittest.IsolatedAsyncioTestCase):
             return 200, gemini_reply({"approve": True, "confidence": 70, "reason": "ok"})
         await advisor._call({"generationConfig": {}}, ["k1"], advisor.MODELS[0], post, None)
         self.assertEqual(len(bodies), 2)
+
+
+class DroppedTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_dropped_connection_is_tried_again(self):
+        from unittest import mock
+
+        class ServerDisconnectedError(Exception):
+            pass
+        calls = []
+
+        async def post(url, headers, body):
+            calls.append(1)
+            if len(calls) < 3:
+                raise ServerDisconnectedError("Server disconnected")
+            return 200, gemini_reply({"approve": True, "confidence": 70, "reason": "ok"})
+        with mock.patch.object(advisor, "RETRY_PAUSE", 0):
+            await advisor._call({}, ["k1"], advisor.MODELS[0], post, None)
+            self.assertEqual(len(calls), 3)
+
+            async def always(url, headers, body):
+                raise ServerDisconnectedError("Server disconnected")
+            with self.assertRaises(advisor.AdvisorUnavailable) as caught:
+                await advisor._call({}, ["k1"], advisor.MODELS[0], always, None)
+            self.assertIn("Server disconnected", str(caught.exception))

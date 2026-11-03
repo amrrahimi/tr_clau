@@ -267,9 +267,9 @@ async def _call(body: dict, keys: list[str], model: Optional[str], post: Post,
         gone = 0
         for key in keys:
             try:
-                status, text = await post(URL.format(model=name), {"x-goog-api-key": key,
-                                                                   "Content-Type": "application/json"},
-                                          with_model(body, name))
+                status, text = await _post_retry(post, URL.format(model=name),
+                                                 {"x-goog-api-key": key, "Content-Type": "application/json"},
+                                                 with_model(body, name))
             except (asyncio.TimeoutError, TimeoutError) as error:   # too slow: a lighter model may be quicker
                 last = f"TimeoutError ({name}) after {TIMEOUT_SECONDS:.0f} s"
                 gone = len(keys)
@@ -301,6 +301,27 @@ async def _call(body: dict, keys: list[str], model: Optional[str], post: Post,
         if gone < len(keys):   # the model exists but every key is busy / refused: other models will not help
             break
     raise AdvisorUnavailable(last)
+
+
+DROPPED = ("ServerDisconnectedError", "ClientOSError", "ClientConnectionError", "ClientPayloadError",
+           "ConnectionResetError", "ProxyConnectionError", "ProxyError")
+RETRIES = 2
+RETRY_PAUSE = 1.5
+
+
+async def _post_retry(post: Post, url: str, headers: dict, body: dict) -> tuple[int, str]:
+    """The VPN tunnel sometimes drops a connection in the middle (owner saw "Server disconnected"):
+    such a request is sent again, up to RETRIES more times. Timeouts are not retried here."""
+    for attempt in range(RETRIES + 1):
+        try:
+            return await post(url, headers, body)
+        except (asyncio.TimeoutError, TimeoutError):
+            raise
+        except Exception as error:
+            if type(error).__name__ not in DROPPED and not isinstance(error, ConnectionError) or attempt == RETRIES:
+                raise
+            await asyncio.sleep(RETRY_PAUSE * (attempt + 1))
+    raise AdvisorUnavailable("no answer")
 
 
 def _message(text: str) -> str:
