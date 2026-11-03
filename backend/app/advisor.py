@@ -16,7 +16,10 @@ from typing import Awaitable, Callable, Optional
 
 from . import connection
 
-MODEL = "gemini-2.5-flash"
+# Google retires model names (owner 2026-11-03: "gemini-2.5-flash is no longer available to new
+# users"). The bot tries these in order and remembers the first one the owner's key may use.
+MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
+MODEL = MODELS[0]
 TIMEOUT_SECONDS = 25.0
 MAX_KEYS = 4
 DEFAULT_TIMEFRAMES = ["15m", "30m", "1h", "4h"]   # 1m / 3m: the answer comes too late; 5m: allowed if ticked
@@ -44,6 +47,34 @@ def save_keys(keys: list[str]) -> None:
     settings["aiKeys"] = [k.strip() for k in keys if k and k.strip()][:MAX_KEYS]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings), encoding="utf-8")
+
+
+def load_model() -> str:
+    """The model that answered last time (saved), else the first of the list."""
+    saved = connection.load_settings().get("aiModel")
+    return saved if isinstance(saved, str) and saved else MODEL
+
+
+def save_model(model: str) -> None:
+    path = connection.settings_path()
+    settings = connection.load_settings(path)
+    if settings.get("aiModel") == model:
+        return
+    settings["aiModel"] = model
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+
+def model_order(first: str) -> list[str]:
+    return [first] + [m for m in MODELS if m != first]
+
+
+def _model_gone(status: int, text: str) -> bool:
+    """This model cannot be used with this key: retired / unknown (404) or no free quota at all."""
+    if status == 404:
+        return True
+    lowered = (text or "").lower()
+    return status == 429 and ("limit: 0" in lowered or "not available" in lowered)
 
 
 def masked(keys: list[str]) -> list[str]:
@@ -210,56 +241,73 @@ async def default_post(url: str, headers: dict, body: dict) -> tuple[int, str]:
             return response.status, await response.text()
 
 
-async def ask(data: dict, keys: list[str], model: str = MODEL, post: Optional[Post] = None) -> dict:
-    """Ask Gemini about one signal; the next key on 'too many requests' or a refused key."""
+async def _call(body: dict, keys: list[str], model: Optional[str], post: Post,
+                on_model: Optional[Callable[[str], None]]) -> str:
+    """The model's text answer. Tries the models in order (a retired model or one with no free
+    quota for this key -> the next) and the keys in order (429 / refused -> the next key)."""
     if not keys:
         raise AdvisorUnavailable("no API key")
-    post = post or default_post
-    body = {"contents": [{"parts": [{"text": prompt_for(data)}]}],
-            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}}
     last = "no answer"
-    for key in keys:
-        try:
-            status, text = await post(URL.format(model=model), {"x-goog-api-key": key,
-                                                                "Content-Type": "application/json"}, body)
-        except Exception as error:   # network, proxy, timeout: the next key will not do better
-            raise AdvisorUnavailable(f"{type(error).__name__}: {error}"[:200]) from error
-        if status in (401, 403, 429):
-            last = f"HTTP {status}"
-            continue
-        if status != 200:
-            raise AdvisorUnavailable(f"HTTP {status}: {text[:150]}")
-        try:
-            answer = json.loads(text)["candidates"][0]["content"]["parts"][0]["text"]
-        except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise AdvisorUnavailable("unexpected reply") from error
-        return parse(answer)
+    for name in model_order(model or load_model()):
+        gone = 0
+        for key in keys:
+            try:
+                status, text = await post(URL.format(model=name), {"x-goog-api-key": key,
+                                                                   "Content-Type": "application/json"}, body)
+            except Exception as error:   # network, proxy, timeout: another key or model will not do better
+                raise AdvisorUnavailable(f"{type(error).__name__}: {error}"[:200]) from error
+            if status == 200:
+                try:
+                    answer = json.loads(text)["candidates"][0]["content"]["parts"][0]["text"]
+                except (ValueError, KeyError, IndexError, TypeError) as error:
+                    raise AdvisorUnavailable("unexpected reply") from error
+                if on_model is not None:
+                    on_model(name)
+                return answer
+            last = f"HTTP {status} ({name}): {_message(text)}"[:200]
+            if _model_gone(status, text):
+                gone += 1
+                continue
+            if status in (401, 403, 429):
+                continue
+            raise AdvisorUnavailable(last)
+        if gone < len(keys):   # the model exists but every key is busy / refused: other models will not help
+            break
     raise AdvisorUnavailable(last)
 
 
-async def test_keys(keys: list[str], model: str = MODEL, post: Optional[Post] = None) -> list[dict]:
-    """The panel's "test connection": one tiny request per key -> [{key, ok, seconds, error}]."""
+def _message(text: str) -> str:
+    try:
+        return str(json.loads(text).get("error", {}).get("message", ""))[:150]
+    except (ValueError, AttributeError):
+        return (text or "")[:150]
+
+
+async def ask(data: dict, keys: list[str], model: Optional[str] = None, post: Optional[Post] = None) -> dict:
+    """Ask Gemini about one signal."""
+    body = {"contents": [{"parts": [{"text": prompt_for(data)}]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}}
+    return parse(await _call(body, keys, model, post or default_post, save_model if post is None else None))
+
+
+async def test_keys(keys: list[str], model: Optional[str] = None, post: Optional[Post] = None) -> list[dict]:
+    """The panel's "test connection": per key, a tiny request -> [{key, ok, seconds, model, error}].
+    The first model that answers is remembered for the trades."""
     import time
-    post = post or default_post
     body = {"contents": [{"parts": [{"text": 'Reply with the single word "OK".'}]}],
             "generationConfig": {"temperature": 0}}
     results = []
     for key in keys:
         started = time.monotonic()
-        entry = {"key": masked([key])[0], "ok": False, "seconds": None, "error": None}
+        entry = {"key": masked([key])[0], "ok": False, "seconds": None, "model": None, "error": None}
+        found: list[str] = []
         try:
-            status, text = await post(URL.format(model=model), {"x-goog-api-key": key,
-                                                                "Content-Type": "application/json"}, body)
-            entry["seconds"] = round(time.monotonic() - started, 1)
-            if status == 200:
-                entry["ok"] = True
-            else:
-                try:
-                    message = json.loads(text).get("error", {}).get("message", "")
-                except (ValueError, AttributeError):
-                    message = text
-                entry["error"] = f"HTTP {status}: {message}"[:200]
-        except Exception as error:
-            entry["error"] = f"{type(error).__name__}: {error}"[:200]
+            await _call(body, [key], model, post or default_post, found.append)
+            entry.update(ok=True, model=found[0] if found else None)
+            if post is None and found:
+                save_model(found[0])
+        except AdvisorUnavailable as error:
+            entry["error"] = str(error)
+        entry["seconds"] = round(time.monotonic() - started, 1)
         results.append(entry)
     return results

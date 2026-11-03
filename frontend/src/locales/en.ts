@@ -309,7 +309,7 @@ export const en = {
   "bot.ai.hint": "Before each trade on these timeframes the signal and the market go to {model}; the trade opens only if it approves. If it does not answer, you are asked.",
   "bot.ai.test": "Test connection",
   "bot.ai.testing": "Testing the connection to Gemini…",
-  "bot.ai.testOk": "✔ key {key}: connected ({s} s)",
+  "bot.ai.testOk": "✔ key {key}: connected ({s} s, model {model})",
   "bot.ai.testFail": "✘ key {key}: {error}",
   "bot.ai.error": "Last AI error: {error}",
   "bot.ai.results": "Finished signals: approved {yes} · rejected {no}",

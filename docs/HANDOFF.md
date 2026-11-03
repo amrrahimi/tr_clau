@@ -32,7 +32,7 @@ download links. The repository is public: never commit keys, passwords or accoun
   not hold on another top-15 coin list (-0.04 R): needs a 100-coin test. The brain model is "off"
   (it did not beat no filter on unseen signals), so the owner's brain knob has no effect for now.
 - AI approval (owner 2026-11-03, backend/app/advisor.py): when on, each chosen signal on the AI's
-  timeframes (default 15m-4h; 1m/3m too slow) goes to Gemini (gemini-2.5-flash, free tier) with the
+  timeframes (default 15m-4h; 1m/3m too slow) goes to Gemini (first working of advisor.MODELS, saved as aiModel) with the
   coin on 15m/1h/4h/1d, Bitcoin 1h/4h, nearest swings, last 30 candles and the strategy's record.
   Approve -> trade; reject -> skipped with its Persian reason in the diary; no answer -> the owner is
   asked in the panel (open / skip); with no answer in 30 s it opens by itself. Keys: settings.json

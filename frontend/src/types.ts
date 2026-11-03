@@ -316,6 +316,7 @@ export interface AiTestResult {
   key: string; // last 4 characters only
   ok: boolean;
   seconds: number | null;
+  model?: string | null; // the Gemini model that answered
   error: string | null;
 }
 

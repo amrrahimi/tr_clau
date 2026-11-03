@@ -488,7 +488,7 @@ export class BotApp {
         try {
           const { results } = await this.backend.testAi();
           this.aiTest = results.length
-            ? results.map((r) => r.ok ? t("bot.ai.testOk", { key: r.key, s: String(r.seconds ?? "") })
+            ? results.map((r) => r.ok ? t("bot.ai.testOk", { key: r.key, s: String(r.seconds ?? ""), model: r.model ?? "" })
               : t("bot.ai.testFail", { key: r.key, error: r.error ?? "" })).join(" · ")
             : t("bot.ai.noKeys");
         } catch (error) {

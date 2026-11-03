@@ -155,7 +155,7 @@ export class MockBackend implements Backend {
 
   async testAi(): Promise<{ results: AiTestResult[] }> {
     const state = await this.getPaper();
-    return { results: (state.ai?.keys ?? []).map((key) => ({ key, ok: true, seconds: 0.8, error: null })) };
+    return { results: (state.ai?.keys ?? []).map((key) => ({ key, ok: true, seconds: 0.8, model: "gemini-3.8-flash", error: null })) };
   }
 
   async setAiKeys(keys: string[]): Promise<PaperState> {

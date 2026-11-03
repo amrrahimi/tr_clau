@@ -489,7 +489,7 @@ class PaperBot:
             "memory": summary,
             "brain": {**self.brain.public(summary), "pretrain": self.pretrain_progress} if self.brain else None,
             "ai": {"enabled": a.get("aiEnabled", False), "timeframes": a.get("aiTimeframes", []),
-                   "model": advisor.MODEL, "keys": advisor.masked(self.ai_keys()), "lastError": self.ai_error,
+                   "model": advisor.load_model(), "keys": advisor.masked(self.ai_keys()), "lastError": self.ai_error,
                    "results": self.memory.ai_summary() if self.memory is not None else {}},
             "pendingAsks": [{"id": q["id"], "symbol": q["c"]["symbol"], "base": q["c"]["base"],
                              "timeframe": q["tf"], "strategy": q["c"]["strategy"], "side": q["c"]["signal"]["side"],

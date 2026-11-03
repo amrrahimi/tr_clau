@@ -51,7 +51,7 @@ class AskTest(unittest.IsolatedAsyncioTestCase):
             return 200, gemini_reply({"approve": True, "confidence": 72, "reason": "هم‌جهت با روند"})
         verdict = await advisor.ask({"coin": "A"}, ["k1"], post=post)
         self.assertEqual(verdict, {"approve": True, "confidence": 72.0, "reason": "هم‌جهت با روند"})
-        self.assertIn("gemini-2.5-flash:generateContent", calls[0][0])
+        self.assertIn(f"{advisor.MODEL}:generateContent", calls[0][0])
 
     async def test_next_key_when_the_first_is_out_of_quota(self):
         used = []
@@ -92,7 +92,7 @@ class TestKeysTest(unittest.IsolatedAsyncioTestCase):
         results = await advisor.test_keys(["good-key-1111", "bad-key-2222", "net-key-3333"], post=post)
         self.assertEqual([r["ok"] for r in results], [True, False, False])
         self.assertEqual([r["key"] for r in results], ["…1111", "…2222", "…3333"])
-        self.assertEqual(results[1]["error"], "HTTP 400: API key not valid")
+        self.assertEqual(results[1]["error"], f"HTTP 400 ({advisor.MODEL}): API key not valid")
         self.assertIn("proxy refused", results[2]["error"])
         self.assertEqual(await advisor.test_keys([]), [])
 
@@ -104,3 +104,38 @@ class SslTest(unittest.TestCase):
         self.assertIsInstance(context, ssl.SSLContext)
         self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)     # still checked, never switched off
         self.assertGreater(len(context.get_ca_certs()), 50)          # certifi's list was loaded
+
+
+class ModelTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_retired_model_moves_on_to_the_next(self):
+        tried = []
+
+        async def post(url, headers, body):
+            name = url.split("/models/")[1].split(":")[0]
+            tried.append(name)
+            if name == advisor.MODELS[0]:
+                return 404, json.dumps({"error": {"message": "no longer available to new users"}})
+            if name == advisor.MODELS[1]:
+                return 429, json.dumps({"error": {"message": "Quota exceeded, limit: 0"}})
+            return 200, gemini_reply({"approve": True, "confidence": 60, "reason": "ok"})
+        used = []
+        answer = await advisor._call({}, ["k1", "k2"], advisor.MODELS[0], post, used.append)
+        self.assertEqual(used, [advisor.MODELS[2]])
+        self.assertEqual(tried, [advisor.MODELS[0]] * 2 + [advisor.MODELS[1]] * 2 + [advisor.MODELS[2]])
+        self.assertIn("approve", answer)
+        results = await advisor.test_keys(["k1"], advisor.MODELS[0], post=post)
+        self.assertEqual((results[0]["ok"], results[0]["model"]), (True, advisor.MODELS[2]))
+
+    async def test_busy_keys_do_not_switch_the_model(self):
+        tried = []
+
+        async def post(url, headers, body):
+            tried.append(url)
+            return 429, json.dumps({"error": {"message": "Resource exhausted, retry in 20s"}})
+        with self.assertRaises(advisor.AdvisorUnavailable):
+            await advisor._call({}, ["k1", "k2"], advisor.MODELS[0], post, None)
+        self.assertEqual(len(tried), 2)        # both keys of the first model, then stop
+
+    def test_model_order(self):
+        self.assertEqual(advisor.model_order(advisor.MODELS[2])[0], advisor.MODELS[2])
+        self.assertEqual(sorted(advisor.model_order(advisor.MODELS[2])), sorted(advisor.MODELS))
