@@ -181,6 +181,18 @@ def parse(text: str) -> dict:
     return {"approve": data["approve"], "confidence": confidence, "reason": str(data.get("reason") or "")[:300]}
 
 
+def ssl_context():
+    """Trusted certificates from certifi (shipped with the app, like ccxt uses them). The packaged
+    app has no system certificate list, so Google's certificate could not be checked (owner saw
+    CERTIFICATE_VERIFY_FAILED on 2026-11-03)."""
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:   # no certifi: the system's list, as before
+        return ssl.create_default_context()
+
+
 async def default_post(url: str, headers: dict, body: dict) -> tuple[int, str]:
     """POST through the same proxy the bot uses for the exchange (VPN)."""
     import aiohttp
@@ -194,7 +206,7 @@ async def default_post(url: str, headers: dict, body: dict) -> tuple[int, str]:
         kwargs["proxy"] = proxy
     timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        async with session.post(url, headers=headers, json=body, **kwargs) as response:
+        async with session.post(url, headers=headers, json=body, ssl=ssl_context(), **kwargs) as response:
             return response.status, await response.text()
 
 

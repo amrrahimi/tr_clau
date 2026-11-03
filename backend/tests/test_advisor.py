@@ -95,3 +95,12 @@ class TestKeysTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[1]["error"], "HTTP 400: API key not valid")
         self.assertIn("proxy refused", results[2]["error"])
         self.assertEqual(await advisor.test_keys([]), [])
+
+
+class SslTest(unittest.TestCase):
+    def test_certificates_come_with_the_app(self):
+        import ssl
+        context = advisor.ssl_context()
+        self.assertIsInstance(context, ssl.SSLContext)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)     # still checked, never switched off
+        self.assertGreater(len(context.get_ca_certs()), 50)          # certifi's list was loaded
