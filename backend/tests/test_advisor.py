@@ -139,3 +139,19 @@ class ModelTest(unittest.IsolatedAsyncioTestCase):
     def test_model_order(self):
         self.assertEqual(advisor.model_order(advisor.MODELS[2])[0], advisor.MODELS[2])
         self.assertEqual(sorted(advisor.model_order(advisor.MODELS[2])), sorted(advisor.MODELS))
+
+
+class OverloadTest(unittest.IsolatedAsyncioTestCase):
+    async def test_an_overloaded_model_moves_on_at_once(self):
+        tried = []
+
+        async def post(url, headers, body):
+            name = url.split("/models/")[1].split(":")[0]
+            tried.append((name, headers["x-goog-api-key"]))
+            if name == advisor.MODELS[0]:
+                return 503, json.dumps({"error": {"message": "This model is currently experiencing high demand."}})
+            return 200, gemini_reply({"approve": False, "confidence": 20, "reason": "no"})
+        used = []
+        await advisor._call({}, ["k1", "k2"], advisor.MODELS[0], post, used.append)
+        self.assertEqual(tried, [(advisor.MODELS[0], "k1"), (advisor.MODELS[1], "k1")])   # no second key on 503
+        self.assertEqual(used, [advisor.MODELS[1]])

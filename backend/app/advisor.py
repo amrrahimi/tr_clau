@@ -65,6 +65,9 @@ def save_model(model: str) -> None:
     path.write_text(json.dumps(settings), encoding="utf-8")
 
 
+OVERLOADED = (500, 502, 503, 504)   # "high demand, try again later" (owner saw 503 on 2026-11-03)
+
+
 def model_order(first: str) -> list[str]:
     return [first] + [m for m in MODELS if m != first]
 
@@ -265,6 +268,9 @@ async def _call(body: dict, keys: list[str], model: Optional[str], post: Post,
                     on_model(name)
                 return answer
             last = f"HTTP {status} ({name}): {_message(text)}"[:200]
+            if status in OVERLOADED:   # Google's servers for this model are busy: the next model
+                gone = len(keys)
+                break
             if _model_gone(status, text):
                 gone += 1
                 continue
