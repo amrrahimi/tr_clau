@@ -240,7 +240,12 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice";
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
+    | "ai" | "ask" | "askAnswer";
+  approve?: boolean; // ai: Gemini's answer
+  confidence?: number | null; // ai
+  text?: string; // ai: its one-line reason
+  answer?: "open" | "skip"; // askAnswer: the owner's answer
   suggest?: "hold" | "close"; // advice
   detail?: string; // advice: the strategy or market state behind it
   version?: number; // brain: model number
@@ -298,7 +303,23 @@ export interface StrategyResults {
   brain?: { count: number; winRate: number | null; avgR: number | null }; // those the brain's filter lets through
 }
 
+export interface AiState {
+  enabled: boolean;
+  timeframes: string[];
+  model: string;
+  keys: string[]; // only the last 4 characters of each key
+  lastError: string | null;
+  results: Record<string, { count: number; avgR: number | null; winRate: number | null }>;
+}
+
+export interface PendingAsk {
+  id: number; symbol: string; base: string; timeframe: string; strategy: string; side: Side;
+  entry: number; stopLoss: number; takeProfit: number; expires: number; error?: string | null;
+}
+
 export interface PaperState {
+  ai?: AiState;
+  pendingAsks?: PendingAsk[];
   profile?: "main"; // the bot (the barrage account was removed 2026-11-02)
   scanSeconds?: Record<string, number>; // how long the last scan of each timeframe took
   chosenTimeframes?: string[]; // ticked by the owner: the bot trades only on these

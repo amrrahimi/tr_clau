@@ -155,6 +155,15 @@ class ServerTest(unittest.TestCase):
             body = client.post("/api/connection", json={"proxy": "127.0.0.1:10809"}).json()
             self.assertEqual((body["proxy"], body["source"]), ("http://127.0.0.1:10809", "app"))
             self.assertEqual(client.get("/api/connection").json()["typed"], "127.0.0.1:10809")
+            # The AI's approval: keys stay in settings.json, the screen sees only the end of each key.
+            body = client.post("/api/paper/ai/keys", json={"keys": ["secret-key-1234", "other-key-9876"]}).json()
+            self.assertEqual(body["ai"]["keys"], ["…1234", "…9876"])
+            self.assertNotIn("secret-key-1234", json.dumps(body))
+            body = client.post("/api/paper/ai", json={"enabled": True, "timeframes": ["15m", "4h"]}).json()
+            self.assertEqual((body["ai"]["enabled"], body["ai"]["timeframes"]), (True, ["15m", "4h"]))
+            self.assertEqual(client.post("/api/paper/ai", json={"enabled": True, "timeframes": ["2m"]}).status_code, 400)
+            self.assertEqual(client.post("/api/paper/ask", json={"id": 1, "answer": "open"}).status_code, 404)
+            self.assertEqual(client.post("/api/paper/ask", json={"id": 1, "answer": "maybe"}).status_code, 400)
 
     def test_one_account_and_its_buttons(self):
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))

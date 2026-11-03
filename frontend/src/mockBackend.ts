@@ -122,6 +122,11 @@ export class MockBackend implements Backend {
       state.chosenTimeframes = state.timeframes.filter((tf) => action.timeframes.includes(tf));
     } else if (action.kind === "cap") {
       state.rules.profitCap = action.usd;
+    } else if (action.kind === "ai") {
+      state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
+        enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "ask") {
+      state.pendingAsks = (state.pendingAsks ?? []).filter((q) => q.id !== action.id);
     } else if (action.kind === "coins") {
       state.rules.coinMode = action.mode;
       if (action.mode === "manual") state.rules.coins = action.coins;
@@ -147,6 +152,13 @@ export class MockBackend implements Backend {
       if (!state.positions.length && !state.closed.length) await this.sampleTrades(state);
     }
     return this.paper!;
+  }
+
+  async setAiKeys(keys: string[]): Promise<PaperState> {
+    const state = await this.getPaper();
+    state.ai = { ...(state.ai ?? { enabled: false, timeframes: ["15m", "30m", "1h", "4h"], model: "gemini-2.5-flash",
+      lastError: null, results: {} }), keys: keys.map((k) => "…" + k.slice(-4)) };
+    return state;
   }
 
   private connection: ConnectionState = { proxy: null, source: "direct", typed: "" };

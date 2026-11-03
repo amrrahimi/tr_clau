@@ -31,6 +31,13 @@ download links. The repository is public: never commit keys, passwords or accoun
   the result; only 16% of stopped trades later reached the target. The 4h result of 2026-11-02 did
   not hold on another top-15 coin list (-0.04 R): needs a 100-coin test. The brain model is "off"
   (it did not beat no filter on unseen signals), so the owner's brain knob has no effect for now.
+- AI approval (owner 2026-11-03, backend/app/advisor.py): when on, each chosen signal on the AI's
+  timeframes (default 15m-4h; 1m/3m too slow) goes to Gemini (gemini-2.5-flash, free tier) with the
+  coin on 15m/1h/4h/1d, Bitcoin 1h/4h, nearest swings, last 30 candles and the strategy's record.
+  Approve -> trade; reject -> skipped with its Persian reason in the diary; no answer -> the owner is
+  asked in the panel (open / skip, expires after a quarter candle, max 15 min). Keys: settings.json
+  on the owner's computer only (aiKeys), next key on 429. Every decision is stored in memory
+  (ai_decision / ai_confidence / ai_reason) and the panel compares approved vs rejected results.
 - Barrage account: removed 2026-11-02 (owner). An old paper-fast.json on disk is no longer used.
 - Only ticked timeframes are scanned; a new 1m candle may put a slower scan off once (fix of
   2026-11-02: before it, slow computers never scanned 5m-1h).

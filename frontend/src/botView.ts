@@ -92,6 +92,13 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
     case "advice":
       return t("bot.evAdvice", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
         suggest: t(e.suggest === "close" ? "bot.advice.suggest.close" : "bot.advice.suggest.hold") });
+    case "ai":
+      return t(e.approve ? "bot.evAiYes" : "bot.evAiNo", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
+        conf: e.confidence == null ? "–" : String(Math.round(e.confidence)), text: e.text ?? "" });
+    case "ask":
+      return t("bot.evAsk", { coin: e.symbol ?? "", tf: e.timeframe ?? "" });
+    case "askAnswer":
+      return t(e.answer === "open" ? "bot.evAskOpen" : "bot.evAskSkip", { coin: e.symbol ?? "", tf: e.timeframe ?? "" });
     case "pretrain":
       return t("bot.evPretrain", { n: String(e.count ?? 0) });
     case "brain":

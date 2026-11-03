@@ -261,7 +261,8 @@ export class BotApp {
     if (this.error) this.els.errorText.textContent = this.error;
     this.renderTitle();
     // Do not redraw the panel while the owner is typing the amount of money.
-    const typing = document.activeElement instanceof HTMLInputElement && this.els.panel.contains(document.activeElement);
+    const active = document.activeElement;
+    const typing = (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && this.els.panel.contains(active);
     if (!typing) this.renderPanel();
     this.renderTrades();
   }
@@ -294,6 +295,25 @@ export class BotApp {
     (power as HTMLButtonElement).disabled = s.status === "halted";
     power.addEventListener("click", () => void this.act({ kind: running ? "stop" : "start" }));
     parts.push(power);
+    // Signals waiting for the owner because the AI did not answer.
+    for (const q of s.pendingAsks ?? []) {
+      const box = el("div", "bot-ask");
+      const digits = pricePrecision(q.entry);
+      const left = Math.max(0, Math.round((q.expires - Date.now() / 1000) / 60));
+      box.append(el("div", "bot-ask-title", t("bot.ask.title")), el("div", "bot-hint", t("bot.ask.line", {
+        coin: q.base, tf: q.timeframe, side: t(q.side === "long" ? "strategies.long" : "strategies.short"),
+        strategy: t(`strat.${q.strategy}` as MessageKey), entry: formatPrice(q.entry, digits),
+        stop: formatPrice(q.stopLoss, digits), target: formatPrice(q.takeProfit, digits), left: String(left),
+      })));
+      const yes = el("button", "bot-reset", t("bot.ask.open"));
+      yes.addEventListener("click", () => void this.act({ kind: "ask", id: q.id, answer: "open" }));
+      const no = el("button", "bot-reset", t("bot.ask.skip"));
+      no.addEventListener("click", () => void this.act({ kind: "ask", id: q.id, answer: "skip" }));
+      const row = el("div", "bot-ask-buttons");
+      row.append(yes, no);
+      box.append(row);
+      parts.push(box);
+    }
     parts.push(el("div", `bot-status ${s.status}`, t(statusKey(s), {
       tf: s.scanning ?? "",
       until: s.pausedUntil ? formatClock(s.pausedUntil * 1000, this.zone).slice(0, 5) : "",
@@ -408,6 +428,66 @@ export class BotApp {
         list.append(line);
       }
       parts.push(el("div", "list-heading", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
+    }
+
+    // The AI's approval (Gemini): on/off, the timeframes it checks, the owner's keys.
+    if (s.ai) {
+      const ai = s.ai;
+      const onOff = el("div", "segmented small");
+      for (const on of [true, false]) {
+        const b = el("button", ai.enabled === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+        b.addEventListener("click", () => {
+          if (ai.enabled !== on) void this.act({ kind: "ai", enabled: on, timeframes: ai.timeframes });
+        });
+        onOff.append(b);
+      }
+      parts.push(el("div", "list-heading", t("bot.ai.title")), onOff);
+      const tfs = el("div", "bot-timeframes");
+      for (const tf of s.timeframes) {
+        const line = el("label", "");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = ai.timeframes.includes(tf);
+        box.addEventListener("change", () => {
+          const next = s.timeframes.filter((x) => (x === tf ? box.checked : ai.timeframes.includes(x)));
+          void this.act({ kind: "ai", enabled: ai.enabled, timeframes: next });
+        });
+        const name = el("span", "", tf);
+        name.dir = "ltr";
+        line.append(box, name);
+        tfs.append(line);
+      }
+      parts.push(el("div", "bot-hint", t("bot.ai.timeframes")), tfs);
+      const keysBox = el("div", "bot-capital");
+      const area = document.createElement("textarea");
+      area.rows = 2;
+      area.dir = "ltr";
+      area.autocomplete = "off";
+      area.spellcheck = false;
+      area.placeholder = "AIza… / AQ.…";
+      const saveKeys = el("button", "bot-reset", t("bot.save"));
+      saveKeys.addEventListener("click", async () => {
+        const keys = area.value.split(/\s+/).map((k) => k.trim()).filter(Boolean);
+        try {
+          this.state = await this.backend.setAiKeys(keys);
+          this.error = null;
+        } catch (error) {
+          this.error = error instanceof Error ? error.message : String(error);
+        }
+        area.value = "";
+        this.render();
+      });
+      keysBox.append(el("label", "", t("bot.ai.keys")), area, saveKeys);
+      parts.push(keysBox, el("div", "bot-hint", ai.keys.length ? t("bot.ai.keysSaved", { list: ai.keys.join("، ") }) : t("bot.ai.noKeys")));
+      parts.push(el("div", "bot-hint", t("bot.ai.hint", { model: ai.model })));
+      if (ai.lastError) parts.push(el("div", "bot-hint warn", t("bot.ai.error", { error: ai.lastError })));
+      const res = (k: string) => {
+        const r = ai.results?.[k];
+        return r ? t("bot.ai.result", { n: String(r.count), r: (r.avgR ?? 0).toFixed(2), w: String(Math.round(r.winRate ?? 0)) }) : "–";
+      };
+      if (ai.results && Object.keys(ai.results).length) {
+        parts.push(el("div", "bot-hint", t("bot.ai.results", { yes: res("approve"), no: res("reject") })));
+      }
     }
 
     // Which coins the bot scans: top 100 by volume, the most volatile of the last 24h, or the owner's list.

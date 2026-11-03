@@ -97,6 +97,9 @@ class Memory:
             self.db.execute("ALTER TABLE signals ADD COLUMN reliable INTEGER DEFAULT 1")
         if "source" not in columns:    # live: seen by the bot; history: rebuilt from past candles
             self.db.execute("ALTER TABLE signals ADD COLUMN source TEXT DEFAULT 'live'")
+        for name, kind in (("ai_decision", "TEXT"), ("ai_confidence", "REAL"), ("ai_reason", "TEXT")):
+            if name not in columns:      # the AI's answer (Gemini) for the signals sent to it
+                self.db.execute(f"ALTER TABLE signals ADD COLUMN {name} {kind}")
         self.db.execute("CREATE TABLE IF NOT EXISTS pretrain (chart TEXT PRIMARY KEY, done_at REAL)")
         self.db.execute("CREATE INDEX IF NOT EXISTS signals_source ON signals(source, status)")
         self.db.commit()
@@ -158,6 +161,23 @@ class Memory:
         else:
             self.db.execute("UPDATE signals SET skip_reason = ? WHERE key = ? AND taken = 0", (skip_reason, key))
         self.db.commit()
+
+    @_locked
+    def set_ai(self, key: str, decision: str, confidence: Optional[float], reason: str) -> None:
+        """What the AI said about a signal: approve / reject / unavailable."""
+        self.db.execute("UPDATE signals SET ai_decision = ?, ai_confidence = ?, ai_reason = ? WHERE key = ?",
+                        (decision, confidence, reason[:300], key))
+        self.db.commit()
+
+    @_locked
+    def ai_summary(self) -> dict:
+        """Finished signals per AI decision: how the approved ones did against the rejected ones."""
+        out = {}
+        for decision, n, avg_r, wins in self.db.execute(
+                "SELECT ai_decision, COUNT(*), AVG(r), SUM(r > 0) FROM signals"
+                " WHERE ai_decision IS NOT NULL AND r IS NOT NULL GROUP BY ai_decision"):
+            out[decision] = {"count": n, "avgR": avg_r, "winRate": 100.0 * (wins or 0) / n if n else None}
+        return out
 
     @_locked
     def open_signals(self, symbol: str, timeframe: str) -> list[dict]:

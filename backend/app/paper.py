@@ -45,7 +45,7 @@ from typing import Awaitable, Callable, Optional
 from . import config
 from .analysis import closed_only, strategy_overview
 from .brain import Brain
-from . import pretrain
+from . import advisor, pretrain
 from .memory import Memory, features
 from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params, reward_ok
@@ -106,6 +106,9 @@ PAUSE_FALL = 0.05            # default: fall since the last pause or the start (
 MAX_PAUSE_LOSSES = 50
 MAX_PAUSE_FALL = 50.0        # percent
 MAX_BRAIN_THRESHOLD = 0.6    # the owner's brain knob goes from 0 (off) to this
+BTC = "BTC/USDT:USDT"        # the market's direction, part of the AI's context
+ASK_PART = 0.25              # the owner may answer for a quarter of the signal's candle ...
+ASK_MAX_SECONDS = 900.0      # ... but at most 15 minutes: after that the signal is old
 PAUSE_SECONDS = 3 * 3600
 RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
 BENCH_SECONDS = PAUSE_SECONDS  # strategies that lost lately are left out as long as the pause
@@ -359,6 +362,9 @@ def new_account(capital: float, now: float) -> dict:
         "brainThreshold": None,            # owner's option: least chance the brain must give (None = its own)
         "coinMode": "top",                 # owner's option: top (by volume) | volatile (24h) | manual
         "coins": [],                       # the owner's own list for "manual" (ccxt symbols)
+        "aiEnabled": False,                # owner's option: Gemini must approve each trade (advisor.py)
+        "aiTimeframes": list(advisor.DEFAULT_TIMEFRAMES),
+        "pendingAsks": [],                 # signals waiting for the owner because the AI did not answer
         "pausedUntil": None,
         "pausedAt": None,
         "pauseReason": None,
@@ -436,6 +442,9 @@ class PaperBot:
         self.scanning: Optional[str] = None   # timeframe being scanned
         self.lock = asyncio.Lock()
         self._performance: Optional[tuple[float, dict]] = None   # (time, per-strategy results) cache
+        self.ai_ask = advisor.ask            # replaced in tests
+        self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
+        self.ai_error: Optional[str] = None  # the last reason Gemini did not answer (for the screen)
 
     # ---- what the screen sees
 
@@ -477,6 +486,14 @@ class PaperBot:
             "benched": {k: v for k, v in a["benched"].items() if v > self.now()},
             "memory": summary,
             "brain": {**self.brain.public(summary), "pretrain": self.pretrain_progress} if self.brain else None,
+            "ai": {"enabled": a.get("aiEnabled", False), "timeframes": a.get("aiTimeframes", []),
+                   "model": advisor.MODEL, "keys": advisor.masked(self.ai_keys()), "lastError": self.ai_error,
+                   "results": self.memory.ai_summary() if self.memory is not None else {}},
+            "pendingAsks": [{"id": q["id"], "symbol": q["c"]["symbol"], "base": q["c"]["base"],
+                             "timeframe": q["tf"], "strategy": q["c"]["strategy"], "side": q["c"]["signal"]["side"],
+                             "entry": q["c"]["signal"]["entry"], "stopLoss": q["c"]["signal"]["stopLoss"],
+                             "takeProfit": q["c"]["signal"]["takeProfit"], "expires": q["expires"],
+                             "error": q.get("error")} for q in a.get("pendingAsks", [])],
             "mode": a["mode"],
             "strategies": a["strategies"],
             "positions": positions,
@@ -541,7 +558,8 @@ class PaperBot:
     def reset(self, capital: float) -> None:
         # Settings, not results: kept (owner 2026-11-03: the manual strategy choice was lost here).
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
-                                              "mode", "strategies", "coinMode", "coins") if k in self.account}
+                                              "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes")
+                if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
         self.account.update(kept)   # settings, not results: kept
@@ -707,6 +725,7 @@ class PaperBot:
             account = self.account
             now = self.now()
             self._new_day(now)
+            self._expire_asks(now)
             await self._watch_positions(now)
             equity = self.equity()
             self._track_drawdown(equity)
@@ -1042,7 +1061,10 @@ class PaperBot:
         chosen = pick(candidates, open_coins, free_slots(positions, tf, self.profile.slots),
                       side_room(positions, self.profile.max_same_side))
         for c in chosen:
-            await self._open(c, tf, now, settings[c["strategy"]])
+            if self._ai_on(tf):
+                await self._ai_review(c, tf, now, settings[c["strategy"]])
+            else:
+                await self._open(c, tf, now, settings[c["strategy"]])
         chosen_keys = {c.get("memoryKey") for c in chosen}
         if memory is not None:
             for c in candidates:
@@ -1052,6 +1074,87 @@ class PaperBot:
         if left > 0:
             self._event("skip", reason="full", timeframe=tf, count=left)
             self._count("full", left)
+
+    # ---- the AI's second opinion (advisor.py)
+
+    def _ai_on(self, tf: str) -> bool:
+        return bool(self.account.get("aiEnabled")) and tf in (self.account.get("aiTimeframes") or [])
+
+    async def _ai_context(self, symbol: str) -> tuple[dict, dict]:
+        async def get(sym: str, tf: str) -> list[dict]:
+            try:
+                return closed_only(await self.recent(sym, tf), tf, self.now())
+            except Exception:
+                return []
+        charts = {tf: await get(symbol, tf) for tf in advisor.CONTEXT_TIMEFRAMES}
+        btc = {tf: await get(BTC, tf) for tf in ("1h", "4h")} if symbol != BTC else {}
+        return charts, btc
+
+    async def _ai_review(self, c: dict, tf: str, now: float, params: dict) -> None:
+        """Gemini approves (the trade opens), rejects (skipped, with its reason) or does not answer
+        (the owner is asked in the panel)."""
+        key = c.get("memoryKey")
+        try:
+            charts, btc = await self._ai_context(c["symbol"])
+            if tf not in charts:
+                charts[tf] = closed_only(await self.recent(c["symbol"], tf), tf, now)
+            verdict = await self.ai_ask(advisor.brief(c, tf, charts, btc), self.ai_keys())
+        except advisor.AdvisorUnavailable as error:
+            self.ai_error = str(error)
+            if self.memory is not None and key:
+                self.memory.set_ai(key, "unavailable", None, str(error))
+            ask_id = self.account.get("nextAskId", 1)
+            self.account["nextAskId"] = ask_id + 1
+            expires = now + min(config.TIMEFRAME_SECONDS[tf] * ASK_PART, ASK_MAX_SECONDS)
+            self.account.setdefault("pendingAsks", []).append(
+                {"id": ask_id, "tf": tf, "c": c, "expires": expires, "error": str(error)})
+            self._event("ask", symbol=c["base"], timeframe=tf, strategy=c["strategy"], reason=str(error))
+            self._count("ask")
+            return
+        self.ai_error = None
+        if self.memory is not None and key:
+            self.memory.set_ai(key, "approve" if verdict["approve"] else "reject",
+                               verdict["confidence"], verdict["reason"])
+        self._event("ai", symbol=c["base"], timeframe=tf, strategy=c["strategy"], approve=verdict["approve"],
+                    confidence=verdict["confidence"], text=verdict["reason"])
+        if verdict["approve"]:
+            await self._open(c, tf, now, params)
+        else:
+            self._count("ai")
+            if self.memory is not None and key:
+                self.memory.mark(key, skip_reason="ai")
+
+    def _expire_asks(self, now: float) -> None:
+        asks = self.account.get("pendingAsks") or []
+        for q in [q for q in asks if q["expires"] <= now]:
+            if self.memory is not None and q["c"].get("memoryKey"):
+                self.memory.mark(q["c"]["memoryKey"], skip_reason="noAnswer")
+        self.account["pendingAsks"] = [q for q in asks if q["expires"] > now]
+
+    async def answer_ask(self, ask_id: int, answer: str) -> bool:
+        """The owner's answer when the AI did not answer: open the trade or skip it."""
+        async with self.lock:
+            now = self.now()
+            self._expire_asks(now)
+            q = next((q for q in self.account.get("pendingAsks", []) if q["id"] == ask_id), None)
+            if q is None:
+                return False
+            self.account["pendingAsks"] = [x for x in self.account["pendingAsks"] if x["id"] != ask_id]
+            key = q["c"].get("memoryKey")
+            if answer == "open":
+                self._event("askAnswer", symbol=q["c"]["base"], timeframe=q["tf"], answer="open")
+                await self._open(q["c"], q["tf"], now, bot_settings(q["tf"])[q["c"]["strategy"]])
+            else:
+                self._event("askAnswer", symbol=q["c"]["base"], timeframe=q["tf"], answer="skip")
+                if self.memory is not None and key:
+                    self.memory.mark(key, skip_reason="owner")
+            self.save()
+            return True
+
+    def set_ai(self, enabled: bool, timeframes: list[str]) -> None:
+        self.account["aiEnabled"] = bool(enabled)
+        self.account["aiTimeframes"] = [tf for tf in self.profile.timeframes if tf in timeframes]
+        self.save()
 
     async def _open(self, c: dict, tf: str, now: float, params: dict) -> None:
         recent = await self.recent(c["symbol"], tf)

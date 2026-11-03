@@ -147,3 +147,11 @@ test("brain knob hint: auto, owner's number, off", () => {
   assert.match(brainKnobHint(0.25, 34, tr), /^Your threshold: 25% \(the brain's own is 34%\)/);
   assert.match(brainKnobHint(0, 34, tr), /^0%: the brain filter is off/);
 });
+
+test("AI events in the diary", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("en", k, p);
+  assert.equal(eventText({ time: 0, kind: "ai", symbol: "RLC", timeframe: "1h", approve: false, confidence: 35, text: "late entry" }, t),
+    "The AI rejected RLC (1h) (confidence 35%): late entry");
+  assert.equal(eventText({ time: 0, kind: "ask", symbol: "RLC", timeframe: "1h" }, t), "The AI did not answer for RLC (1h); waiting for you");
+  assert.equal(eventText({ time: 0, kind: "askAnswer", symbol: "RLC", timeframe: "1h", answer: "open" }, t), "RLC (1h) opened by your choice");
+});

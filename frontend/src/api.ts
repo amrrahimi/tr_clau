@@ -39,6 +39,8 @@ export type PaperAction =
   | { kind: "pause"; losses: number; fall: number }
   | { kind: "brain"; threshold: number | null }
   | { kind: "coins"; mode: "top" | "volatile" | "manual"; coins: string[] }
+  | { kind: "ai"; enabled: boolean; timeframes: string[] }
+  | { kind: "ask"; id: number; answer: "open" | "skip" }
   | { kind: "timeframes"; timeframes: string[] }
   | { kind: "advice"; position_id: number; answer: "hold" | "close" };
 
@@ -72,6 +74,7 @@ export interface Backend {
   getPaper(): Promise<PaperState>;
   /** Bot buttons: start, stop, reset (with capital), mode (auto/manual with strategies). */
   paperAction(action: PaperAction): Promise<PaperState>;
+  setAiKeys(keys: string[]): Promise<PaperState>;
   getConnection(): Promise<ConnectionState>;
   setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
@@ -177,6 +180,11 @@ export class HttpBackend implements Backend {
   async paperAction(action: PaperAction): Promise<PaperState> {
     const { kind, ...body } = action;
     return this.post<PaperState>(`${PAPER_PATH}/${kind}`, body);
+  }
+
+  /** The owner's Gemini keys: sent once, kept on this computer, never shown again. */
+  async setAiKeys(keys: string[]): Promise<PaperState> {
+    return this.post<PaperState>(`${PAPER_PATH}/ai/keys`, { keys });
   }
 
   private async post<T>(path: string, body: object): Promise<T> {

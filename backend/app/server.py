@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import config
+from . import advisor, config
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
@@ -202,6 +202,31 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
                     raise HTTPException(400, f"unknown coin: {unknown[0]}")
             b.set_coins(mode, coins)
             volatile_cache["time"] = None   # a fresh list on the next scan
+            return b.public()
+
+        @app.post(f"/api/{prefix}/ai")
+        async def paper_ai(enabled: bool = Body(...), timeframes: list[str] = Body(default=[])):
+            """The AI's approval (Gemini): on/off and the timeframes it checks."""
+            if set(timeframes) - set(b.profile.timeframes):
+                raise HTTPException(400, f"timeframes must be among {list(b.profile.timeframes)}")
+            b.set_ai(enabled, timeframes)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/ai/keys")
+        async def paper_ai_keys(keys: list[str] = Body(..., embed=True)):
+            """The owner's Gemini API keys: kept in settings.json on this computer, never sent back."""
+            if len(keys) > advisor.MAX_KEYS or any(len(k) > 300 for k in keys):
+                raise HTTPException(400, f"at most {advisor.MAX_KEYS} keys")
+            advisor.save_keys(keys)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/ask")
+        async def paper_ask(id: int = Body(...), answer: str = Body(...)):
+            """The owner's answer when the AI did not answer: open or skip."""
+            if answer not in ("open", "skip"):
+                raise HTTPException(400, "answer must be open or skip")
+            if not await b.answer_ask(id, answer):
+                raise HTTPException(404, "no waiting signal with this id (maybe too old)")
             return b.public()
 
         @app.post(f"/api/{prefix}/brain")

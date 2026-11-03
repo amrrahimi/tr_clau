@@ -372,6 +372,69 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.public()["rules"]["coinMode"], "volatile")
         self.assertEqual(bot.account["coins"], ["ETH/USDT:USDT", "BTC/USDT:USDT"])   # the list stays for later
 
+    async def test_ai_approves_rejects_or_the_owner_is_asked(self):
+        from app import advisor
+        from app.memory import Memory
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+        bot = self.bot
+        bot.memory = memory
+        bot.reset(100)
+        bot.ai_keys = lambda: ["k"]
+        rule = {"fee_ratio": 0.33, "breakeven": 0}
+        self.assertFalse(bot._ai_on("1h"))
+        bot.set_ai(True, ["15m", "1h", "nope"])
+        self.assertTrue(bot._ai_on("1h") and not bot._ai_on("1m"))
+        self.assertEqual(bot.public()["ai"]["timeframes"], ["15m", "1h"])
+        self.assertEqual(bot.public()["ai"]["keys"], ["…k"])
+        seen = []
+
+        async def yes(data, keys):
+            seen.append(data)
+            return {"approve": True, "confidence": 80, "reason": "خوب"}
+
+        async def no(data, keys):
+            return {"approve": False, "confidence": 30, "reason": "دیر است"}
+
+        async def silent(data, keys):
+            raise advisor.AdvisorUnavailable("HTTP 429")
+
+        def signal(base):
+            c = cand(base, 2.0, 20)
+            c["memoryKey"] = memory.record(c, "1h", {}, self.clock[0])
+            self.recent_rows[c["symbol"]] = [bar(999_960, 100, 100, 100, 100)]
+            return c
+
+        bot.ai_ask = yes
+        await bot._ai_review(signal("A"), "1h", self.clock[0], rule)
+        self.assertEqual([p["base"] for p in bot.account["positions"]], ["A"])
+        self.assertEqual((seen[0]["coin"], seen[0]["side"]), ("A", LONG))
+        bot.ai_ask = no
+        b = signal("B")
+        await bot._ai_review(b, "1h", self.clock[0], rule)
+        self.assertEqual(len(bot.account["positions"]), 1)
+        row = memory.db.execute("SELECT ai_decision, ai_reason, skip_reason FROM signals WHERE key = ?",
+                                (b["memoryKey"],)).fetchone()
+        self.assertEqual(row, ("reject", "دیر است", "ai"))
+        self.assertEqual(bot.account["events"][-1]["text"], "دیر است")
+        # No answer: the owner is asked; "open" opens it, an old question disappears.
+        bot.ai_ask = silent
+        wide = signal("C")      # the owner's "open" uses the bot's own 1h rules: a stop far enough for the fees
+        wide["signal"].update(stopLoss=97, takeProfit=106)
+        await bot._ai_review(wide, "1h", self.clock[0], rule)
+        await bot._ai_review(signal("D"), "1h", self.clock[0], rule)
+        asks = bot.public()["pendingAsks"]
+        self.assertEqual([q["base"] for q in asks], ["C", "D"])
+        self.assertEqual(bot.public()["ai"]["lastError"], "HTTP 429")
+        self.assertTrue(await bot.answer_ask(asks[0]["id"], "open"))
+        self.assertEqual(sorted(p["base"] for p in bot.account["positions"]), ["A", "C"])
+        self.clock[0] += pp.ASK_MAX_SECONDS + 1
+        self.assertFalse(await bot.answer_ask(asks[1]["id"], "open"))     # too old
+        self.assertEqual(bot.public()["pendingAsks"], [])
+        self.assertEqual(set(memory.ai_summary()), set())                  # nothing finished yet
+        bot.reset(50)                                                       # the settings stay
+        self.assertEqual((bot.account["aiEnabled"], bot.account["aiTimeframes"]), (True, ["15m", "1h"]))
+
     async def test_start_again_keeps_the_manual_strategy_choice(self):
         bot = self.bot
         bot.reset(100)
