@@ -10,6 +10,7 @@ import os
 
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, Optional
@@ -70,8 +71,26 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     # ---- paper trading bot (futures; its own long-history store: 5 timeframes x 100 coins)
     bot_history = HistoryCache(max_charts=len(TIMEFRAMES) * config.SCANNER_COINS + 20)
 
+    volatile_cache: dict = {"time": None, "coins": []}
+
     async def bot_coins():
+        """The coins the bot scans, as the owner chose: top by volume, most volatile, or his own list."""
         service = await get_service(MARKET)
+        mode = bot.account.get("coinMode", "top")
+        if mode == "manual":
+            wanted = bot.account.get("coins") or []
+            by_symbol = {m.symbol: m for m in await service.all_markets()}
+            chosen = [by_symbol[s] for s in wanted if s in by_symbol]
+            if chosen:
+                return [(m.symbol, m.base) for m in chosen]
+        elif mode == "volatile":
+            now = time.time()
+            if volatile_cache["time"] is None or now - volatile_cache["time"] >= config.VOLATILE_REFRESH_SECONDS:
+                found = await service.volatile_markets(config.VOLATILE_COINS, config.VOLATILE_MIN_VOLUME)
+                if found:
+                    volatile_cache.update(time=now, coins=[(m.symbol, m.base) for m in found])
+            if volatile_cache["coins"]:
+                return volatile_cache["coins"]
         return [(m.symbol, m.base) for m in await service.top_markets(config.SCANNER_COINS)]
 
     async def bot_history_of(symbol: str, timeframe: str):
@@ -166,6 +185,23 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             if not 0 <= losses <= MAX_PAUSE_LOSSES or not 0 <= fall <= MAX_PAUSE_FALL:
                 raise HTTPException(400, f"losses must be 0-{MAX_PAUSE_LOSSES}, fall 0-{MAX_PAUSE_FALL:g}")
             b.set_pause_rules(losses, fall)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/coins")
+        async def paper_coins(mode: str = Body(...), coins: list[str] = Body(default=[])):
+            """The bot's coins: top (by volume), volatile (24h), or manual with the owner's list."""
+            if mode not in ("top", "volatile", "manual"):
+                raise HTTPException(400, "mode must be top, volatile or manual")
+            if mode == "manual":
+                if not coins or len(coins) > config.MAX_MANUAL_COINS:
+                    raise HTTPException(400, f"manual needs 1-{config.MAX_MANUAL_COINS} coins")
+                service = await get_service(MARKET)
+                known = {m.symbol for m in await service.all_markets()}
+                unknown = [c for c in coins if c not in known]
+                if unknown:
+                    raise HTTPException(400, f"unknown coin: {unknown[0]}")
+            b.set_coins(mode, coins)
+            volatile_cache["time"] = None   # a fresh list on the next scan
             return b.public()
 
         @app.post(f"/api/{prefix}/brain")

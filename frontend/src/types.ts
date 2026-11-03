@@ -18,6 +18,7 @@ export interface MarketInfo {
   quote: string; // e.g. "USDT"
   volume24h: number;
   lastPrice: number | null;
+  range24h?: number; // 24h high-low range, % of the price
 }
 
 // ---------- analysis and indicators (match backend/app/catalog.py and analysis.py) ----------
@@ -344,7 +345,7 @@ export interface PaperState {
   scanning: string | null; // timeframe being scanned now
   lastScan: Record<string, { period: number; time: number }>;
   timeframes: string[];
-  rules: { risk: number; maxOpen: number | null; maxFast?: number; maxSlow?: number; maxSameSide?: number | null; brainThreshold?: number | null;
+  rules: { risk: number; maxOpen: number | null; maxFast?: number; maxSlow?: number; maxSameSide?: number | null; brainThreshold?: number | null; coinMode?: "top" | "volatile" | "manual"; coins?: string[]; volatileCoins?: number;
     maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
     smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
     fees: { maker: number; taker: number } };

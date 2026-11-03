@@ -42,6 +42,7 @@ class MarketInfo:
     quote: str         # pricing currency, e.g. "USDT"
     volume_24h: float  # 24h traded volume, measured in the quote currency
     last_price: float | None
+    range_24h: float = 0.0  # 24h high-low range, % of the last price (how much it moved)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +51,7 @@ class MarketInfo:
             "quote": self.quote,
             "volume24h": self.volume_24h,
             "lastPrice": self.last_price,
+            "range24h": self.range_24h,
         }
 
 
@@ -96,6 +98,16 @@ def candle_to_dict(row: list) -> dict[str, float]:
         "close": float(close),
         "volume": float(volume or 0.0),
     }
+
+
+def _ticker_range(ticker: dict | None) -> float:
+    """24h high-low range in % of the last price; the 24h change when high/low are missing."""
+    if not ticker:
+        return 0.0
+    high, low, last = ticker.get("high"), ticker.get("low"), ticker.get("last")
+    if high and low and last:
+        return (float(high) - float(low)) / float(last) * 100
+    return abs(float(ticker.get("percentage") or 0.0))
 
 
 def _ticker_volume(ticker: dict | None) -> float:
@@ -194,6 +206,7 @@ class MarketService:
                 quote=market.get("quote", config.QUOTE_CURRENCY),
                 volume_24h=_ticker_volume(ticker),
                 last_price=(ticker or {}).get("last"),
+                range_24h=_ticker_range(ticker),
             ))
         infos.sort(key=lambda info: info.volume_24h, reverse=True)
         return infos
@@ -201,6 +214,16 @@ class MarketService:
     async def top_markets(self, limit: int = config.TOP_MARKETS_LIMIT) -> list[MarketInfo]:
         """The coins with the highest 24h volume, highest first."""
         return (await self._market_infos())[:limit]
+
+    async def all_markets(self) -> list[MarketInfo]:
+        """Every coin, highest 24h volume first."""
+        return await self._market_infos()
+
+    async def volatile_markets(self, limit: int, min_volume: float) -> list[MarketInfo]:
+        """The coins that moved most in 24h (high-low range), among those with enough volume."""
+        infos = [i for i in await self._market_infos() if i.volume_24h >= min_volume]
+        infos.sort(key=lambda info: info.range_24h, reverse=True)
+        return infos[:limit]
 
     async def search_markets(self, query: str, limit: int = 100) -> list[MarketInfo]:
         """Coins whose name contains the query (case-insensitive), highest volume first."""

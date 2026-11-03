@@ -12,7 +12,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, ConnectionState, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
+import type { Candle, ConnectionState, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -23,6 +23,9 @@ export class BotApp {
   private zone = loadZone();
   private state: PaperState | null = null;
   private cards: StrategyCard[] = [];
+  private coinQuery = "";                         // the owner's search in the coin list
+  private coinFound: MarketInfo[] = [];
+  private coinManualOpen = false;
   private chart!: ChartView;
   private els!: Record<string, HTMLElement>;
   private target: { symbol: string; timeframe: string; id: number | null } | null = null;
@@ -407,6 +410,76 @@ export class BotApp {
       parts.push(el("div", "list-heading", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
     }
 
+    // Which coins the bot scans: top 100 by volume, the most volatile of the last 24h, or the owner's list.
+    {
+      const coinMode = s.rules.coinMode ?? "top";
+      const mine = s.rules.coins ?? [];
+      const modes = el("div", "segmented small");
+      for (const mode of ["top", "volatile", "manual"] as const) {
+        const b = el("button", coinMode === mode ? "active" : "", t(`bot.coins.${mode}` as MessageKey,
+          { n: String(s.rules.volatileCoins ?? 30) }));
+        b.addEventListener("click", () => {
+          if (coinMode === mode) return;
+          if (mode === "manual" && !mine.length) {
+            this.coinManualOpen = true;   // choose coins first; saved once there is at least one
+            this.renderPanel();
+            return;
+          }
+          this.coinManualOpen = false;
+          void this.act({ kind: "coins", mode, coins: mine });
+        });
+        modes.append(b);
+      }
+      parts.push(el("div", "list-heading", t("bot.coins.title")), modes);
+      if (coinMode === "manual" || this.coinManualOpen) {
+        const chips = el("div", "bot-coin-chips");
+        for (const symbol of mine) {
+          const chip = el("button", "bot-coin-chip", `${symbol.split("/")[0]} ×`);
+          chip.title = t("bot.coins.remove");
+          chip.addEventListener("click", () => {
+            const rest = mine.filter((c) => c !== symbol);
+            void this.act(rest.length ? { kind: "coins", mode: "manual", coins: rest } : { kind: "coins", mode: "top", coins: [] });
+          });
+          chips.append(chip);
+        }
+        const search = document.createElement("input");
+        search.type = "search";
+        search.dir = "ltr";
+        search.placeholder = t("bot.coins.search");
+        search.value = this.coinQuery;
+        const found = el("div", "bot-coin-chips");
+        const showFound = () => {
+          found.replaceChildren(...this.coinFound.filter((m) => !mine.includes(m.symbol)).slice(0, 8).map((m) => {
+            const b = el("button", "bot-coin-add", `+ ${m.base}`);
+            b.addEventListener("click", () => {
+              this.coinQuery = "";
+              this.coinFound = [];
+              this.coinManualOpen = false;
+              void this.act({ kind: "coins", mode: "manual", coins: [...mine, m.symbol] });
+            });
+            return b;
+          }));
+        };
+        showFound();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        search.addEventListener("input", () => {
+          this.coinQuery = search.value;
+          clearTimeout(timer);
+          timer = setTimeout(async () => {
+            const query = this.coinQuery.trim();
+            try {
+              this.coinFound = query ? await this.backend.getMarkets("futures", query) : [];
+            } catch {
+              this.coinFound = [];
+            }
+            showFound();
+          }, 300);
+        });
+        parts.push(chips, search, found);
+      }
+      parts.push(el("div", "bot-hint", t(`bot.coins.hint.${coinMode}` as MessageKey, { n: String(s.rules.volatileCoins ?? 30) })));
+    }
+
     // Auto / Manual: in manual the owner picks the strategies, the bot does the rest.
     const modes = el("div", "segmented small");
     for (const mode of ["auto", "manual"] as const) {
@@ -733,7 +806,13 @@ export class BotApp {
     const scroll = document.createElement("div");
     scroll.className = "scanner-box";
     scroll.append(table);
+    // The table is rebuilt on every refresh: keep the owner's scroll place (it jumped to the top).
+    const old = box.querySelector<HTMLElement>(".scanner-box");
+    const top = old?.scrollTop ?? 0;
+    const left = old?.scrollLeft ?? 0;
     box.replaceChildren(title, scroll);
+    scroll.scrollTop = top;
+    scroll.scrollLeft = left;
   }
 }
 

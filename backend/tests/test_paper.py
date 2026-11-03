@@ -361,6 +361,25 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.set_brain_threshold(None)
         self.assertIsNone(bot.account["brainThreshold"])
 
+    async def test_owner_coin_choice_is_kept(self):
+        bot = self.bot
+        bot.reset(100)
+        self.assertEqual(bot.public()["rules"]["coinMode"], "top")
+        bot.set_coins("manual", ["ETH/USDT:USDT", "BTC/USDT:USDT", "ETH/USDT:USDT"])
+        bot.reset(50)
+        self.assertEqual((bot.account["coinMode"], bot.account["coins"]), ("manual", ["ETH/USDT:USDT", "BTC/USDT:USDT"]))
+        bot.set_coins("volatile", [])
+        self.assertEqual(bot.public()["rules"]["coinMode"], "volatile")
+        self.assertEqual(bot.account["coins"], ["ETH/USDT:USDT", "BTC/USDT:USDT"])   # the list stays for later
+
+    async def test_start_again_keeps_the_manual_strategy_choice(self):
+        bot = self.bot
+        bot.reset(100)
+        bot.set_mode("manual", ["donchian", "supertrend"])
+        bot.reset(50)
+        bot.start()
+        self.assertEqual((bot.account["mode"], bot.account["strategies"]), ("manual", ["donchian", "supertrend"]))
+
     async def test_break_even_trades_do_not_count_as_losses(self):
         bot = self.bot
         bot.reset(100)

@@ -142,6 +142,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(client.post("/api/paper/brain", json={"threshold": 0.9}).status_code, 400)
         rules = client.get("/api/paper").json()["rules"]
         self.assertEqual((rules["maxOpen"], rules["maxSameSide"]), (None, None))     # no limits
+        body = client.post("/api/paper/coins", json={"mode": "manual", "coins": ["ETH/USDT:USDT"]}).json()
+        self.assertEqual((body["rules"]["coinMode"], body["rules"]["coins"]), ("manual", ["ETH/USDT:USDT"]))
+        self.assertEqual(client.post("/api/paper/coins", json={"mode": "manual", "coins": ["NOPE/USDT:USDT"]}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/coins", json={"mode": "manual", "coins": []}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/coins", json={"mode": "random"}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/coins", json={"mode": "volatile"}).json()["rules"]["coinMode"], "volatile")
         client.post("/api/paper/start")
         self.assertEqual(client.post("/api/paper/close-all").json()["status"], "stopped")
         with mock.patch.dict(os.environ, {"TRADING_BOT_DATA": self._tmp.name, "https_proxy": "", "http_proxy": "",

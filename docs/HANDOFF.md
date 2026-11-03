@@ -24,6 +24,13 @@ download links. The repository is public: never commit keys, passwords or accoun
   coin, stops when free margin runs out; margin per position still at most 1/6 of the money).
   Owner's brain knob in the panel: least chance 0-60% (0 = brain off) or "auto" (the model's own).
   Signals not traded because of a pause / no money are marked in memory (paused / full).
+- Coins (owner 2026-11-03): panel section "The bot's coins": top 100 by 24h volume (default), the 30
+  most volatile (24h high-low range, at least 1M USDT volume, list renewed hourly), or a manual list
+  (search + chips). Kept on "start again" together with the manual strategy choice.
+- 2026-11-03 checks: stop at the previous swing high/low raises the win rate (35% -> 46%) but not
+  the result; only 16% of stopped trades later reached the target. The 4h result of 2026-11-02 did
+  not hold on another top-15 coin list (-0.04 R): needs a 100-coin test. The brain model is "off"
+  (it did not beat no filter on unseen signals), so the owner's brain knob has no effect for now.
 - Barrage account: removed 2026-11-02 (owner). An old paper-fast.json on disk is no longer used.
 - Only ticked timeframes are scanned; a new 1m candle may put a slower scan off once (fix of
   2026-11-02: before it, slow computers never scanned 5m-1h).

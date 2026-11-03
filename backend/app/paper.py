@@ -357,6 +357,8 @@ def new_account(capital: float, now: float) -> dict:
         "pauseLosses": PAUSE_LOSSES,       # owner's option: pause after this many losses in a row (0 = off)
         "pauseFall": PAUSE_FALL * 100,     # owner's option: pause after this % fall (0 = off)
         "brainThreshold": None,            # owner's option: least chance the brain must give (None = its own)
+        "coinMode": "top",                 # owner's option: top (by volume) | volatile (24h) | manual
+        "coins": [],                       # the owner's own list for "manual" (ccxt symbols)
         "pausedUntil": None,
         "pausedAt": None,
         "pauseReason": None,
@@ -504,6 +506,8 @@ class PaperBot:
                       "maxOpen": None if self.profile.max_open >= UNLIMITED else self.profile.max_open,
                       "maxSameSide": None if self.profile.max_same_side >= UNLIMITED else self.profile.max_same_side,
                       "brainThreshold": a.get("brainThreshold"),
+                      "coinMode": a.get("coinMode", "top"), "coins": a.get("coins", []),
+                      "volatileCoins": config.VOLATILE_COINS,
                       "maxLeverage": MAX_LEVERAGE, "smartPause": self.profile.smart_pause,
                       "allSignals": self.profile.all_signals,
                       **({"strictTrades": STRICT_TRADES, "strictProfitFactor": STRICT_PROFIT_FACTOR}
@@ -535,8 +539,9 @@ class PaperBot:
             self.save()
 
     def reset(self, capital: float) -> None:
-        kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold")
-                if k in self.account}
+        # Settings, not results: kept (owner 2026-11-03: the manual strategy choice was lost here).
+        kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
+                                              "mode", "strategies", "coinMode", "coins") if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
         self.account.update(kept)   # settings, not results: kept
@@ -557,6 +562,13 @@ class PaperBot:
 
     def set_profit_cap(self, usd: float) -> None:
         self.account["profitCap"] = max(0.0, float(usd))
+        self.save()
+
+    def set_coins(self, mode: str, coins: list[str]) -> None:
+        """Owner's choice of coins: top / volatile / manual (with the list)."""
+        self.account["coinMode"] = mode
+        if mode == "manual":
+            self.account["coins"] = list(dict.fromkeys(coins))
         self.save()
 
     def set_brain_threshold(self, threshold: Optional[float]) -> None:

@@ -21,6 +21,12 @@ QUOTE_CURRENCY = "USDT"
 # How many coins the default list shows, ranked by 24h volume.
 TOP_MARKETS_LIMIT = 50
 SCANNER_COINS = 100  # the scanner looks at the 100 coins with the highest 24h volume (owner's choice)
+# The bot's coins (owner 2026-11-03): "top" = SCANNER_COINS by volume, "volatile" = the coins that moved
+# most in 24h among those with enough volume (thin coins fill at bad prices), "manual" = the owner's list.
+VOLATILE_COINS = 30
+VOLATILE_MIN_VOLUME = 1_000_000.0   # USDT traded in 24h
+VOLATILE_REFRESH_SECONDS = 3600.0
+MAX_MANUAL_COINS = 100
 
 # Timeframes the user can pick, grouped by trading mode.
 TIMEFRAME_GROUPS = {

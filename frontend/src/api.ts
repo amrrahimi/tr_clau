@@ -38,6 +38,7 @@ export type PaperAction =
   | { kind: "cap"; usd: number }
   | { kind: "pause"; losses: number; fall: number }
   | { kind: "brain"; threshold: number | null }
+  | { kind: "coins"; mode: "top" | "volatile" | "manual"; coins: string[] }
   | { kind: "timeframes"; timeframes: string[] }
   | { kind: "advice"; position_id: number; answer: "hold" | "close" };
 

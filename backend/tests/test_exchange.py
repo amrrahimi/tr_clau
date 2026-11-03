@@ -58,6 +58,21 @@ class TopMarketsTest(unittest.IsolatedAsyncioTestCase):
             MarketService(FakeExchange(), "options")
 
 
+class VolatileTest(unittest.IsolatedAsyncioTestCase):
+    async def test_most_volatile_with_enough_volume(self):
+        from .fake_exchange import default_markets
+        tickers = {
+            "BTC/USDT:USDT": {"quoteVolume": 5e6, "last": 100.0, "high": 103.0, "low": 99.0},   # 4%
+            "ETH/USDT:USDT": {"quoteVolume": 2e6, "last": 100.0, "high": 112.0, "low": 100.0},  # 12%
+        }
+        service = MarketService(FakeExchange(markets=default_markets(), tickers=tickers), "futures")
+        found = await service.volatile_markets(5, 1e6)
+        self.assertEqual([m.base for m in found], ["ETH", "BTC"])
+        self.assertAlmostEqual(found[0].range_24h, 12.0)
+        self.assertEqual(await service.volatile_markets(5, 3e6), [found[1]])     # thin coins left out
+        self.assertEqual(found[0].to_dict()["range24h"], 12.0)
+
+
 class SearchTest(unittest.IsolatedAsyncioTestCase):
     async def test_exact_name_first_then_volume(self):
         service = MarketService(FakeExchange(), "spot")
