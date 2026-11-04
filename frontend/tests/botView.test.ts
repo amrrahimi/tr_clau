@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, timeLeft, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -204,4 +204,43 @@ test("waiting limit orders: time left and the diary lines", () => {
   for (const reason of ["limit_expired", "limit_cancelled"]) {
     assert.notEqual(translate("fa", `bot.skip.${reason}` as Parameters<typeof translate>[1]), `bot.skip.${reason}`);
   }
+});
+
+test("quick ticks one after another all count (the Windows bug)", () => {
+  const all = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"];
+  let chosen = ["5m", "15m", "30m", "1h"];
+  chosen = toggled(all, chosen, "5m", false);     // untick 5m
+  chosen = toggled(all, chosen, "30m", false);    // then 30m: built on the first change, 5m stays off
+  chosen = toggled(all, chosen, "4h", true);
+  assert.deepEqual(chosen, ["15m", "1h", "4h"]);
+});
+
+test("a ticked checkbox is not typing; text boxes and the slider are", () => {
+  assert.equal(typingField("INPUT", "checkbox"), false);
+  assert.equal(typingField("INPUT", "radio"), false);
+  assert.equal(typingField("BUTTON", ""), false);
+  assert.equal(typingField("INPUT", "number"), true);
+  assert.equal(typingField("INPUT", "search"), true);
+  assert.equal(typingField("INPUT", "range"), true);
+  assert.equal(typingField("TEXTAREA", ""), true);
+});
+
+test("profit lock point follows the target; off or done shows none; settings checked", () => {
+  // entry 100, target 102: 80% of the way is 101.6
+  assert.equal(lockTrigger(position, { enabled: true, trigger: 80 }), 101.6);
+  assert.equal(lockTrigger(position, { enabled: true, trigger: 80 }, 110), 108);
+  assert.equal(lockTrigger(position, { enabled: false, trigger: 80 }), null);
+  assert.equal(lockTrigger({ ...position, lockedAt: 5 }, { enabled: true, trigger: 80 }), null);
+  assert.equal(lockValid(80, 40), true);
+  assert.equal(lockValid(40, 80), false);
+  assert.equal(lockValid(100, 40), false);
+  assert.equal(lockValid(80, 0), false);
+});
+
+test("a limit entry says so in the diary; the lock exit has its words", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  const e = { time: 1, kind: "open" as const, symbol: "AGT", side: "short" as const, timeframe: "3m", strategy: "donchian", leverage: 4 };
+  assert.ok(eventText({ ...e, entryType: "limit" }, t).endsWith("(لیمیت)"));
+  assert.ok(!eventText(e, t).includes("لیمیت"));
+  assert.equal(translate("fa", "bot.reason.lock"), "قفل سود");
 });

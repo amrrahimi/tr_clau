@@ -137,6 +137,9 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((body["limitEntry"], body["orders"]), (True, []))
         self.assertIn("fillRate", body["entryStats"]["limit"])
         self.assertFalse(client.post("/api/paper/limit", json={"enabled": False}).json()["limitEntry"])
+        lock = client.post("/api/paper/lock", json={"enabled": True, "trigger": 90, "at": 50}).json()["rules"]["lock"]
+        self.assertEqual(lock, {"enabled": True, "trigger": 90, "at": 50})
+        self.assertEqual(client.post("/api/paper/lock", json={"enabled": True, "trigger": 40, "at": 50}).status_code, 400)
         self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99, "stop": -1}).status_code, 400)
         self.assertEqual(client.post("/api/paper/cap", json={"usd": 0.1}).json()["rules"]["profitCap"], 0.1)
         self.assertEqual(client.post("/api/paper/cap", json={"usd": -1}).status_code, 400)

@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME, type Level } from "./chart.ts";
-import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, timeLeft, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -38,12 +38,14 @@ export class BotApp {
   private capitalDraft: string | null = null; // what the owner typed, kept across redraws
   private capDraft: string | null = null;
   private pauseDraft: { losses: string; fall: string } | null = null;
+  private lockDraft: { trigger: string; at: string } | null = null;
   private brainDraft: number | null = null;   // percent while the knob is being moved
   private proxyDraft: string | null = null;
   private confirmCloseAll = false;
   private failures = 0; // polls in a row without an answer from the engine
   private connection: ConnectionState | null = null;
   private polls = 0;
+  private actions = 0;   // counts button presses, so a poll answer from before a press is not shown
   private error: string | null = null;
 
   constructor(private readonly root: HTMLElement, private readonly backend: Backend,
@@ -154,8 +156,12 @@ export class BotApp {
   // ---------- data ----------
 
   private async refresh(): Promise<void> {
+    const asked = this.actions;
     try {
       const state = await this.backend.getPaper();
+      // A button was pressed while this answer was on its way: it may show the state from before the
+      // press (ticks "coming back"); the button's own answer is newer, so this one is dropped.
+      if (asked !== this.actions) return;
       this.state = state;
       this.error = null;
       this.failures = 0;
@@ -179,8 +185,16 @@ export class BotApp {
     } catch {
       return;
     }
-    const typing = document.activeElement instanceof HTMLInputElement && this.els.panel.contains(document.activeElement);
-    if (!typing) this.renderPanel();
+    if (!this.typing()) this.renderPanel();
+  }
+
+  /** The owner is typing in a box of the panel (or moving its slider): do not redraw it under the cursor.
+   * A ticked checkbox is not typing: Windows gives it the keyboard focus on a click (macOS does not), and
+   * counting it as typing stopped the panel from redrawing, so later ticks undid earlier ones. */
+  private typing(): boolean {
+    const active = document.activeElement;
+    if (!active || !this.els.panel.contains(active)) return false;
+    return typingField(active.tagName, active instanceof HTMLInputElement ? active.type : "");
   }
 
   /** Unless the owner clicked a trade, the chart follows the bot's newest trade. */
@@ -195,8 +209,10 @@ export class BotApp {
   }
 
   private async act(action: PaperAction): Promise<void> {
+    this.actions++;
     try {
       this.state = await this.backend.paperAction(action);
+      this.actions++;   // polls that started while this was on its way are older than this answer
       this.error = null;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -266,27 +282,39 @@ export class BotApp {
     const fees = this.state!.rules.fees;
     const now = () => p.lastPrice ?? this.candles[this.candles.length - 1]?.close ?? p.entryPrice;
     const evenTitle = this.t("bot.level.breakevenAt");
+    const lockTitle = this.t("bot.level.lockAt");
     const label = (kind: "stop" | "target", price: number) => {
-      const level = this.t(kind === "target" ? "bot.level.target" : p.breakevenAt ? "bot.level.breakeven" : "bot.level.stop");
+      const level = this.t(kind === "target" ? "bot.level.target" : p.lockedAt ? "bot.level.locked"
+        : p.breakevenAt ? "bot.level.breakeven" : "bot.level.stop");
       const pnl = resultAt(p, price, fees.taker, kind === "target" ? fees.maker : fees.taker);
       const bad = levelProblem(p, kind, price, now()) ? "⛔ " : "";
       return bad + this.t("bot.drag.label", { level, price: formatPrice(price, digits), pnl: formatMoney(pnl) });
     };
     const drag = (kind: "stop" | "target") => ({
       onMove: (price: number) => {
-        const trigger = kind === "target" ? breakevenTrigger(p, price) : null;
-        return { title: label(kind, price), others: trigger === null ? {} : { [`b${p.id}`]: { price: trigger, title: evenTitle } } };
+        const others: Record<string, { price: number; title: string }> = {};
+        if (kind === "target") {   // the break-even and profit-lock points follow the target
+          const even = breakevenTrigger(p, price);
+          if (even !== null) others[`b${p.id}`] = { price: even, title: evenTitle };
+          const lock = lockTrigger(p, this.state?.rules.lock, price);
+          if (lock !== null) others[`k${p.id}`] = { price: lock, title: lockTitle };
+        }
+        return { title: label(kind, price), others };
       },
       onDrop: (price: number) => void this.moveLevel(p, kind, Number(price.toFixed(digits))),
     });
     const levels: Level[] = [
-      { key: `e${p.id}`, price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entry") },
+      { key: `e${p.id}`, price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entrySized", {
+        kind: this.t(p.entryType === "limit" ? "bot.entry.limit" : "bot.entry.market"),
+        margin: p.margin.toFixed(2), lev: String(p.leverage) }) },
       { key: `l${p.id}`, price: p.liquidation, color: "#ff9800", title: this.t("bot.level.liquidation"), style: "dashed" },
       { key: `s${p.id}`, price: p.stop, color: THEME.down, title: label("stop", p.stop), drag: drag("stop") },
       { key: `t${p.id}`, price: p.takeProfit, color: THEME.up, title: label("target", p.takeProfit), drag: drag("target") },
     ];
     const trigger = breakevenTrigger(p);
     if (trigger !== null) levels.push({ key: `b${p.id}`, price: trigger, color: "#787b86", title: evenTitle, style: "dashed" });
+    const lock = lockTrigger(p, this.state!.rules.lock);
+    if (lock !== null) levels.push({ key: `k${p.id}`, price: lock, color: "#b388ff", title: lockTitle, style: "dashed" });
     return levels;
   }
 
@@ -319,10 +347,8 @@ export class BotApp {
     this.els.error.hidden = !this.error;
     if (this.error) this.els.errorText.textContent = this.error;
     this.renderTitle();
-    // Do not redraw the panel while the owner is typing the amount of money.
-    const active = document.activeElement;
-    const typing = (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && this.els.panel.contains(active);
-    if (!typing) this.renderPanel();
+    // Do not redraw the panel while the owner is typing (money, keys, coin search).
+    if (!this.typing()) this.renderPanel();
     this.renderTrades();
   }
 
@@ -475,11 +501,13 @@ export class BotApp {
         box.type = "checkbox";
         box.checked = chosen.includes(tf);
         box.addEventListener("change", () => {
-          const next = s.timeframes.filter((x) => (x === tf ? box.checked : chosen.includes(x)));
+          const now = this.state ?? s;   // the latest state: earlier ticks may not be redrawn yet
+          const next = toggled(now.timeframes, now.chosenTimeframes ?? now.timeframes, tf, box.checked);
           if (!next.length) {
             box.checked = true; // at least one
             return;
           }
+          now.chosenTimeframes = next;   // at once, so a quick next tick builds on this one
           void this.act({ kind: "timeframes", timeframes: next });
         });
         const name = el("span", "", tf);
@@ -565,8 +593,10 @@ export class BotApp {
         box.type = "checkbox";
         box.checked = ai.timeframes.includes(tf);
         box.addEventListener("change", () => {
-          const next = s.timeframes.filter((x) => (x === tf ? box.checked : ai.timeframes.includes(x)));
-          void this.act({ kind: "ai", enabled: ai.enabled, timeframes: next });
+          const now = (this.state ?? s).ai ?? ai;
+          const next = toggled(s.timeframes, now.timeframes, tf, box.checked);
+          now.timeframes = next;
+          void this.act({ kind: "ai", enabled: now.enabled, timeframes: next });
         });
         const name = el("span", "", tf);
         name.dir = "ltr";
@@ -652,7 +682,8 @@ export class BotApp {
           const chip = el("button", "bot-coin-chip", `${symbol.split("/")[0]} ×`);
           chip.title = t("bot.coins.remove");
           chip.addEventListener("click", () => {
-            const rest = mine.filter((c) => c !== symbol);
+            const rest = (this.state?.rules.coins ?? mine).filter((c) => c !== symbol);
+            if (this.state) this.state.rules.coins = rest;
             void this.act(rest.length ? { kind: "coins", mode: "manual", coins: rest } : { kind: "coins", mode: "top", coins: [] });
           });
           chips.append(chip);
@@ -670,7 +701,10 @@ export class BotApp {
               this.coinQuery = "";
               this.coinFound = [];
               this.coinManualOpen = false;
-              void this.act({ kind: "coins", mode: "manual", coins: [...mine, m.symbol] });
+              const now = this.state?.rules.coins ?? mine;
+              const next = now.includes(m.symbol) ? now : [...now, m.symbol];
+              if (this.state) this.state.rules.coins = next;
+              void this.act({ kind: "coins", mode: "manual", coins: next });
             });
             return b;
           }));
@@ -720,11 +754,13 @@ export class BotApp {
         box.type = "checkbox";
         box.checked = s.strategies.includes(kind);
         box.addEventListener("change", () => {
-          const chosen = kinds.filter((k) => (k === kind ? box.checked : s.strategies.includes(k)));
+          const now = this.state ?? s;
+          const chosen = toggled(kinds, now.strategies, kind, box.checked);
           if (!chosen.length) {
             box.checked = true; // at least one
             return;
           }
+          now.strategies = chosen;
           void this.act({ kind: "mode", mode: "manual", strategies: chosen });
         });
         line.append(box, document.createTextNode(` ${t(`strat.${kind}` as MessageKey)}`));
@@ -771,6 +807,51 @@ export class BotApp {
     });
     capBox.append(el("label", "", t("bot.cap")), capInput, capSave);
     parts.push(capBox, el("div", "bot-hint", t("bot.capHint")));
+
+    // Profit lock (owner's option): at `trigger` % of the way to the target the stop moves to `at` %.
+    {
+      const lock = s.rules.lock ?? { enabled: false, trigger: 80, at: 40 };
+      const onOff = el("div", "segmented small");
+      for (const on of [true, false]) {
+        const b = el("button", lock.enabled === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+        b.addEventListener("click", () => {
+          if (lock.enabled !== on) void this.act({ kind: "lock", enabled: on, trigger: lock.trigger, at: lock.at });
+        });
+        onOff.append(b);
+      }
+      const draft = this.lockDraft ?? { trigger: String(lock.trigger), at: String(lock.at) };
+      const box = el("div", "bot-capital");
+      const number = (value: string, key: "trigger" | "at") => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "1";
+        input.max = "99";
+        input.step = "5";
+        input.dir = "ltr";
+        input.value = value;
+        input.addEventListener("input", () => {
+          this.lockDraft = { ...(this.lockDraft ?? draft), [key]: input.value };
+          input.classList.remove("invalid");
+        });
+        return input;
+      };
+      const triggerInput = number(draft.trigger, "trigger");
+      const atInput = number(draft.at, "at");
+      const save = el("button", "bot-reset", t("bot.save"));
+      save.addEventListener("click", () => {
+        const trigger = Number(triggerInput.value);
+        const at = Number(atInput.value);
+        const ok = lockValid(trigger, at);
+        triggerInput.classList.toggle("invalid", !ok);
+        atInput.classList.toggle("invalid", !ok);
+        if (!ok) return;
+        this.lockDraft = null;
+        void this.act({ kind: "lock", enabled: lock.enabled, trigger, at });
+      });
+      box.append(el("label", "", t("bot.lock.trigger")), triggerInput, el("label", "", t("bot.lock.at")), atInput, save);
+      parts.push(el("div", "list-heading", t("bot.lock.title")), onOff, box,
+        el("div", "bot-hint", t("bot.lock.hint", { trigger: String(lock.trigger), at: String(lock.at) })));
+    }
 
     // Smart pause rules (owner's option, 0 = off).
     if (s.rules.smartPause !== false) {
@@ -946,8 +1027,9 @@ export class BotApp {
     const table = document.createElement("table");
     table.className = "scanner-table bot-table";
     const head = document.createElement("tr");
-    for (const key of ["bot.colState", "scanner.colCoin", "bot.colTf", "strategies.colName", "scanner.colSide", "bot.colLev",
-      "scanner.colEntry", "scanner.colSl", "scanner.colTp", "bot.colPrice", "bot.colPnl", "scanner.colTime"] as MessageKey[]) {
+    for (const key of ["bot.colState", "scanner.colCoin", "bot.colTf", "strategies.colName", "scanner.colSide", "bot.colEntryType",
+      "bot.colMargin", "bot.colLev", "bot.colNotional", "scanner.colEntry", "scanner.colSl", "scanner.colTp", "bot.colPrice",
+      "bot.colPnl", "scanner.colTime"] as MessageKey[]) {
       const th = document.createElement("th");
       th.textContent = t(key);
       head.append(th);
@@ -971,10 +1053,13 @@ export class BotApp {
         [p.timeframe, ""],
         [t(`strat.${p.strategy}` as MessageKey), ""],
         [t(p.side === "long" ? "strategies.long" : "strategies.short"), `side ${p.side}`],
+        [t(p.entryType === "limit" ? "bot.entry.limit" : "bot.entry.market"), p.entryType === "limit" ? "entry-limit" : ""],
+        [`${p.margin.toFixed(2)}$`, "money"],
         [`×${p.leverage}`, ""],
+        [`${p.notional.toFixed(2)}$`, ""],
         [formatPrice(p.entryPrice, digits), ""],
         // After break-even the stop sits at the break-even price: marked with "＝".
-        [`${p.breakevenAt ? "＝ " : ""}${formatPrice(p.stop, digits)}`, p.breakevenAt ? "even-stop" : "loss"],
+        [`${p.lockedAt ? "🔒 " : p.breakevenAt ? "＝ " : ""}${formatPrice(p.stop, digits)}`, p.lockedAt || p.breakevenAt ? "even-stop" : "loss"],
         [formatPrice(p.takeProfit, digits), "up"],
         [formatPrice(closed ? (p as PaperTrade).exitPrice : p.lastPrice ?? null, digits), ""],
         [outcome === "even" ? "0.00" : formatMoney(result),
@@ -986,6 +1071,7 @@ export class BotApp {
         td.textContent = text;
         td.className = cls;
         if (cls === "coin" && p.edited) td.title = t("bot.edited");
+        if (cls === "money") td.title = t("bot.riskAtStop", { usd: (p.risk ?? 0).toFixed(2) });
         if (/^[\d×+−.—]/.test(text)) td.dir = "ltr";
         tr.append(td);
       }

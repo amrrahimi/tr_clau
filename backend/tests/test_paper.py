@@ -132,6 +132,48 @@ class SlotsTest(unittest.TestCase):
         self.assertEqual([c["base"] for c in pp.pick(mixed, set(), 3, {"long": 1, "short": 4})], ["A", "S"])
 
 
+class ProfitLockTest(unittest.TestCase):
+    """Owner's example: entry 100, stop 98, target 110; at 80% (108) the stop moves to 40% (104)."""
+    def pos(self, **over):
+        return position(**{"stop": 98, "stopLoss": 98, "takeProfit": 110, "breakevenPart": 0,
+                           "lock": {"trigger": 0.8, "at": 0.4}, **over})
+
+    def test_reaching_80_percent_moves_the_stop_to_40_percent_and_a_return_exits_there(self):
+        p = self.pos()
+        candles = [bar(0, 100, 100, 100, 100), bar(60, 100, 108.2, 99.5, 107)]
+        self.assertIsNone(pp.check_exit(p, candles, 107, 60, now=125))
+        self.assertEqual((p["stop"], p["lockedAt"]), (104, 60))
+        candles.append(bar(120, 107, 107.5, 103, 103.5))           # back down: exits at 104 with a profit
+        self.assertEqual(pp.check_exit(p, candles, 103.5, 60, now=185), (104, "lock"))
+
+    def test_straight_to_the_target_keeps_the_full_profit(self):
+        p = self.pos()
+        candles = [bar(0, 100, 100, 100, 100), bar(60, 100, 108.5, 99.8, 108), bar(120, 108, 110.5, 107, 110)]
+        self.assertEqual(pp.check_exit(p, candles, 110, 60, now=185), (110, "target"))
+
+    def test_below_80_percent_nothing_changes_and_the_live_price_can_lock(self):
+        p = self.pos()
+        candles = [bar(0, 100, 100, 100, 100), bar(60, 100, 107.9, 99.5, 107)]
+        self.assertIsNone(pp.check_exit(p, candles, 107.5, 60, now=125))
+        self.assertEqual(p["stop"], 98)
+        self.assertIsNone(pp.check_exit(p, candles, 108.1, 60, now=126))   # the price seen now: 81%
+        self.assertEqual(p["stop"], 104)
+
+    def test_never_pulls_a_better_stop_back_and_short_side(self):
+        p = self.pos(stop=105)                                          # the owner already locked more
+        pp._maybe_lock(p, 109, 1)
+        self.assertEqual(p["stop"], 105)
+        s = position(side=SHORT, stop=102, stopLoss=102, takeProfit=90, breakevenPart=0, lock={"trigger": 0.8, "at": 0.4})
+        pp._maybe_lock(s, 91.9, 1)                                      # 81% of the way down
+        self.assertEqual(s["stop"], 96)
+
+    def test_off_means_as_before(self):
+        p = self.pos()
+        p.pop("lock")
+        candles = [bar(0, 100, 100, 100, 100), bar(60, 100, 109, 99.5, 107), bar(120, 107, 107, 97.5, 98)]
+        self.assertEqual(pp.check_exit(p, candles, 98, 60, now=185), (98, "stop"))
+
+
 class BotTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         # These tests are about the loop, not the bot's strategy list: every strategy on every timeframe.
@@ -1162,3 +1204,39 @@ class LimitEntryTest(unittest.IsolatedAsyncioTestCase):
         self.clock[0] = self.T + 900
         await self.bot._watch_orders(self.clock[0])
         self.assertEqual(memory.db.execute("SELECT skip_reason, taken FROM signals").fetchone(), ("limit_expired", 0))
+
+    async def test_order_cancelled_while_being_checked_does_not_open(self):
+        await self.place()
+        o = self.bot.account["orders"][0]
+        self.bot.set_limit_entry(False)          # the owner's switch, while the check waited for candles
+        self.assertIsNone(self.bot._fill(o, 999_900, self.T, None))
+        self.assertEqual(self.bot.account["positions"], [])
+
+    async def test_order_price_is_rounded_to_the_coins_price_step(self):
+        self.assertEqual(pp.price_step([bar(0, 0.03241, 0.03245, 0.0323, 0.0324)]), 0.00001)
+        self.assertAlmostEqual(pp.to_step(0.0323920384, 0.00001, down=True), 0.03239)
+        self.assertAlmostEqual(pp.to_step(0.0323920384, 0.00001, down=False), 0.03240)
+        self.rows[("A/USDT:USDT", "15m")] = [bar(999_900, 100.03, 100.07, 99.98, 100.05)]
+        await self.place()              # long, price 100.05, stop 99: 0.1 x 1.05 below = 99.945 -> 99.94
+        self.assertEqual(self.bot.account["orders"][0]["price"], 99.94)
+        await self.place("B", SHORT)    # whole-number candles (step 1): rounding would reach the stop, kept as is
+        self.assertAlmostEqual(self.bot.account["orders"][1]["price"], 100.1)
+
+    async def test_profit_lock_setting_reaches_open_positions(self):
+        self.bot.set_limit_entry(False)
+        await self.place()
+        p = self.bot.account["positions"][0]
+        self.rows[("A/USDT:USDT", "15m")] = [bar(999_900, 100, 100, 100, 100)]
+        await self.bot._watch_positions(self.T)
+        self.assertNotIn("lock", p)                                     # off by default
+        self.bot.set_lock(True, 80, 40)
+        await self.bot._watch_positions(self.T)
+        self.assertEqual(p["lock"], {"trigger": 0.8, "at": 0.4})
+        self.rows[("A/USDT:USDT", "15m")] = [bar(999_900, 100, 100, 100, 101.7)]   # 85% of the way (target 102)
+        await self.bot._watch_positions(self.T)
+        self.assertAlmostEqual(p["stop"], 100.8)
+        self.assertEqual(self.bot.public()["rules"]["lock"], {"enabled": True, "trigger": 80, "at": 40})
+        self.assertIsNone(self.bot.set_levels(p["id"], stop=100.5))     # the owner moves it: his stop again
+        self.assertIsNone(p["lockedAt"])
+        self.bot.reset(100)
+        self.assertTrue(self.bot.account["lockEnabled"])                # a setting: kept on "start again"

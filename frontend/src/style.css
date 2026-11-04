@@ -562,3 +562,5 @@ button:hover { background: var(--border); }
 .bot-compare th, .bot-compare td { padding: 2px 4px; text-align: center; border-bottom: 1px solid var(--border, #2a2e39); }
 .bot-compare td.up { color: var(--up, #089981); }
 .bot-compare td.down { color: var(--down, #f23645); }
+.bot-table td.entry-limit { color: #b388ff; }
+.bot-table td.money { cursor: help; }

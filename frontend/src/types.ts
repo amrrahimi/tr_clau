@@ -119,7 +119,7 @@ export interface Trade {
   takeProfit: number;
   exitTime: number | null; // null while open
   exitPrice: number | null;
-  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | null;
+  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | "lock" | null;
   breakevenTime: number | null; // when the stop moved to the entry price
   result: "win" | "loss" | "breakeven" | "open";
   pnlPercent: number | null; // after fees
@@ -226,6 +226,7 @@ export interface PaperPosition {
   edited?: boolean;         // the owner moved the stop or the target on the chart
   entryType?: "market" | "limit";   // how it was entered (older trades: market)
   openRisk?: number;        // USDT lost at the stop when it opened (before the owner moved the stop)
+  lockedAt?: number | null; // when the profit lock moved the stop
   /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */
   advice?: { time: number; suggest: "hold" | "close"; reason: "fine" | "opposite" | "state" | "unknown";
     detail: string; pnl: number; answer: "hold" | null } | null;
@@ -237,7 +238,7 @@ export interface PaperPosition {
 export interface PaperTrade extends PaperPosition {
   exitPrice: number;
   exitTime: number;
-  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap";
+  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap" | "lock";
   pnl: number; // USDT after fees
   fees: number;
   pnlPercent: number; // of the margin
@@ -248,6 +249,7 @@ export interface PaperEvent {
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
     | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel";
   price?: number; // order: the limit price
+  entryType?: "market" | "limit"; // open: how it was entered
   what?: "stop" | "target"; // levels: which line the owner moved
   old?: number; // levels: price before
   new?: number; // levels: price after
@@ -415,5 +417,6 @@ export interface PaperState {
     maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
     smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
     limitOffset?: number; limitExpireCandles?: number;   // limit entry: % of the stop distance, candles
+    lock?: { enabled: boolean; trigger: number; at: number };   // profit lock: % of the way to the target
     fees: { maker: number; taker: number } };
 }

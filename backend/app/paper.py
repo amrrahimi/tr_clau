@@ -116,6 +116,10 @@ ASK_AUTO_SECONDS = 30.0
 # candles of the signal's timeframe or when the price reaches the target or the stop first.
 LIMIT_OFFSET = 0.1
 LIMIT_EXPIRE_CANDLES = 1
+# Profit lock (owner 2026-11-04, off by default): at LOCK_TRIGGER of the way to the target the stop moves
+# to LOCK_AT of the way. Tested: 10.7k trades -0.103 R -> -0.088 R (both halves better).
+LOCK_TRIGGER = 0.8
+LOCK_AT = 0.4
 ORDER_CANDLE_TF = "1m"          # waiting orders are checked on 1m candles
 ORDER_CANDLE_SECONDS = 60
 PAUSE_SECONDS = 3 * 3600
@@ -218,7 +222,7 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
             break  # still forming
         stop, target = position["stop"], position["takeProfit"]
         if (c["low"] <= stop) if long_ else (c["high"] >= stop):
-            reason = "breakeven" if position.get("breakevenAt") else "stop"
+            reason = _stop_reason(position)
             # A gap past the stop (the candle opened beyond it) fills at the open, worse than the stop.
             gapped = (c["open"] < stop) if long_ else (c["open"] > stop)
             return (c["open"] if gapped else stop), reason
@@ -226,14 +230,63 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
             return target, "target"
         position["checkedFrom"] = c["time"] + tf_seconds
         _maybe_breakeven(position, c["high"] if long_ else c["low"], c["time"])
+        _maybe_lock(position, c["high"] if long_ else c["low"], c["time"])
     if last_price is not None:
         stop, target = position["stop"], position["takeProfit"]
         if (last_price <= stop) if long_ else (last_price >= stop):
             # The price seen is already past the stop: the stop order fills there, not at the stop.
-            return last_price, "breakeven" if position.get("breakevenAt") else "stop"
+            return last_price, _stop_reason(position)
         if (last_price >= target) if long_ else (last_price <= target):
             return target, "target"
+        _maybe_lock(position, last_price, int(now))   # the price seen now can lock the profit too
     return None
+
+
+def _stop_reason(position: dict) -> str:
+    """Why the stop closed it: lock (the profit lock had moved it), breakeven, or a plain stop."""
+    if position.get("lockedAt"):
+        return "lock"
+    return "breakeven" if position.get("breakevenAt") else "stop"
+
+
+def _maybe_lock(position: dict, extreme: float, when: int) -> None:
+    """Profit lock (owner's option): once the price has gone lock["trigger"] of the way to the target
+    (e.g. 0.8), the stop moves to lock["at"] of the way (e.g. 0.4); the target stays. Only ever moves
+    the stop toward profit, and once (until the owner moves the stop himself)."""
+    lock = position.get("lock")
+    if not lock or position.get("lockedAt"):
+        return
+    long_ = position["side"] == LONG
+    way = position["takeProfit"] - position["entryPrice"]
+    trigger = position["entryPrice"] + way * lock["trigger"]
+    if not ((extreme >= trigger) if long_ else (extreme <= trigger)):
+        return
+    new_stop = position["entryPrice"] + way * lock["at"]
+    if (new_stop > position["stop"]) if long_ else (new_stop < position["stop"]):
+        position["stop"] = new_stop
+        position["lockedAt"] = when
+
+
+def price_step(candles: list[dict]) -> Optional[float]:
+    """The coin's price step (tick), read from the decimals its candle prices use (e.g. 0.00001)."""
+    decimals = 0
+    for c in candles[-60:]:
+        for k in ("open", "high", "low", "close"):
+            text = repr(float(c[k]))
+            if "e" in text or "E" in text:
+                return None   # very small or large numbers: no rounding
+            if "." in text:
+                decimals = max(decimals, len(text.split(".")[1].rstrip("0")))
+    return 10 ** -decimals if candles else None
+
+
+def to_step(price: float, step: Optional[float], down: bool) -> float:
+    """Round a price to the step: down (a buy order) or up (a sell order), so it stays a little better."""
+    if not step:
+        return price
+    n = price / step
+    n = math.floor(n + 1e-9) if down else math.ceil(n - 1e-9)
+    return round(n * step, 12)
 
 
 def _maybe_breakeven(position: dict, extreme: float, when: int) -> None:
@@ -402,6 +455,9 @@ def new_account(capital: float, now: float) -> dict:
         "aiTimeframes": list(advisor.DEFAULT_TIMEFRAMES),
         "pendingAsks": [],                 # signals waiting for the owner because the AI did not answer
         "limitEntry": False,               # owner's option: enter with a limit order (maker fee), not at the market
+        "lockEnabled": False,              # owner's option: profit lock (stop moves to lockAt % of the way ...
+        "lockTrigger": LOCK_TRIGGER * 100, # ... once the price has gone lockTrigger % of the way to the target)
+        "lockAt": LOCK_AT * 100,
         "orders": [],                      # limit orders waiting to fill (limitEntry)
         "limitStats": {"placed": 0, "filled": 0, "expired": 0, "cancelled": 0},
         "pausedUntil": None,
@@ -577,6 +633,8 @@ class PaperBot:
                       "pauseLosses": a.get("pauseLosses", PAUSE_LOSSES), "pauseFall": a.get("pauseFall", PAUSE_FALL * 100),
                       "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
                       "limitOffset": LIMIT_OFFSET * 100, "limitExpireCandles": LIMIT_EXPIRE_CANDLES,
+                      "lock": {"enabled": a.get("lockEnabled", False), "trigger": a.get("lockTrigger", LOCK_TRIGGER * 100),
+                               "at": a.get("lockAt", LOCK_AT * 100)},
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
 
@@ -607,7 +665,7 @@ class PaperBot:
         self._cancel_orders("limit_cancelled", "reset")
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
-                                              "limitEntry")
+                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -692,6 +750,7 @@ class PaperBot:
             p["stop"] = stop
             if p.get("breakevenAt") and stop != p["breakevenPrice"]:
                 p["breakevenAt"] = None   # the owner's stop now; break-even may move it again later
+            p["lockedAt"] = None          # the profit lock too (it only ever moves the stop toward profit)
             p["risk"] = p["notional"] * (abs(p["entryPrice"] - stop) / p["entryPrice"] + 2 * self.fees.taker / 100)
         if target is not None and target != p["takeProfit"]:
             changes.append(("target", p["takeProfit"], target))
@@ -1004,6 +1063,11 @@ class PaperBot:
                 logging.getLogger("trading_bot").warning("checking %s failed: %r", p.get("base"), error)
 
     async def _watch_one(self, p: dict, now: float) -> None:
+        a = self.account
+        if a.get("lockEnabled"):   # the owner's profit lock, for open positions too
+            p["lock"] = {"trigger": a.get("lockTrigger", LOCK_TRIGGER * 100) / 100, "at": a.get("lockAt", LOCK_AT * 100) / 100}
+        else:
+            p.pop("lock", None)
         candles = await self.recent(p["symbol"], p["timeframe"])
         if not candles:
             return
@@ -1304,7 +1368,7 @@ class PaperBot:
             return skip("full")   # a limit order for this coin is already waiting (one per coin)
         equity = self.equity()
         if self.account.get("limitEntry"):
-            return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip)
+            return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip, price_step(recent))
         size = position_size(s["side"], entry, stop, equity, equity - self.used_margin(), self.fees,
                              self.profile.size_slots)
         if size is None or size.notional <= 0:
@@ -1347,6 +1411,13 @@ class PaperBot:
 
     # ---- limit entry (owner's switch; paper only)
 
+    def set_lock(self, enabled: bool, trigger: float, at: float) -> None:
+        """Owner's profit lock: on/off, and the two shares of the way to the target in percent."""
+        self.account["lockEnabled"] = bool(enabled)
+        self.account["lockTrigger"] = float(trigger)
+        self.account["lockAt"] = float(at)
+        self.save()
+
     def set_limit_entry(self, enabled: bool) -> None:
         self.account["limitEntry"] = bool(enabled)
         if not enabled:
@@ -1354,13 +1425,18 @@ class PaperBot:
         self.save()
 
     def _place_order(self, c: dict, tf: str, now: float, params: dict, price_now: float, candle: int,
-                     equity: float, skip: Callable[[str], None]) -> None:
+                     equity: float, skip: Callable[[str], None], step: Optional[float] = None) -> None:
         """A limit order a little better than the price now (LIMIT_OFFSET of the stop distance).
         The margin it will need is set aside now, so waiting orders never use more than the money there is."""
         s = c["signal"]
         long_ = s["side"] == LONG
         stop = s["stopLoss"]
         price = price_now - (1 if long_ else -1) * LIMIT_OFFSET * abs(price_now - stop)
+        rounded = to_step(price, step, down=long_)   # the coin's price step, like a real order
+        # A step too coarse to tell (e.g. candles with whole prices only) must not push the order onto the
+        # stop or past the price now: then the unrounded price is kept.
+        if (stop < rounded < price_now) if long_ else (price_now < rounded < stop):
+            price = rounded
         size = position_size(s["side"], price, stop, equity, equity - self.used_margin(), self.fees,
                              self.profile.size_slots)
         if size is None or size.notional <= 0:
@@ -1461,6 +1537,8 @@ class PaperBot:
     def _fill(self, o: dict, entry_candle: int, now: float, stopped_at: Optional[float]) -> Optional[dict]:
         """The order filled at its price: the position opens with the signal's stop and target, a maker
         entry fee, the size counted at the fill price; the fee and reward rules are checked again there."""
+        if o not in self.account["orders"]:
+            return None   # cancelled meanwhile (the owner switched limit entry off while it was checked)
         self.account["orders"].remove(o)
         c, price = o["c"], o["price"]
         stop, target = o["stopLoss"], o["takeProfit"]

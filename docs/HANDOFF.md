@@ -88,6 +88,22 @@ signals hit the stop (reversing them would also lose: fees and the reward ratio)
   from ~10 huge trades (without the best 1% ~0). Needs a trailing exit the bot lacks. Owner to decide.
 - Funding / OI / long-short not testable yet: no data route.
 
+## Built 2026-11-04 (owner's list, one update)
+1. Entry type shown: "Entry" column (limit / market), "(limit)" in the open line of the diary, the chart's
+   entry label "limit/market entry · margin$ xleverage".
+2. Limit order price rounded to the coin's price step, read from the decimals of its candles (price_step,
+   to_step: buy down, sell up); kept unrounded if rounding would reach the stop or pass the price now.
+3. Trade size shown: "Money in" (margin, tooltip: loss at the stop) and "Position" (margin x leverage) columns.
+4. Profit lock (owner's option, off by default; panel: on/off, trigger %, stop-to %; defaults 80 / 40): at
+   trigger % of the way to the target (closed candle high/low or the live price) the stop moves to at %;
+   only toward profit, once; exit reason "lock" (🔒 in the stop column); open positions too; the owner
+   moving the stop re-arms it; kept on "start again". POST /api/paper/lock. Chart: purple dashed
+   "profit lock at" line that follows a dragged target. Tests: 10.7k engine trades -0.103 -> -0.088 R
+   (both halves better); the bot's own 27 trades +4.21 -> +7.57 USDT.
+5. Ticks coming back on Windows fixed: a focused checkbox no longer counts as "typing" (Windows focuses it
+   on click, so the panel stopped redrawing and later ticks undid earlier ones); ticks use the latest
+   state (toggled()); a poll answer from before a button press is dropped; /limit answers at once.
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.

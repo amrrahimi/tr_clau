@@ -124,6 +124,8 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "lock") {
+      state.rules.lock = { enabled: action.enabled, trigger: action.trigger, at: action.at };
     } else if (action.kind === "limit") {
       state.limitEntry = action.enabled;
       if (!action.enabled) state.orders = [];

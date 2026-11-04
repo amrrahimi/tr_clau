@@ -161,8 +161,15 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         async def paper_limit(enabled: bool = Body(..., embed=True)):
             """The owner's switch: enter with a limit order (maker fee) instead of at the market price.
             Paper only: no order is ever sent to the exchange. Off cancels the waiting orders."""
-            async with b.lock:
-                b.set_limit_entry(enabled)
+            b.set_limit_entry(enabled)   # no waiting for a running scan: the switch answers at once
+            return b.public()
+
+        @app.post(f"/api/{prefix}/lock")
+        async def paper_lock(enabled: bool = Body(...), trigger: float = Body(80.0), at: float = Body(40.0)):
+            """The owner's profit lock: at `trigger` % of the way to the target the stop moves to `at` %."""
+            if not 0 < at < trigger < 100:
+                raise HTTPException(400, "need 0 < at < trigger < 100")
+            b.set_lock(enabled, trigger, at)
             return b.public()
 
         @app.post(f"/api/{prefix}/levels")

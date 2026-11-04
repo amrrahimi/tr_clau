@@ -39,6 +39,32 @@ export function breakevenTrigger(p: PaperPosition, target: number = p.takeProfit
   return p.entryPrice + (target - p.entryPrice) * p.breakevenPart;
 }
 
+/** A list after ticking (on) or unticking (off) one item, in the order of `order`. Built from the latest
+ * choice, so quick ticks one after another all count. */
+export function toggled<T>(order: readonly T[], chosen: readonly T[], item: T, on: boolean): T[] {
+  return order.filter((x) => (x === item ? on : chosen.includes(x)));
+}
+
+/** Is this focused element one the owner types in (the panel then waits with redrawing)? Checkboxes,
+ * radio buttons and buttons are not: on Windows they keep the focus after a click. */
+export function typingField(tag: string, inputType: string): boolean {
+  if (tag.toUpperCase() === "TEXTAREA") return true;
+  if (tag.toUpperCase() !== "INPUT") return false;
+  return ["text", "number", "search", "password", "email", "url", "range", ""].includes(inputType.toLowerCase());
+}
+
+/** Price where the profit lock moves the stop (lock.trigger % of the way to this target), or null. */
+export function lockTrigger(p: PaperPosition, lock: { enabled: boolean; trigger: number } | undefined,
+  target: number = p.takeProfit): number | null {
+  if (!lock?.enabled || p.lockedAt) return null;
+  return p.entryPrice + (target - p.entryPrice) * lock.trigger / 100;
+}
+
+/** Is the profit lock setting valid: 0 < at < trigger < 100. */
+export function lockValid(trigger: number, at: number): boolean {
+  return Number.isFinite(trigger) && Number.isFinite(at) && at > 0 && at < trigger && trigger < 100;
+}
+
 /** "12 s" / "3 min" left until a waiting limit order is cancelled. */
 export function timeLeft(seconds: number): { n: string; unit: "s" | "m" } {
   const s = Math.max(0, Math.round(seconds));
@@ -103,9 +129,11 @@ export function formatMoney(value: number | null | undefined): string {
 export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string, string>) => string): string {
   const side = e.side ? t(e.side === "long" ? "strategies.long" : "strategies.short") : "";
   switch (e.kind) {
-    case "open":
-      return t("bot.evOpen", { coin: e.symbol ?? "", side, tf: e.timeframe ?? "", lev: String(e.leverage ?? 1),
+    case "open": {
+      const line = t("bot.evOpen", { coin: e.symbol ?? "", side, tf: e.timeframe ?? "", lev: String(e.leverage ?? 1),
         strategy: t(`strat.${e.strategy}` as MessageKey) });
+      return e.entryType === "limit" ? `${line} ${t("bot.entry.limitTag")}` : line;
+    }
     case "close":
       return t("bot.evClose", { coin: e.symbol ?? "", result: formatMoney(e.pnl), reason: t(`bot.reason.${e.reason}` as MessageKey) });
     case "halted":
