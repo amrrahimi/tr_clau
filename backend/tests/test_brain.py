@@ -91,3 +91,15 @@ class BrainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChampionRuleTest(unittest.TestCase):
+    def test_compared_per_signal_not_by_total(self):
+        def j(rs):
+            return {"kept": br.results(rs), "all": br.results(rs)}
+        few_bad = j([-0.6] * 5)                 # lets 5 through, -3 R in all
+        many_less_bad = j([-0.08] * 438)        # lets 438 through, -35 R in all, but better per signal
+        self.assertFalse(br.better(few_bad, many_less_bad))     # too few, and worse per signal
+        self.assertTrue(br.better(many_less_bad, j([-0.6] * 12)))
+        self.assertFalse(br.better(j([-0.6] * 12), many_less_bad))
+        self.assertTrue(br.better(j([0.1] * 10), j([0.5] * 3)))  # champion with too few is beaten

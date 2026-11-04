@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from .config import TIMEFRAME_SECONDS
 from .strategies import NO_FEES, Fees, Signal, simulate
 
 SCHEMA = """
@@ -82,6 +83,24 @@ def _locked(method):
     return wrapper
 
 
+def seen_entry_walk(candles: list[dict], i: int, tf_seconds: int, seen_at: float,
+                    seen_price: float) -> Optional[list[dict]]:
+    """Candles for the engine so that the trade enters at seen_price in the candle the bot saw the signal
+    in: the signal candle, then that candle flattened to the seen price (the engine enters at its open and
+    finds nothing to hit in it), then the candles after it. None while that candle has not closed."""
+    start = candles[i]["time"]
+    seen_start = seen_at - (seen_at - start) % tf_seconds
+    if seen_start <= start:
+        seen_start = start + tf_seconds
+    k = next((n for n in range(i + 1, len(candles)) if candles[n]["time"] == seen_start), None)
+    if k is None:
+        if seen_start > candles[-1]["time"]:
+            return None          # not closed yet
+        return candles[i:]       # a hole in the candles: the old way (next candle's open)
+    flat = {**candles[k], "open": seen_price, "high": seen_price, "low": seen_price, "close": seen_price}
+    return [candles[i], flat, *candles[k + 1:]]
+
+
 class Memory:
     def __init__(self, path: Path):
         self.path = path
@@ -97,6 +116,8 @@ class Memory:
             self.db.execute("ALTER TABLE signals ADD COLUMN reliable INTEGER DEFAULT 1")
         if "source" not in columns:    # live: seen by the bot; history: rebuilt from past candles
             self.db.execute("ALTER TABLE signals ADD COLUMN source TEXT DEFAULT 'live'")
+        if "seen_price" not in columns:   # price when the bot saw the signal (2026-11-04); empty on older ones
+            self.db.execute("ALTER TABLE signals ADD COLUMN seen_price REAL")
         for name, kind in (("ai_decision", "TEXT"), ("ai_confidence", "REAL"), ("ai_reason", "TEXT")):
             if name not in columns:      # the AI's answer (Gemini) for the signals sent to it
                 self.db.execute(f"ALTER TABLE signals ADD COLUMN {name} {kind}")
@@ -114,15 +135,19 @@ class Memory:
         return f"{symbol}|{timeframe}|{strategy}|{signal_time}"
 
     @_locked
-    def record(self, entry: dict, timeframe: str, feats: dict, now: float, reliable: bool = True) -> str:
-        """Remember a signal the bot saw (once)."""
+    def record(self, entry: dict, timeframe: str, feats: dict, now: float, reliable: bool = True,
+               seen_price: Optional[float] = None) -> str:
+        """Remember a signal the bot saw (once). seen_price: the price at that moment (the live price);
+        with it the result is worked out from when and where the bot could really have entered."""
         s = entry["signal"]
         key = self.key(entry["symbol"], timeframe, entry["strategy"], s["time"])
         self.db.execute(
             "INSERT OR IGNORE INTO signals (key, symbol, base, timeframe, strategy, side, signal_time, confirmed_at,"
-            " seen_at, entry, stop, target, features, reliable, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'live')",
+            " seen_at, entry, stop, target, features, reliable, source, seen_price)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'live',?)",
             (key, entry["symbol"], entry["base"], timeframe, entry["strategy"], s["side"], s["time"],
-             s.get("confirmedAt"), now, s["entry"], s["stopLoss"], s["takeProfit"], json.dumps(feats), int(reliable)))
+             s.get("confirmedAt"), now, s["entry"], s["stopLoss"], s["takeProfit"], json.dumps(feats), int(reliable),
+             seen_price))
         self.db.commit()
         return key
 
@@ -182,15 +207,22 @@ class Memory:
     @_locked
     def open_signals(self, symbol: str, timeframe: str) -> list[dict]:
         rows = self.db.execute(
-            "SELECT key, strategy, side, signal_time, stop, target FROM signals"
+            "SELECT key, strategy, side, signal_time, stop, target, seen_at, seen_price FROM signals"
             " WHERE status = 'open' AND symbol = ? AND timeframe = ?", (symbol, timeframe)).fetchall()
-        return [dict(zip(("key", "strategy", "side", "signal_time", "stop", "target"), r)) for r in rows]
+        return [dict(zip(("key", "strategy", "side", "signal_time", "stop", "target", "seen_at", "seen_price"), r))
+                for r in rows]
 
     @_locked
     def resolve(self, symbol: str, timeframe: str, candles: list[dict], params_of: dict[str, dict],
                 fees: Fees = NO_FEES, now: Optional[float] = None) -> int:
         """Work out the result of open signals of this chart from its closed candles,
-        with the same engine as the history test. Returns how many ended."""
+        with the same engine as the history test. Returns how many ended.
+
+        With the price the bot saw the signal at (seen_price, signals from 2026-11-04 on), the entry is
+        that price, in the candle the bot saw it in, as the paper bot would have entered (not at the open
+        of the candle after the signal: the bot sees signals 20 s to minutes later). Like the paper bot,
+        the rest of that candle is not checked (which part came after the entry is not known). A price
+        already past the stop or the target means no trade (expired). Older signals: open of the next candle."""
         if not candles:
             return 0
         index = {c["time"]: i for i, c in enumerate(candles)}
@@ -205,7 +237,12 @@ class Memory:
             if i + 1 >= len(candles):
                 continue  # the entry candle has not closed yet
             params = params_of.get(s["strategy"], {})
-            trades, _ = simulate(candles[i:], [Signal(0, s["side"], stop_price=s["stop"], target_price=s["target"])],
+            walk = candles[i:]
+            if s.get("seen_price") and s.get("seen_at"):
+                walk = seen_entry_walk(candles, i, TIMEFRAME_SECONDS[timeframe], s["seen_at"], s["seen_price"])
+                if walk is None:
+                    continue   # the candle the bot saw it in has not closed yet
+            trades, _ = simulate(walk, [Signal(0, s["side"], stop_price=s["stop"], target_price=s["target"])],
                                  params.get("breakeven", 0), int(params.get("max_candles", 0)), fees)
             if not trades:
                 # The levels did not make sense with the real entry price: nothing to learn.

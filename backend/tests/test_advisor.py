@@ -215,3 +215,11 @@ class DroppedTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(advisor.AdvisorUnavailable) as caught:
                 await advisor._call({}, ["k1"], advisor.MODELS[0], always, None)
             self.assertIn("Server disconnected", str(caught.exception))
+
+
+class OwnDataTest(unittest.TestCase):
+    def test_tests_never_use_the_owners_real_data_folder(self):
+        from pathlib import Path
+        from app import connection
+        self.assertNotEqual(connection.data_folder(), Path.home() / ".trading-bot")
+        self.assertEqual(advisor.load_model(), advisor.MODELS[0])   # nothing saved in the test folder

@@ -48,6 +48,20 @@ download links. The repository is public: never commit keys, passwords or accoun
   counted again. Break-even trigger follows the new target (grey dashed line "break-even at"), only
   ever moves the stop toward profit; a stop dragged away from break-even re-arms it. Liquidation
   shown as an orange dashed line. Moved trades: "edited" (✎ in the table), event "levels".
+- Limit entry (owner's switch, 2026-11-04, paper only, default off; off = exactly as before): a signal
+  places a limit order LIMIT_OFFSET (0.1) of the stop distance better than the live price, margin set
+  aside, one per coin. Watched on 1m candles: fills only when the price goes beyond it (touch is not
+  enough); a minute that reached the target (even if it also crossed) cancels it; fill + stop in the
+  same minute = loss; minutes after a late-noticed fill are checked. Expires after LIMIT_EXPIRE_CANDLES (1)
+  candle of the signal's timeframe. Cancelled also by switching off, stop, reset, halt. At the fill:
+  fee/reward rules again, size at the fill price, maker entry fee, break-even with the maker entry fee
+  (breakeven_price(entry_fee=)). Positions keep entryType; panel compares market vs limit (trades, won %,
+  average R on the opening risk, fees, fill rate). Memory skip reasons limit_expired / limit_cancelled.
+- Fixes of 2026-11-04 (review list): brain champion compared by average R with at least MIN_KEPT signals
+  (not the sum); paper exits past the stop at the real price (gap: candle open; live price past the stop:
+  that price); one coin's network error no longer stops checking the other positions; live signals keep
+  seen_price and are resolved from where and when the bot saw them (older signals: next candle's open);
+  tests use a temporary TRADING_BOT_DATA folder (tests/__init__.py); README and paper.py notes updated.
 - Panel shows: signals counter (seen / opened / skipped and why), scan times, entry/stop/target lines.
 
 ## Honest result so far

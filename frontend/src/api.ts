@@ -35,6 +35,7 @@ export type PaperAction =
   | { kind: "mode"; mode: "auto" | "manual"; strategies: string[] }
   | { kind: "close"; position_id: number }
   | { kind: "levels"; position_id: number; stop?: number; take_profit?: number }
+  | { kind: "limit"; enabled: boolean }
   | { kind: "close-all" }
   | { kind: "cap"; usd: number }
   | { kind: "pause"; losses: number; fall: number }

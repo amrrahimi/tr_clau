@@ -1,8 +1,8 @@
 # Trading Bot
 
-A personal desktop app (Windows and macOS) for watching crypto charts on the Toobit exchange. Later phases add analysis, backtesting and paper trading.
+A personal desktop app (Windows, macOS and Android) for the Toobit exchange: live crypto charts, indicators, strategy history tests, a scanner and a paper-trading bot (virtual money).
 
-**Current state: phase 1.** Live candle charts for spot and futures, top 50 coins by 24h volume, search, Persian and English. No API keys, no trading.
+**Current state:** live charts for spot and futures, 18 strategies with history tests after fees, a scanner, and a paper bot on 1m-4h with a memory of every signal, an optional learning filter ("brain") and optional AI approval (Gemini, the owner's own key kept on his computer). Persian and English. **No real orders are ever sent to the exchange.** Details and the latest findings: `docs/HANDOFF.md`.
 
 ## How it is built
 
@@ -27,7 +27,7 @@ The app is not digitally signed:
 # backend
 cd backend
 pip install -r requirements.txt
-python -m unittest discover -s tests -t .
+python -m unittest discover -s tests -t .   # uses its own temporary data folder, never ~/.trading-bot
 python run.py                      # starts the local server
 
 # frontend (in another terminal)
@@ -45,9 +45,9 @@ This repository is public. **Never commit API keys, passwords or account details
 
 # ربات معامله‌گر
 
-برنامه‌ی شخصی دسکتاپ (ویندوز و مک) برای دیدن نمودار ارزهای دیجیتال در صرافی توبیت. فازهای بعدی تحلیل، بک‌تست و پیپر تریدینگ را اضافه می‌کنند.
+برنامه‌ی شخصی (ویندوز، مک و اندروید) برای صرافی توبیت: نمودار زنده، اندیکاتورها، آزمون تاریخی استراتژی‌ها، اسکنر و ربات پیپر (پول مجازی).
 
-**وضعیت فعلی: فاز ۱.** نمودار زنده‌ی اسپات و فیوچرز، ۵۰ ارز برتر بر اساس حجم ۲۴ ساعته، جستجو، فارسی و انگلیسی. بدون کلید API و بدون معامله.
+**وضعیت فعلی:** نمودار زنده‌ی اسپات و فیوچرز، ۱۸ استراتژی با آزمون تاریخی بعد از کارمزد، اسکنر، و ربات پیپر روی تایم‌فریم‌های ۱ دقیقه تا ۴ ساعت با حافظه‌ی همه‌ی سیگنال‌ها، فیلتر یادگیرنده («مغز») و تأیید اختیاری هوش مصنوعی (Gemini، با کلید خود صاحب برنامه که فقط روی کامپیوتر او می‌ماند). فارسی و انگلیسی. **هیچ سفارش واقعی به صرافی فرستاده نمی‌شود.** جزئیات و آخرین یافته‌ها: `docs/HANDOFF.md`.
 
 **دریافت برنامه:** در زبانه‌ی **Actions** گزینه‌ی **Build desktop apps** و سپس **Run workflow** را بزنید. بعد از پایان، فایل `windows` یا `macos-intel` را از بخش **Artifacts** دانلود کنید. برنامه امضای دیجیتال ندارد؛ هشدار ویندوز و مک در اجرای اول طبیعی است.
 

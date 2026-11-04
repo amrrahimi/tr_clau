@@ -224,6 +224,8 @@ export interface PaperPosition {
   breakevenPart?: number;   // share of the way to the target that moves the stop to break-even (0 = off)
   breakevenPrice?: number;  // entry price plus both fees: the stop there loses nothing
   edited?: boolean;         // the owner moved the stop or the target on the chart
+  entryType?: "market" | "limit";   // how it was entered (older trades: market)
+  openRisk?: number;        // USDT lost at the stop when it opened (before the owner moved the stop)
   /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */
   advice?: { time: number; suggest: "hold" | "close"; reason: "fine" | "opposite" | "state" | "unknown";
     detail: string; pnl: number; answer: "hold" | null } | null;
@@ -244,7 +246,8 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
-    | "ai" | "ask" | "askAnswer" | "levels";
+    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel";
+  price?: number; // order: the limit price
   what?: "stop" | "target"; // levels: which line the owner moved
   old?: number; // levels: price before
   new?: number; // levels: price after
@@ -331,6 +334,30 @@ export interface PendingAsk {
   entry: number; stopLoss: number; takeProfit: number; expires: number; error?: string | null;
 }
 
+/** A limit order waiting to fill (limit entry, paper only). */
+export interface PaperOrder {
+  id: number;
+  symbol: string;
+  base: string;
+  timeframe: string;
+  strategy: string;
+  side: Side;
+  price: number;        // the limit price
+  placedPrice: number;  // the price when it was placed
+  placedAt: number;     // seconds
+  expires: number;      // seconds
+  stopLoss: number;
+  takeProfit: number;
+  margin: number;       // USDT set aside for it
+}
+
+export interface EntryStats {
+  trades: number;
+  winRate: number | null;
+  avgR: number | null;
+  fees: number;
+}
+
 export interface PaperState {
   ai?: AiState;
   pendingAsks?: PendingAsk[];
@@ -338,7 +365,11 @@ export interface PaperState {
   scanSeconds?: Record<string, number>; // how long the last scan of each timeframe took
   chosenTimeframes?: string[]; // ticked by the owner: the bot trades only on these
   /** What happened to the signals in the last minutes (skipped: reason -> count). */
-  flow?: { minutes: number; seen: number; opened: number; skipped: Record<string, number> };
+  flow?: { minutes: number; seen: number; opened: number; placed?: number; skipped: Record<string, number> };
+  limitEntry?: boolean;                 // the owner's switch: enter with limit orders (paper only)
+  orders?: PaperOrder[];                // limit orders waiting to fill
+  entryStats?: { market: EntryStats; limit: EntryStats & { fillRate: number | null;
+    orders: { placed: number; filled: number; expired: number; cancelled: number } } };
   capital: number;
   balance: number;
   equity: number;
@@ -383,5 +414,6 @@ export interface PaperState {
   rules: { risk: number; maxOpen: number | null; maxFast?: number; maxSlow?: number; maxSameSide?: number | null; brainThreshold?: number | null; coinMode?: "top" | "volatile" | "manual"; coins?: string[]; volatileCoins?: number;
     maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
     smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
+    limitOffset?: number; limitExpireCandles?: number;   // limit entry: % of the stop distance, candles
     fees: { maker: number; taker: number } };
 }

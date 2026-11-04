@@ -179,6 +179,20 @@ def judge(model: Model, rows: list[dict]) -> dict:
     return {"kept": results(kept), "all": results([r["r"] for r in rows])}
 
 
+def better(challenger: dict, champion: dict) -> bool:
+    """On the same unseen signals: does the challenger do better per signal it lets through?
+
+    Compared by the average R (not the sum: when signals lose, a model that lets fewer through would
+    "win" with a smaller total loss). The challenger needs at least MIN_KEPT signals; a champion that
+    lets fewer than that through is beaten by any challenger that has enough."""
+    mine, old = challenger["kept"], champion["kept"]
+    if mine["count"] < MIN_KEPT or mine["avgR"] is None:
+        return False
+    if old["count"] < MIN_KEPT or old["avgR"] is None:
+        return True
+    return mine["avgR"] > old["avgR"]
+
+
 def training_rows(memory, limit: int = MAX_ROWS) -> list[dict]:
     out = []
     for row in memory.finished_signals(limit):
@@ -293,7 +307,7 @@ class Brain:
             old = judge(self.champion, unseen)
             mine_same = judge(challenger, unseen)
         beats_all = mine["kept"]["count"] >= MIN_KEPT and mine["kept"]["avgR"] > (mine["all"]["avgR"] or 0)
-        if beats_all and (old is None or mine_same["kept"]["sumR"] > old["kept"]["sumR"]):
+        if beats_all and (old is None or better(mine_same, old)):
             self.champion = challenger
             return {"result": "promoted", "version": version, "test": mine, "testedOn": tested_on}
         if old is not None:

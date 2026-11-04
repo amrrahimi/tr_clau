@@ -157,6 +157,14 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
                 raise HTTPException(404, "no open position with this id")
             return b.public()
 
+        @app.post(f"/api/{prefix}/limit")
+        async def paper_limit(enabled: bool = Body(..., embed=True)):
+            """The owner's switch: enter with a limit order (maker fee) instead of at the market price.
+            Paper only: no order is ever sent to the exchange. Off cancels the waiting orders."""
+            async with b.lock:
+                b.set_limit_entry(enabled)
+            return b.public()
+
         @app.post(f"/api/{prefix}/levels")
         async def paper_levels(position_id: int = Body(...), stop: Optional[float] = Body(None),
                                take_profit: Optional[float] = Body(None)):

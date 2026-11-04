@@ -39,6 +39,12 @@ export function breakevenTrigger(p: PaperPosition, target: number = p.takeProfit
   return p.entryPrice + (target - p.entryPrice) * p.breakevenPart;
 }
 
+/** "12 s" / "3 min" left until a waiting limit order is cancelled. */
+export function timeLeft(seconds: number): { n: string; unit: "s" | "m" } {
+  const s = Math.max(0, Math.round(seconds));
+  return s < 120 ? { n: String(s), unit: "s" } : { n: String(Math.round(s / 60)), unit: "m" };
+}
+
 /** A bot position or trade in the chart's format (arrows and boxes). */
 export function paperAsTrade(p: PaperPosition | PaperTrade): Trade {
   const closed = "exitPrice" in p && p.exitPrice !== undefined;
@@ -132,6 +138,12 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t(e.what === "target" ? "bot.evTargetMoved" : "bot.evStopMoved", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
         old: formatPrice(e.old ?? 0, digits), new: formatPrice(e.new ?? 0, digits) });
     }
+    case "order":
+      return t("bot.evOrder", { coin: e.symbol ?? "", side, tf: e.timeframe ?? "",
+        price: formatPrice(e.price ?? 0, pricePrecision(e.price ?? 0)) });
+    case "orderCancel":
+      return t("bot.evOrderCancel", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
+        why: t(`bot.orderWhy.${e.detail ?? "time"}` as MessageKey) });
     case "pretrain":
       return t("bot.evPretrain", { n: String(e.count ?? 0) });
     case "brain":
@@ -147,7 +159,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
   }
 }
 
-function formatR(value: number | null | undefined): string {
+/** "+0.12" / "−0.40" for an average R, "—" without a value. */
+export function formatR(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`;
 }

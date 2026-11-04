@@ -678,13 +678,15 @@ class Fees:
 NO_FEES = Fees()
 
 
-def breakeven_price(side: str, entry: float, fees: Fees) -> float:
+def breakeven_price(side: str, entry: float, fees: Fees, entry_fee: Optional[float] = None) -> float:
     """Exit price where the result after the entry fee and a taker exit fee is zero.
+    entry_fee: the entry's fee rate in percent (a limit entry pays maker); default taker.
 
     long:  (S - E) - fin*E - fout*S = 0  ->  S = E (1 + fin) / (1 - fout)
     short: (E - S) - fin*E - fout*S = 0  ->  S = E (1 - fin) / (1 + fout)
     """
-    fin = fout = fees.taker / 100
+    fin = (fees.taker if entry_fee is None else entry_fee) / 100
+    fout = fees.taker / 100
     if side == LONG:
         return entry * (1 + fin) / (1 - fout)
     return entry * (1 - fin) / (1 + fout)

@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME, type Level } from "./chart.ts";
-import { adviceText, brainKnobHint, brainText, breakevenTrigger, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, timeLeft, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -249,7 +249,16 @@ export class BotApp {
       { long: this.t("strategies.long"), short: this.t("strategies.short") });
     // Open positions of this chart: entry, liquidation, break-even trigger, and the stop-loss and
     // take-profit lines, which the owner can drag with the mouse (takes effect when let go).
-    this.chart.setLevels(this.state.positions.filter(same).flatMap((p) => this.positionLevels(p)));
+    // Waiting limit orders: dashed, not draggable (the test compares the bot's own limit rule).
+    const orders = (this.state.orders ?? []).filter((o) => o.symbol === this.target!.symbol && o.timeframe === this.target!.timeframe);
+    this.chart.setLevels([
+      ...this.state.positions.filter(same).flatMap((p) => this.positionLevels(p)),
+      ...orders.flatMap((o): Level[] => [
+        { key: `o${o.id}`, price: o.price, color: "#2962ff", title: this.t("bot.level.order"), style: "dashed" },
+        { key: `os${o.id}`, price: o.stopLoss, color: THEME.down, title: this.t("bot.level.orderStop"), style: "dashed" },
+        { key: `ot${o.id}`, price: o.takeProfit, color: THEME.up, title: this.t("bot.level.orderTarget"), style: "dashed" },
+      ]),
+    ]);
   }
 
   private positionLevels(p: PaperPosition): Level[] {
@@ -389,6 +398,7 @@ export class BotApp {
     // What happened to the signals lately.
     if (s.flow) {
       parts.push(el("div", "bot-hint", t("bot.flow", { seen: String(s.flow.seen), opened: String(s.flow.opened) })));
+      if (s.flow.placed) parts.push(el("div", "bot-hint", t("bot.flowPlaced", { n: String(s.flow.placed) })));
       const times = Object.entries(s.scanSeconds ?? {});
       if (times.length) {
         parts.push(el("div", "bot-hint", t("bot.scanTimes", { list: times.map(([tf, sec]) => `${tf}: ${sec}s`).join("، ") })));
@@ -478,6 +488,62 @@ export class BotApp {
         list.append(line);
       }
       parts.push(el("div", "list-heading", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
+    }
+
+    // Limit entry (paper only): on/off, the waiting orders, market vs limit results.
+    {
+      const onOff = el("div", "segmented small");
+      for (const on of [true, false]) {
+        const b = el("button", !!s.limitEntry === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+        b.addEventListener("click", () => {
+          if (!!s.limitEntry !== on) void this.act({ kind: "limit", enabled: on });
+        });
+        onOff.append(b);
+      }
+      parts.push(el("div", "list-heading", t("bot.limit.title")), onOff, el("div", "bot-hint", t("bot.limit.hint", {
+        offset: String(s.rules.limitOffset ?? 10), maker: String(s.rules.fees.maker), taker: String(s.rules.fees.taker),
+      })));
+      const orders = s.orders ?? [];
+      if (orders.length) {
+        const list = el("div", "bot-orders");
+        const nowSec = Date.now() / 1000;
+        for (const o of orders) {
+          const left = timeLeft(o.expires - nowSec);
+          list.append(el("div", `bot-order side ${o.side}`, t("bot.limit.order", {
+            coin: o.base, tf: o.timeframe, side: t(o.side === "long" ? "strategies.long" : "strategies.short"),
+            price: formatPrice(o.price, pricePrecision(o.price)),
+            left: t(left.unit === "s" ? "bot.limit.left.s" : "bot.limit.left.m", { n: left.n }),
+          })));
+        }
+        parts.push(el("div", "bot-hint", t("bot.limit.orders")), list);
+      }
+      const st = s.entryStats;
+      if (st && (st.market.trades || st.limit.trades || st.limit.orders.placed)) {
+        const table = document.createElement("table");
+        table.className = "bot-compare";
+        const head = document.createElement("tr");
+        for (const k of ["bot.limit.colKind", "bot.limit.colTrades", "bot.limit.colWin", "bot.limit.colR", "bot.limit.colFees"] as MessageKey[]) {
+          head.append(el("th", "", t(k)));
+        }
+        table.append(head);
+        for (const kind of ["market", "limit"] as const) {
+          const r = st[kind];
+          const tr = document.createElement("tr");
+          tr.append(el("td", "", t(kind === "market" ? "bot.limit.market" : "bot.limit.limit")),
+            el("td", "", String(r.trades)),
+            el("td", "", r.winRate == null ? "–" : String(Math.round(r.winRate))),
+            el("td", r.avgR == null ? "" : r.avgR > 0 ? "up" : r.avgR < 0 ? "down" : "", formatR(r.avgR)),
+            el("td", "", r.fees.toFixed(2)));
+          for (const td of Array.from(tr.children).slice(1)) (td as HTMLElement).dir = "ltr";
+          table.append(tr);
+        }
+        const o = st.limit.orders;
+        const ended = o.filled + o.expired + o.cancelled;
+        parts.push(el("div", "bot-hint", t("bot.limit.compare")), table, el("div", "bot-hint", ended
+          ? t("bot.limit.fillRate", { rate: String(Math.round(st.limit.fillRate ?? 0)), filled: String(o.filled),
+              ended: String(ended), expired: String(o.expired), cancelled: String(o.cancelled) })
+          : t("bot.limit.noFills")));
+      }
     }
 
     // The AI's approval (Gemini): on/off, the timeframes it checks, the owner's keys.

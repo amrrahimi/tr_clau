@@ -47,6 +47,32 @@ class MemoryTest(unittest.TestCase):
         self.assertAlmostEqual(pnl, 2 - 0.06 - 0.02 * 1.02)
         self.assertEqual(self.memory.strategy_results(0), {"ema_cross": pnl})
 
+    def test_live_signal_enters_where_and_when_the_bot_saw_it(self):
+        # 15m signal on the candle at 900; the bot saw it 2 minutes into the next candle, at 100.3.
+        k = self.memory.record(entry(signal_time=900), "15m", {}, now=1800 + 120, seen_price=100.3)
+        candles = [bar(900, 100, 100, 100, 100), bar(1800, 100, 100.5, 99.8, 100.4)]
+        # The candle it was seen in has closed, but nothing after it: still open.
+        self.assertEqual(self.memory.resolve("A/USDT:USDT", "15m", candles, {}, Fees(0.02, 0.06), now=1), 0)
+        candles.append(bar(2700, 100.4, 102.2, 100.1, 102))       # reaches the target
+        self.assertEqual(self.memory.resolve("A/USDT:USDT", "15m", candles, {}, Fees(0.02, 0.06), now=2), 1)
+        status, pnl, r = self.memory.db.execute("SELECT status, pnl_percent, r FROM signals WHERE key = ?", (k,)).fetchone()
+        self.assertEqual(status, "win")
+        # Entered at 100.3 (not at the open, 100): less gain, more risk (1.3 instead of 1).
+        self.assertAlmostEqual(pnl, (102 / 100.3 - 1) * 100 - 0.06 - 0.02 * 102 / 100.3, places=6)
+        self.assertLess(r, 1.3)
+
+    def test_live_signal_seen_past_the_stop_is_not_a_trade(self):
+        k = self.memory.record(entry(signal_time=900), "15m", {}, now=1800 + 60, seen_price=98.5)
+        candles = [bar(900, 100, 100, 100, 100), bar(1800, 100, 100, 98, 98.6), bar(2700, 98.6, 99, 98, 98.5)]
+        self.memory.resolve("A/USDT:USDT", "15m", candles, {}, Fees(0.02, 0.06), now=1)
+        self.assertEqual(self.memory.db.execute("SELECT status FROM signals WHERE key = ?", (k,)).fetchone()[0], "expired")
+
+    def test_older_signals_without_a_seen_price_keep_the_old_way(self):
+        k = self.memory.record(entry(signal_time=900), "15m", {}, now=1800 + 120)
+        candles = [bar(900, 100, 100, 100, 100), bar(1800, 100, 102.5, 99.5, 102)]
+        self.memory.resolve("A/USDT:USDT", "15m", candles, {}, Fees(0.02, 0.06), now=1)
+        self.assertEqual(self.memory.db.execute("SELECT status FROM signals WHERE key = ?", (k,)).fetchone()[0], "win")
+
     def test_signal_older_than_the_history_expires(self):
         self.memory.record(entry(signal_time=60), "1m", {}, now=0)
         self.memory.resolve("A/USDT:USDT", "1m", [bar(600, 1, 1, 1, 1)], {}, now=1)

@@ -60,7 +60,20 @@ class ExitTest(unittest.TestCase):
         p = position()
         candles = [bar(0, 100, 105, 95, 100)]                     # entry candle, still forming
         self.assertIsNone(pp.check_exit(p, candles, 100.5, 60, now=30))
-        self.assertEqual(pp.check_exit(p, candles, 98.9, 60, now=30), (99, "stop"))
+        # The live price already passed the stop: the exit is at that price (slippage), not at 99.
+        self.assertEqual(pp.check_exit(p, candles, 98.9, 60, now=30), (98.9, "stop"))
+
+    def test_candle_that_opens_past_the_stop_exits_at_its_open(self):
+        p = position(breakevenPart=0)
+        gap = [bar(0, 100, 100, 100, 100), bar(60, 98.5, 99.2, 98.0, 98.8)]
+        self.assertEqual(pp.check_exit(p, gap, 98.8, 60, now=125), (98.5, "stop"))
+        p = position(side=SHORT, stop=101, stopLoss=101, takeProfit=98, breakevenPart=0)
+        gap = [bar(0, 100, 100, 100, 100), bar(60, 101.6, 101.9, 101.0, 101.2)]
+        self.assertEqual(pp.check_exit(p, gap, 101.2, 60, now=125), (101.6, "stop"))
+        # Touched inside the candle (opened before the stop): the stop price.
+        p = position(breakevenPart=0)
+        touch = [bar(0, 100, 100, 100, 100), bar(60, 99.5, 99.6, 98.7, 99.3)]
+        self.assertEqual(pp.check_exit(p, touch, 99.3, 60, now=125), (99, "stop"))
 
     def test_break_even_then_exit_at_break_even_price(self):
         p = position()
@@ -666,6 +679,28 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await bot.close_all_and_stop(), 1)
         self.assertEqual((bot.account["positions"], bot.account["status"]), ([], "stopped"))
 
+    async def test_one_coin_failing_does_not_stop_checking_the_others(self):
+        bot = self.bot
+        bot.reset(100)
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        self.recent_rows["B/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100)]
+        await bot._open(cand("B", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        self.assertEqual([p["base"] for p in bot.account["positions"]], ["A", "B"])
+        recent = bot.recent
+
+        async def flaky(symbol, tf):
+            if symbol.startswith("A/"):
+                raise TimeoutError("RequestTimeout")
+            return await recent(symbol, tf)
+        bot.recent = flaky
+        # B reaches its target; A's timeout must not stop that check.
+        self.recent_rows["B/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100), bar(1_000_020, 100, 102.5, 99.5, 102)]
+        self.clock[0] = 1_000_090
+        with self.assertLogs("trading_bot", level="WARNING"):
+            await bot._watch_positions(self.clock[0])
+        self.assertEqual([p["base"] for p in bot.account["positions"]], ["A"])
+        self.assertEqual(bot.account["closed"][-1]["base"], "B")
+
     async def test_owner_moves_stop_and_target(self):
         bot = self.bot
         bot.reset(100)
@@ -934,3 +969,196 @@ class LoopSurvivesTest(unittest.IsolatedAsyncioTestCase):
                     await task
             finally:
                 pp.POLL_SECONDS = old_poll
+
+
+class LimitEntryTest(unittest.IsolatedAsyncioTestCase):
+    """Limit entry (owner's switch): orders fill only when the price goes beyond them, maker fee in."""
+    T = 1_000_000.0            # now; the 15m candle forming now started at 999_900, the minute at 999_960
+
+    def setUp(self):
+        from unittest import mock
+        every = tuple(pp.STRATEGIES)
+        for name, value in (("BOT_STRATEGIES_BY_TF", {tf: every for tf in pp.TIMEFRAMES}), ("BOT_STRATEGIES", every)):
+            patcher = mock.patch.object(pp, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "paper.json"
+        self.clock = [self.T]
+        self.rows = {}   # (symbol, timeframe) -> candles
+
+        async def recent(symbol, tf):
+            return self.rows.get((symbol, tf), [])
+        self.recent = recent
+        self.bot = self.new_bot()
+        self.bot.reset(100)
+        self.bot.set_limit_entry(True)
+        for base in "ABCDEFGHIJ":
+            self.rows[(f"{base}/USDT:USDT", "15m")] = [bar(999_900, 100, 100, 100, 100)]
+
+    def new_bot(self):
+        async def coins():
+            return [("A/USDT:USDT", "A")]
+
+        async def history(symbol, tf):
+            return []
+        return pp.PaperBot(pp.Store(self.path), coins, history, self.recent, now=lambda: self.clock[0], fees=FEES)
+
+    def minutes(self, *bars, last=None):
+        rows = list(bars)
+        if last is not None:   # the minute forming now (live price)
+            t = int(self.clock[0] // 60 * 60)
+            rows.append(bar(t, last, last, last, last))
+        self.rows[("A/USDT:USDT", "1m")] = rows
+
+    async def place(self, base="A", side=LONG):
+        await self.bot._open(cand(base, 2.0, 20, side), "15m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0.5})
+
+    async def test_switch_off_opens_at_the_market_as_before(self):
+        self.bot.set_limit_entry(False)
+        await self.place()
+        p = self.bot.account["positions"][0]
+        self.assertEqual((p["entryType"], p["entryPrice"], self.bot.account["orders"]), ("market", 100, []))
+        self.assertAlmostEqual(p["entryFee"], p["notional"] * 0.06 / 100)
+        self.assertAlmostEqual(p["breakevenPrice"], pp.breakeven_price(LONG, 100, FEES))
+        self.assertAlmostEqual(p["breakevenPrice"], 100 * 1.0006 / 0.9994)     # the old formula
+
+    async def test_order_price_and_fill_only_beyond_it_with_maker_fee(self):
+        await self.place()
+        o = self.bot.account["orders"][0]
+        self.assertAlmostEqual(o["price"], 99.9)                               # 0.1 of the stop distance (1) below
+        self.assertEqual(self.bot.account["positions"], [])
+        self.clock[0] = 1_000_150
+        self.minutes(bar(1_000_020, 100, 100.1, 99.9, 100), last=100)            # touched 99.9: not filled
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual(len(self.bot.account["orders"]), 1)
+        self.minutes(bar(1_000_020, 100, 100.1, 99.9, 100), bar(1_000_080, 100, 100, 99.85, 99.95), last=100)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual(self.bot.account["orders"], [])
+        p = self.bot.account["positions"][0]
+        self.assertEqual((p["entryType"], p["entryPrice"], p["stop"], p["takeProfit"]), ("limit", 99.9, 99, 102))
+        self.assertAlmostEqual(p["entryFee"], p["notional"] * 0.02 / 100)       # maker
+        self.assertAlmostEqual(p["breakevenPrice"], 99.9 * 1.0002 / 0.9994)     # maker in, taker out
+        self.assertLess(p["breakevenPrice"], pp.breakeven_price(LONG, 99.9, FEES))
+        self.assertEqual(p["entryCandle"], 999_900)                              # the 15m candle of the fill
+        self.assertEqual(self.bot.account["limitStats"]["filled"], 1)
+
+    async def test_live_price_beyond_the_order_fills(self):
+        await self.place(side=pp.SHORT if hasattr(pp, "SHORT") else SHORT)
+        o = self.bot.account["orders"][0]
+        self.assertAlmostEqual(o["price"], 100.1)                              # a sell: above the price
+        self.minutes(last=100.1)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual(len(self.bot.account["orders"]), 1)                    # touching is not enough
+        self.minutes(last=100.12)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual(self.bot.account["positions"][0]["entryPrice"], o["price"])
+
+    async def test_expires_after_one_candle(self):
+        await self.place()
+        self.clock[0] = self.T + 899
+        self.minutes(bar(1_000_020, 100, 100.3, 99.95, 100.2), last=100.2)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual(len(self.bot.account["orders"]), 1)
+        self.clock[0] = self.T + 900
+        await self.bot._watch_orders(self.clock[0])
+        a = self.bot.account
+        self.assertEqual((a["orders"], a["positions"], a["limitStats"]["expired"]), ([], [], 1))
+        self.assertEqual((a["events"][-1]["kind"], a["events"][-1]["reason"]), ("orderCancel", "limit_expired"))
+        self.assertEqual(self.bot.flow_summary()["skipped"].get("limit_expired"), 1)
+        self.assertEqual(self.bot.public()["entryStats"]["limit"]["fillRate"], 0)
+
+    async def test_target_or_stop_first_cancels(self):
+        await self.place()
+        self.clock[0] = 1_000_150
+        self.minutes(bar(1_000_020, 100, 102.1, 99.95, 101.5), last=101.5)       # reached the target, never crossed
+        await self.bot._watch_orders(self.clock[0])
+        a = self.bot.account
+        self.assertEqual((a["orders"], a["positions"], a["limitStats"]["cancelled"]), ([], [], 1))
+        self.assertEqual(a["events"][-1]["detail"], "target")
+        # Target and crossing in the same minute: the order inside it is unknown, so no fill (no optimism).
+        await self.place()                                                      # at 1_000_150: minutes from 1_000_200
+        self.clock[0] = 1_000_300
+        self.minutes(bar(1_000_200, 100, 102.1, 99.5, 101.5), last=101.5)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual((a["orders"], a["positions"]), ([], []))
+        # Live price at the target before a fill.
+        await self.place()
+        self.minutes(last=102)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual((a["orders"], a["positions"]), ([], []))
+
+    async def test_fill_and_stop_in_the_same_minute_is_a_loss(self):
+        await self.place()
+        self.clock[0] = 1_000_150
+        self.minutes(bar(1_000_020, 100, 100, 98.8, 99.0), last=99.2)
+        await self.bot._watch_orders(self.clock[0])
+        a = self.bot.account
+        self.assertEqual(a["positions"], [])
+        t = a["closed"][-1]
+        self.assertEqual((t["entryType"], t["entryPrice"], t["exitReason"], t["exitPrice"]), ("limit", 99.9, "stop", 99))
+        # A fill noticed late: the minutes after it are checked too.
+        await self.place()                                                      # at 1_000_150: minutes from 1_000_200
+        self.clock[0] = 1_000_400
+        self.minutes(bar(1_000_200, 100, 100, 99.8, 99.9), bar(1_000_260, 99.9, 102.3, 99.9, 102.2), last=102)
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual((a["closed"][-1]["exitReason"], a["closed"][-1]["exitPrice"]), ("target", 102))
+
+    async def test_waiting_orders_survive_closing_the_app(self):
+        await self.place()
+        self.bot.save()   # the bot's loop saves after each scan
+        again = self.new_bot()
+        self.assertTrue(again.account["limitEntry"])
+        self.assertEqual(len(again.account["orders"]), 1)
+        self.minutes(last=99.8)
+        await again._watch_orders(self.clock[0])
+        self.assertEqual(again.account["positions"][0]["entryPrice"], 99.9)
+
+    async def test_old_paper_file_opens(self):
+        import json
+        old = {k: v for k, v in pp.new_account(80, self.T).items() if k not in ("limitEntry", "orders", "limitStats")}
+        old["closed"] = [{"pnl": 1.0, "fees": 0.1, "risk": 1.0, "notional": 50, "exitReason": "target"}]
+        self.path.write_text(json.dumps(old))
+        bot = self.new_bot()
+        self.assertEqual((bot.account["limitEntry"], bot.account["orders"]), (False, []))
+        stats = bot.public()["entryStats"]
+        self.assertEqual((stats["market"]["trades"], stats["market"]["avgR"], stats["limit"]["fillRate"]), (1, 1.0, None))
+
+    async def test_margin_of_many_waiting_orders_never_exceeds_the_money(self):
+        for base in "ABCDEFGHIJ":
+            await self.place(base)
+        a = self.bot.account
+        margins = [o["margin"] for o in a["orders"]]
+        self.assertLessEqual(sum(margins), self.bot.equity() + 1e-9)
+        self.assertLess(len(margins), 10)                                        # money ran out: the rest skipped
+        self.assertEqual(a["events"][-1]["reason"], "full")
+        # One per coin: a second signal for a coin with a waiting order is skipped.
+        before = len(a["orders"])
+        await self.place("A")
+        self.assertEqual(len(a["orders"]), before)
+
+    async def test_switching_off_or_stopping_cancels_waiting_orders(self):
+        await self.place()
+        self.bot.set_limit_entry(False)
+        self.assertEqual((self.bot.account["orders"], self.bot.account["limitStats"]["cancelled"]), ([], 1))
+        self.bot.set_limit_entry(True)
+        await self.place()
+        self.bot.start()
+        self.bot.stop()
+        self.assertEqual(self.bot.account["orders"], [])
+        await self.place()
+        self.bot.reset(100)
+        self.assertEqual((self.bot.account["orders"], self.bot.account["limitEntry"]), ([], True))
+
+    async def test_cancelled_order_is_marked_in_memory(self):
+        from app.memory import Memory
+        memory = Memory(Path(self.dir.name) / "memory.db")
+        self.addCleanup(memory.close)
+        self.bot.memory = memory
+        c = cand("A", 2.0, 20)
+        c["memoryKey"] = memory.record(c, "15m", {}, now=self.T)
+        await self.bot._open(c, "15m", self.T, {"fee_ratio": 0.33})
+        self.clock[0] = self.T + 900
+        await self.bot._watch_orders(self.clock[0])
+        self.assertEqual(memory.db.execute("SELECT skip_reason, taken FROM signals").fetchone(), ("limit_expired", 0))

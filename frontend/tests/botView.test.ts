@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainKnobHint, brainText, breakevenTrigger, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, timeLeft, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -187,4 +187,21 @@ test("the owner's moved line is in the diary", () => {
   const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
   const text = eventText({ time: 1, kind: "levels", symbol: "BTC", timeframe: "1h", what: "stop", old: 1, new: 1.2 }, t);
   assert.ok(text.includes("1.2") && text.includes("BTC"));
+});
+
+test("waiting limit orders: time left and the diary lines", () => {
+  assert.deepEqual(timeLeft(42.4), { n: "42", unit: "s" });
+  assert.deepEqual(timeLeft(600), { n: "10", unit: "m" });
+  assert.deepEqual(timeLeft(-5), { n: "0", unit: "s" });
+  assert.equal(formatR(-0.123), "−0.12");
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  const placed = eventText({ time: 1, kind: "order", symbol: "SOL", timeframe: "15m", side: "long", price: 99.9 }, t);
+  assert.ok(placed.includes("SOL") && placed.includes("99.9"));
+  for (const why of ["time", "target", "stop", "off", "botStop", "reset", "halted", "fee", "reward", "full"]) {
+    const text = eventText({ time: 1, kind: "orderCancel", symbol: "SOL", timeframe: "15m", detail: why }, t);
+    assert.ok(!text.includes("bot.orderWhy"), `missing text for ${why}`);
+  }
+  for (const reason of ["limit_expired", "limit_cancelled"]) {
+    assert.notEqual(translate("fa", `bot.skip.${reason}` as Parameters<typeof translate>[1]), `bot.skip.${reason}`);
+  }
 });

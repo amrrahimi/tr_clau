@@ -124,6 +124,9 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "limit") {
+      state.limitEntry = action.enabled;
+      if (!action.enabled) state.orders = [];
     } else if (action.kind === "levels") {
       const p = state.positions.find((x) => x.id === action.position_id);
       if (!p) throw new Error("no open position with this id");

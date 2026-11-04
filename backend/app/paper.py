@@ -1,23 +1,22 @@
 """Paper trading: the bot trades with virtual money (owner's request).
 
-Everything is chosen by the bot: it scans the top coins on five timeframes
-with all strategies, keeps only reliable signals (the cautious conditions,
-the fee rule and the market-state rule all apply), takes the best one and
-opens a virtual futures position. It then watches the price and closes the
-position at the take-profit, the stop-loss or the break-even stop.
+Everything is chosen by the bot: it scans the coins (top 100 by volume, the 30 most volatile, or
+the owner's list) on the ticked timeframes (1m-4h) with the strategies of each timeframe, keeps
+only reliable signals (the cautious conditions, the fee rule per timeframe and the market-state
+rule all apply; optionally the brain and the AI approval), and opens a virtual futures position.
+It then watches the price and closes the position at the take-profit, the stop-loss, the
+break-even stop or the owner's profit cap. The owner can move the stop and the target on the chart.
 
 Money rules (agreed with the owner):
 - risk per trade: 1% of the money in the account (fees included);
-- separate places for fast and slow trades (owner's choice): at most 3 on
-  1m/3m/5m and 3 on 15m/1h, one per coin, and at most 4 in the same
-  direction (coins tend to move together, so many longs are one big bet);
+- no limit on the number of positions or on positions in the same direction (owner 2026-11-02),
+  one per coin; the margin of one position is at most 1/6 of the money, so new trades stop when
+  the free margin runs out;
 - leverage is set by the bot: the lowest that fits, at most 10x, and the
   liquidation price must stay beyond the stop-loss; if that does not fit,
   the position is made smaller (so the risk is less than 1%, never more);
-- smart pause (owner's choice, instead of a daily stop): after 4 losing
-  trades in a row, or a 5% fall since the last pause, no new trades for 3
-  hours; strategies that lost over the last 24 hours (real and shadow
-  trades) are left out for 12 hours;
+- smart pause (owner sets it in the panel, 0 = off; defaults 4 losses in a row / 5% fall): no new
+  trades for 3 hours; strategies that lost over the last 24 hours are left out for 12 hours;
 - a 30% fall from the starting money switches the bot off.
 The bot keeps scanning while it is switched off too: it then only learns
 (records and follows signals in its memory) and opens nothing.
@@ -110,6 +109,15 @@ BTC = "BTC/USDT:USDT"        # the market's direction, part of the AI's context
 # When the AI does not answer the owner is asked; owner 2026-11-03: with no answer from him either,
 # the trade opens by itself after ASK_AUTO_SECONDS (the usual price checks still decide at that moment).
 ASK_AUTO_SECONDS = 30.0
+# Limit entry (owner's switch, 2026-11-04; paper only, nothing is sent to the exchange): instead of
+# buying at the market price (taker fee) the bot places a limit order a little better than the price
+# now (maker fee). LIMIT_OFFSET: how much better, as a share of the stop distance. The order fills only
+# when the price goes beyond it (touching is not enough), and is cancelled after LIMIT_EXPIRE_CANDLES
+# candles of the signal's timeframe or when the price reaches the target or the stop first.
+LIMIT_OFFSET = 0.1
+LIMIT_EXPIRE_CANDLES = 1
+ORDER_CANDLE_TF = "1m"          # waiting orders are checked on 1m candles
+ORDER_CANDLE_SECONDS = 60
 PAUSE_SECONDS = 3 * 3600
 RECOVER_WINS = 2          # a pause ends early when the last this-many results during it were all profits
 BENCH_SECONDS = PAUSE_SECONDS  # strategies that lost lately are left out as long as the pause
@@ -196,9 +204,11 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
     """Exit (price, reason) if the stop or the target was reached, else None.
 
     Closed candles after the entry candle are checked with their high and low
-    (stop first: if one candle touched both, it counts as the stop). Within
+    (stop first: if one candle touched both, it counts as the stop; a candle that opened past the
+    stop exits at its open). Within
     the entry candle and the candle now forming only the live price is used,
-    because part of those candles happened before the entry or is not known.
+    because part of those candles happened before the entry or is not known; a live price past
+    the stop exits at that price (slippage), a live price past the target at the target.
     Break-even moves the stop on closed candles, like in the history test."""
     long_ = position["side"] == LONG
     for c in candles:
@@ -209,7 +219,9 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
         stop, target = position["stop"], position["takeProfit"]
         if (c["low"] <= stop) if long_ else (c["high"] >= stop):
             reason = "breakeven" if position.get("breakevenAt") else "stop"
-            return stop, reason
+            # A gap past the stop (the candle opened beyond it) fills at the open, worse than the stop.
+            gapped = (c["open"] < stop) if long_ else (c["open"] > stop)
+            return (c["open"] if gapped else stop), reason
         if (c["high"] >= target) if long_ else (c["low"] <= target):
             return target, "target"
         position["checkedFrom"] = c["time"] + tf_seconds
@@ -217,7 +229,8 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
     if last_price is not None:
         stop, target = position["stop"], position["takeProfit"]
         if (last_price <= stop) if long_ else (last_price >= stop):
-            return stop, "breakeven" if position.get("breakevenAt") else "stop"
+            # The price seen is already past the stop: the stop order fills there, not at the stop.
+            return last_price, "breakeven" if position.get("breakevenAt") else "stop"
         if (last_price >= target) if long_ else (last_price <= target):
             return target, "target"
     return None
@@ -344,6 +357,25 @@ def trade_outcome(trade: dict) -> str:
     return "win" if trade["pnl"] > 0 else "loss"
 
 
+def entry_stats(closed: list[dict], limit_stats: dict) -> dict:
+    """Market vs limit entries side by side (owner's comparison): trades, won %, average R, fees;
+    for limit entries also the share of placed orders that filled. R: the result over the risk at
+    the opening (before the owner moved the stop)."""
+    out = {}
+    for kind in ("market", "limit"):
+        trades = [t for t in closed if t.get("entryType", "market") == kind]
+        n = len(trades)
+        rs = [t["pnl"] / (t.get("openRisk") or t["risk"]) for t in trades if (t.get("openRisk") or t.get("risk"))]
+        out[kind] = {"trades": n,
+                     "winRate": sum(1 for t in trades if trade_outcome(t) == "win") / n * 100 if n else None,
+                     "avgR": sum(rs) / len(rs) if rs else None,
+                     "fees": sum(t["fees"] for t in trades)}
+    ended = sum(limit_stats.get(k, 0) for k in ("filled", "expired", "cancelled"))
+    out["limit"]["orders"] = {k: limit_stats.get(k, 0) for k in ("placed", "filled", "expired", "cancelled")}
+    out["limit"]["fillRate"] = limit_stats.get("filled", 0) / ended * 100 if ended else None
+    return out
+
+
 def new_account(capital: float, now: float) -> dict:
     return {
         "version": 1,
@@ -369,6 +401,9 @@ def new_account(capital: float, now: float) -> dict:
         "aiEnabled": False,                # owner's option: Gemini must approve each trade (advisor.py)
         "aiTimeframes": list(advisor.DEFAULT_TIMEFRAMES),
         "pendingAsks": [],                 # signals waiting for the owner because the AI did not answer
+        "limitEntry": False,               # owner's option: enter with a limit order (maker fee), not at the market
+        "orders": [],                      # limit orders waiting to fill (limitEntry)
+        "limitStats": {"placed": 0, "filled": 0, "expired": 0, "cancelled": 0},
         "pausedUntil": None,
         "pausedAt": None,
         "pauseReason": None,
@@ -499,6 +534,11 @@ class PaperBot:
                              "entry": q["c"]["signal"]["entry"], "stopLoss": q["c"]["signal"]["stopLoss"],
                              "takeProfit": q["c"]["signal"]["takeProfit"], "expires": q["expires"],
                              "error": q.get("error")} for q in a.get("pendingAsks", [])],
+            "limitEntry": a.get("limitEntry", False),
+            "orders": [{k: o[k] for k in ("id", "symbol", "base", "timeframe", "strategy", "side", "price",
+                                          "placedPrice", "placedAt", "expires", "stopLoss", "takeProfit", "margin")}
+                       for o in a.get("orders", [])],
+            "entryStats": entry_stats(closed, a.get("limitStats") or {}),
             "mode": a["mode"],
             "strategies": a["strategies"],
             "positions": positions,
@@ -536,6 +576,7 @@ class PaperBot:
                          if STRICT_TIMEFRAMES else {}),
                       "pauseLosses": a.get("pauseLosses", PAUSE_LOSSES), "pauseFall": a.get("pauseFall", PAUSE_FALL * 100),
                       "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
+                      "limitOffset": LIMIT_OFFSET * 100, "limitExpireCandles": LIMIT_EXPIRE_CANDLES,
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
         }
 
@@ -557,13 +598,16 @@ class PaperBot:
     def stop(self) -> None:
         if self.account["status"] == "running":
             self.account["status"] = "stopped"
+            self._cancel_orders("limit_cancelled", "botStop")   # a stopped bot opens nothing
             self._event("stop")
             self.save()
 
     def reset(self, capital: float) -> None:
         # Settings, not results: kept (owner 2026-11-03: the manual strategy choice was lost here).
+        self._cancel_orders("limit_cancelled", "reset")
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
-                                              "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes")
+                                              "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
+                                              "limitEntry")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -775,10 +819,12 @@ class PaperBot:
             now = self.now()
             self._new_day(now)
             await self._auto_open_asks(now)
+            await self._watch_orders(now)
             await self._watch_positions(now)
             equity = self.equity()
             self._track_drawdown(equity)
             if equity <= self.account["capital"] * (1 - TOTAL_STOP):
+                self._cancel_orders("limit_cancelled", "halted")
                 self.account["status"] = "halted"
                 self._event("halted", equity=equity)
                 self.save()
@@ -843,10 +889,10 @@ class PaperBot:
         recent = [k for t, k in self.flow if t >= now - FLOW_SECONDS]
         skipped: dict[str, int] = {}
         for k in recent:
-            if k not in ("seen", "opened"):
+            if k not in ("seen", "opened", "limitPlaced"):
                 skipped[k] = skipped.get(k, 0) + 1
         return {"minutes": FLOW_SECONDS // 60, "seen": recent.count("seen"), "opened": recent.count("opened"),
-                "skipped": skipped}
+                "placed": recent.count("limitPlaced"), "skipped": skipped}
 
     async def learn_only(self) -> None:
         """Bot switched off: keep scanning so the memory keeps learning, open nothing."""
@@ -950,19 +996,27 @@ class PaperBot:
 
     async def _watch_positions(self, now: float) -> None:
         for p in list(self.account["positions"]):
-            candles = await self.recent(p["symbol"], p["timeframe"])
-            if not candles:
-                continue
-            last = candles[-1]["close"]
-            self.prices[p["id"]] = last
-            hit = check_exit(p, candles, last, config.TIMEFRAME_SECONDS[p["timeframe"]], now)
-            cap = self.account.get("profitCap") or 0
-            if hit is None and cap > 0 and pnl(p, last, self.fees.taker)[0] >= cap:
-                hit = (last, "cap")   # owner's profit cap: take the small profit now
-            if hit:
-                self._close(p, hit[0], hit[1], now)
-            elif self.profile.advice and p.get("advice") is None and self._half_way(p, last):
-                await self._advise(p, now)
+            try:
+                await self._watch_one(p, now)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:   # e.g. a timeout for this coin: the other positions are still checked
+                logging.getLogger("trading_bot").warning("checking %s failed: %r", p.get("base"), error)
+
+    async def _watch_one(self, p: dict, now: float) -> None:
+        candles = await self.recent(p["symbol"], p["timeframe"])
+        if not candles:
+            return
+        last = candles[-1]["close"]
+        self.prices[p["id"]] = last
+        hit = check_exit(p, candles, last, config.TIMEFRAME_SECONDS[p["timeframe"]], now)
+        cap = self.account.get("profitCap") or 0
+        if hit is None and cap > 0 and pnl(p, last, self.fees.taker)[0] >= cap:
+            hit = (last, "cap")   # owner's profit cap: take the small profit now
+        if hit:
+            self._close(p, hit[0], hit[1], now)
+        elif self.profile.advice and p.get("advice") is None and self._half_way(p, last):
+            await self._advise(p, now)
 
     @staticmethod
     def _half_way(p: dict, price: float) -> bool:
@@ -1059,7 +1113,8 @@ class PaperBot:
                 if memory is not None:  # every signal is remembered (traded or not, reliable or not)
                     feats = features(entry, extra, self.fees)
                     feats["reliable"] = ok
-                    entry["memoryKey"] = memory.record(entry, tf, feats, now, reliable=ok)
+                    entry["memoryKey"] = memory.record(entry, tf, feats, now, reliable=ok,
+                                                       seen_price=rows[-1]["close"] if rows else None)
                     if ok and self.brain is not None:
                         entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
                         if entry["chance"] is not None:
@@ -1105,7 +1160,7 @@ class PaperBot:
                         memory.mark(c["memoryKey"], skip_reason="brain")
                 self._event("skip", reason="brain", timeframe=tf, count=len(weak))
                 self._count("brain", len(weak))
-        open_coins = {p["symbol"] for p in self.account["positions"]}
+        open_coins = {p["symbol"] for p in self.account["positions"]} | {o["symbol"] for o in self.account["orders"]}
         positions = self.account["positions"]
         chosen = pick(candidates, open_coins, free_slots(positions, tf, self.profile.slots),
                       side_room(positions, self.profile.max_same_side))
@@ -1245,22 +1300,38 @@ class PaperBot:
         # Checked again at the price now: the price may have moved toward the target since the signal.
         if not reward_ok(entry, stop, target, self.fees):
             return skip("reward")
-        used = sum(p["margin"] for p in self.account["positions"])
+        if any(o["symbol"] == c["symbol"] for o in self.account["orders"]):
+            return skip("full")   # a limit order for this coin is already waiting (one per coin)
         equity = self.equity()
-        size = position_size(s["side"], entry, stop, equity, equity - used, self.fees, self.profile.size_slots)
+        if self.account.get("limitEntry"):
+            return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip)
+        size = position_size(s["side"], entry, stop, equity, equity - self.used_margin(), self.fees,
+                             self.profile.size_slots)
         if size is None or size.notional <= 0:
             return skip("full")   # no free money left for another position
+        self._new_position(c, tf, now, params, entry, recent[-1]["time"], size, self.fees.taker, "market")
+
+    def used_margin(self) -> float:
+        """Margin of the open positions plus the margin set aside for waiting limit orders."""
+        return (sum(p["margin"] for p in self.account["positions"])
+                + sum(o["margin"] for o in self.account.get("orders", [])))
+
+    def _new_position(self, c: dict, tf: str, now: float, params: dict, entry: float, entry_candle: int,
+                      size: Size, entry_fee: float, entry_type: str) -> dict:
+        """entry_fee: the entry's fee rate in percent (taker at the market, maker for a filled limit order)."""
+        s = c["signal"]
+        stop, target = s["stopLoss"], s["takeProfit"]
         a = self.account
         position = {
             "id": a["nextId"], "symbol": c["symbol"], "base": c["base"], "timeframe": tf,
             "strategy": c["strategy"], "side": s["side"], "entryTime": now, "entryPrice": entry,
-            "entryCandle": recent[-1]["time"], "checkedFrom": recent[-1]["time"],
+            "entryCandle": entry_candle, "checkedFrom": entry_candle,
             "signalTime": s["time"], "stopLoss": stop, "stop": stop, "takeProfit": target,
             "quantity": size.quantity, "notional": size.notional, "leverage": size.leverage,
-            "margin": size.margin, "risk": size.risk, "liquidation": size.liquidation,
-            "entryFee": size.notional * self.fees.taker / 100,
+            "margin": size.margin, "risk": size.risk, "openRisk": size.risk, "liquidation": size.liquidation,
+            "entryFee": size.notional * entry_fee / 100, "entryType": entry_type,
             "breakevenPart": params.get("breakeven", 0),
-            "breakevenPrice": breakeven_price(s["side"], entry, self.fees), "breakevenAt": None,
+            "breakevenPrice": breakeven_price(s["side"], entry, self.fees, entry_fee), "breakevenAt": None,
             "history": {"trades": c["stats"]["trades"], "winRate": c["stats"].get("winRate"),
                         "profitFactor": c["stats"]["profitFactor"]},
         }
@@ -1269,6 +1340,150 @@ class PaperBot:
         self.prices[position["id"]] = entry
         self._count("opened")
         self._event("open", symbol=c["base"], side=s["side"], timeframe=tf, strategy=c["strategy"],
-                    leverage=size.leverage)
+                    leverage=size.leverage, entryType=entry_type)
         if self.memory is not None and c.get("memoryKey"):
             self.memory.mark(c["memoryKey"], taken=True)
+        return position
+
+    # ---- limit entry (owner's switch; paper only)
+
+    def set_limit_entry(self, enabled: bool) -> None:
+        self.account["limitEntry"] = bool(enabled)
+        if not enabled:
+            self._cancel_orders("limit_cancelled", "off")
+        self.save()
+
+    def _place_order(self, c: dict, tf: str, now: float, params: dict, price_now: float, candle: int,
+                     equity: float, skip: Callable[[str], None]) -> None:
+        """A limit order a little better than the price now (LIMIT_OFFSET of the stop distance).
+        The margin it will need is set aside now, so waiting orders never use more than the money there is."""
+        s = c["signal"]
+        long_ = s["side"] == LONG
+        stop = s["stopLoss"]
+        price = price_now - (1 if long_ else -1) * LIMIT_OFFSET * abs(price_now - stop)
+        size = position_size(s["side"], price, stop, equity, equity - self.used_margin(), self.fees,
+                             self.profile.size_slots)
+        if size is None or size.notional <= 0:
+            return skip("full")
+        a = self.account
+        order = {"id": a["nextId"], "symbol": c["symbol"], "base": c["base"], "timeframe": tf,
+                 "strategy": c["strategy"], "side": s["side"], "price": price, "placedPrice": price_now,
+                 "placedAt": now, "expires": now + LIMIT_EXPIRE_CANDLES * config.TIMEFRAME_SECONDS[tf],
+                 # Watched on 1m candles (the expiry is exact to the minute); the rest of the minute now:
+                 # live price only (which part of it came after the order is not known).
+                 "checkedFrom": int(now // ORDER_CANDLE_SECONDS) * ORDER_CANDLE_SECONDS + ORDER_CANDLE_SECONDS,
+                 "stopLoss": stop, "takeProfit": s["takeProfit"], "margin": size.margin,
+                 "params": {"breakeven": params.get("breakeven", 0), "fee_ratio": params.get("fee_ratio", 0)},
+                 "c": {k: c[k] for k in ("symbol", "base", "strategy", "stats", "signal") if k in c}
+                      | {"memoryKey": c.get("memoryKey")}}
+        a["nextId"] += 1
+        a["orders"].append(order)
+        a["limitStats"]["placed"] += 1
+        self._count("limitPlaced")
+        self._event("order", symbol=c["base"], side=s["side"], timeframe=tf, strategy=c["strategy"], price=price)
+
+    def _cancel_order(self, o: dict, reason: str, why: str) -> None:
+        """reason: limit_expired | limit_cancelled (memory and counter); why: what happened (diary)."""
+        if o not in self.account["orders"]:
+            return
+        self.account["orders"].remove(o)
+        self.account["limitStats"]["expired" if reason == "limit_expired" else "cancelled"] += 1
+        self._count(reason)
+        self._event("orderCancel", symbol=o["base"], timeframe=o["timeframe"], reason=reason, detail=why)
+        key = o["c"].get("memoryKey")
+        if self.memory is not None and key:
+            self.memory.mark(key, skip_reason=reason)
+
+    def _cancel_orders(self, reason: str, why: str) -> None:
+        for o in list(self.account.get("orders", [])):
+            self._cancel_order(o, reason, why)
+
+    async def _watch_orders(self, now: float) -> None:
+        for o in list(self.account.get("orders", [])):
+            try:
+                await self._watch_order(o, now)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logging.getLogger("trading_bot").warning("checking the order of %s failed: %r", o.get("base"), error)
+
+    async def _watch_order(self, o: dict, now: float) -> None:
+        """Fill only when the price went beyond the order (a buy: below it; a sell: above it). Cancelled
+        when the target (or the stop) is reached first, or when it expires. Without optimism: a closed
+        candle that reached the target and also crossed the order counts as cancelled (the order inside
+        the candle is not known), and a fill whose candle also reached the stop is stopped out at once."""
+        m = ORDER_CANDLE_SECONDS
+        tf_seconds = config.TIMEFRAME_SECONDS[o["timeframe"]]
+        candles = await self.recent(o["symbol"], ORDER_CANDLE_TF)
+        long_ = o["side"] == LONG
+        price, stop, target = o["price"], o["stopLoss"], o["takeProfit"]
+        for c in candles or []:
+            if c["time"] < o["checkedFrom"]:
+                continue
+            if c["time"] + m > now or c["time"] + m > o["expires"]:
+                break   # still forming, or partly after the expiry
+            crossed = (c["low"] < price) if long_ else (c["high"] > price)
+            at_target = (c["high"] >= target) if long_ else (c["low"] <= target)
+            at_stop = (c["low"] <= stop) if long_ else (c["high"] >= stop)
+            if at_target:
+                return self._cancel_order(o, "limit_cancelled", "target")
+            if crossed:
+                gapped = (c["open"] < stop) if long_ else (c["open"] > stop)
+                stopped_at = (c["open"] if gapped else stop) if at_stop else None
+                p = self._fill(o, c["time"] - c["time"] % tf_seconds, now, stopped_at)
+                if p is not None and p in self.account["positions"]:
+                    self._after_fill(p, [x for x in candles if c["time"] < x["time"] and x["time"] + m <= now])
+                return
+            if at_stop:
+                return self._cancel_order(o, "limit_cancelled", "stop")
+            o["checkedFrom"] = c["time"] + m
+        if candles and now < o["expires"]:
+            last = candles[-1]["close"]
+            if (last >= target) if long_ else (last <= target):
+                return self._cancel_order(o, "limit_cancelled", "target")
+            if (last < price) if long_ else (last > price):
+                stopped_at = last if ((last <= stop) if long_ else (last >= stop)) else None
+                return self._fill(o, int(now - now % tf_seconds), now, stopped_at)
+        if now >= o["expires"]:
+            self._cancel_order(o, "limit_expired", "time")
+
+    def _after_fill(self, p: dict, minutes: list[dict]) -> None:
+        """The fill was noticed late (on a closed 1m candle): the minutes since then are checked for the
+        stop (first) and the target, like the closed candles of an open position."""
+        long_ = p["side"] == LONG
+        for c in minutes:
+            if (c["low"] <= p["stop"]) if long_ else (c["high"] >= p["stop"]):
+                gapped = (c["open"] < p["stop"]) if long_ else (c["open"] > p["stop"])
+                return self._close(p, c["open"] if gapped else p["stop"], "stop", self.now())
+            if (c["high"] >= p["takeProfit"]) if long_ else (c["low"] <= p["takeProfit"]):
+                return self._close(p, p["takeProfit"], "target", self.now())
+
+    def _fill(self, o: dict, entry_candle: int, now: float, stopped_at: Optional[float]) -> Optional[dict]:
+        """The order filled at its price: the position opens with the signal's stop and target, a maker
+        entry fee, the size counted at the fill price; the fee and reward rules are checked again there."""
+        self.account["orders"].remove(o)
+        c, price = o["c"], o["price"]
+        stop, target = o["stopLoss"], o["takeProfit"]
+        key = c.get("memoryKey")
+        def refuse(reason: str) -> None:   # returns None
+            self.account["limitStats"]["cancelled"] += 1
+            self._count(reason)
+            self._event("orderCancel", symbol=o["base"], timeframe=o["timeframe"], reason="limit_cancelled",
+                        detail=reason)
+            if self.memory is not None and key:
+                self.memory.mark(key, skip_reason=reason)
+        if not fee_ok(price, stop, self.fees, o["params"].get("fee_ratio", 0)):
+            return refuse("fee")
+        if not reward_ok(price, stop, target, self.fees):
+            return refuse("reward")
+        equity = self.equity()
+        size = position_size(o["side"], price, stop, equity, equity - self.used_margin(), self.fees,
+                             self.profile.size_slots)
+        if size is None or size.notional <= 0:
+            return refuse("full")
+        self.account["limitStats"]["filled"] += 1
+        # entry_candle: the candle of the trade's timeframe the fill happened in (its rest: live price only).
+        p = self._new_position(c, o["timeframe"], now, o["params"], price, entry_candle, size, self.fees.maker, "limit")
+        if stopped_at is not None:   # the same candle (or price) also reached the stop
+            self._close(p, stopped_at, "stop", now)
+        return p
