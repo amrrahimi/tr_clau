@@ -157,6 +157,21 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
                 raise HTTPException(404, "no open position with this id")
             return b.public()
 
+        @app.post(f"/api/{prefix}/levels")
+        async def paper_levels(position_id: int = Body(...), stop: Optional[float] = Body(None),
+                               take_profit: Optional[float] = Body(None)):
+            """The owner moved the stop-loss and/or the take-profit of an open position (chart lines)."""
+            if stop is None and take_profit is None:
+                raise HTTPException(400, "give stop or take_profit")
+            if (stop is not None and stop <= 0) or (take_profit is not None and take_profit <= 0):
+                raise HTTPException(400, "prices must be above 0")
+            why = b.set_levels(position_id, stop, take_profit)
+            if why == "missing":
+                raise HTTPException(404, "no open position with this id")
+            if why:
+                raise HTTPException(400, why)
+            return b.public()
+
         @app.post(f"/api/{prefix}/close-all")
         async def paper_close_all():
             """Close every open position now and switch the bot off."""

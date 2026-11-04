@@ -41,6 +41,13 @@ download links. The repository is public: never commit keys, passwords or accoun
 - Barrage account: removed 2026-11-02 (owner). An old paper-fast.json on disk is no longer used.
 - Only ticked timeframes are scanned; a new 1m candle may put a slower scan off once (fix of
   2026-11-02: before it, slow computers never scanned 5m-1h).
+- Owner moves stop / target on the chart (2026-11-04, desktop only, mouse): the red and green lines of
+  an open position are draggable; the label shows price and USDT result at that price (fees paid);
+  takes effect on release (POST /api/paper/levels, PaperBot.set_levels). Rules: stop on the losing
+  side of the price now and before liquidation, target on the winning side. Size stays, risk is
+  counted again. Break-even trigger follows the new target (grey dashed line "break-even at"), only
+  ever moves the stop toward profit; a stop dragged away from break-even re-arms it. Liquidation
+  shown as an orange dashed line. Moved trades: "edited" (✎ in the table), event "levels".
 - Panel shows: signals counter (seen / opened / skipped and why), scan times, entry/stop/target lines.
 
 ## Honest result so far
@@ -59,6 +66,13 @@ signals hit the stop (reversing them would also lose: fees and the reward ratio)
 ## Profit cap test of 2026-11-02 (15 top coins, 18 strategies, fee limit 5%, no break-even)
 - 4h (5 months, 1056 trades): normal exit +0.11 R (both halves positive), exit at +0.3 R 0.00, +0.5 R +0.04.
 - 1h (6 weeks): normal -0.19 R, +0.3 R cap -0.06 R. 30m: too few trades. Owner postponed the decision.
+
+## Untested-strategy check of 2026-11-04 (50 top coins; 5m 7 d, 15m 31 d, 1h 83 d, 4h 333 d; real fees)
+- Negative on every timeframe: previous-day high/low break, NR7, RSI divergence (1h ~0), break-and-retest,
+  Keltner (4h ~0), Heikin-Ashi, pin bar at swing level, follow-BTC breakout (laggard alts).
+- Turtle 55/20 + EMA200 filter on 4h: +0.17 R (halves +0.12/+0.20), 29% wins, median -1 R; all of it
+  from ~10 huge trades (without the best 1% ~0). Needs a trailing exit the bot lacks. Owner to decide.
+- Funding / OI / long-short not testable yet: no data route.
 
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance

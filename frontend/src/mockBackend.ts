@@ -124,6 +124,12 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "levels") {
+      const p = state.positions.find((x) => x.id === action.position_id);
+      if (!p) throw new Error("no open position with this id");
+      if (action.stop !== undefined) p.stop = action.stop;
+      if (action.take_profit !== undefined) p.takeProfit = action.take_profit;
+      p.edited = true;
     } else if (action.kind === "ask") {
       state.pendingAsks = (state.pendingAsks ?? []).filter((q) => q.id !== action.id);
     } else if (action.kind === "coins") {

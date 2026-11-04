@@ -5,8 +5,8 @@
 
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
-import { ChartView, THEME } from "./chart.ts";
-import { adviceText, brainKnobHint, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { ChartView, THEME, type Level } from "./chart.ts";
+import { adviceText, brainKnobHint, brainText, breakevenTrigger, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -247,12 +247,61 @@ export class BotApp {
       .sort((a, b) => a.entryTime - b.entryTime);
     this.chart.setTrades(trades, this.candles[this.candles.length - 1].time,
       { long: this.t("strategies.long"), short: this.t("strategies.short") });
-    // Open positions of this chart: entry, stop-loss and take-profit on the price axis.
-    this.chart.setLevels(this.state.positions.filter(same).flatMap((p) => [
-      { price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entry") },
-      { price: p.stop, color: THEME.down, title: this.t(p.breakevenAt ? "bot.level.breakeven" : "bot.level.stop") },
-      { price: p.takeProfit, color: THEME.up, title: this.t("bot.level.target") },
-    ]));
+    // Open positions of this chart: entry, liquidation, break-even trigger, and the stop-loss and
+    // take-profit lines, which the owner can drag with the mouse (takes effect when let go).
+    this.chart.setLevels(this.state.positions.filter(same).flatMap((p) => this.positionLevels(p)));
+  }
+
+  private positionLevels(p: PaperPosition): Level[] {
+    const digits = this.chart.pricePrecision;
+    const fees = this.state!.rules.fees;
+    const now = () => p.lastPrice ?? this.candles[this.candles.length - 1]?.close ?? p.entryPrice;
+    const evenTitle = this.t("bot.level.breakevenAt");
+    const label = (kind: "stop" | "target", price: number) => {
+      const level = this.t(kind === "target" ? "bot.level.target" : p.breakevenAt ? "bot.level.breakeven" : "bot.level.stop");
+      const pnl = resultAt(p, price, fees.taker, kind === "target" ? fees.maker : fees.taker);
+      const bad = levelProblem(p, kind, price, now()) ? "⛔ " : "";
+      return bad + this.t("bot.drag.label", { level, price: formatPrice(price, digits), pnl: formatMoney(pnl) });
+    };
+    const drag = (kind: "stop" | "target") => ({
+      onMove: (price: number) => {
+        const trigger = kind === "target" ? breakevenTrigger(p, price) : null;
+        return { title: label(kind, price), others: trigger === null ? {} : { [`b${p.id}`]: { price: trigger, title: evenTitle } } };
+      },
+      onDrop: (price: number) => void this.moveLevel(p, kind, Number(price.toFixed(digits))),
+    });
+    const levels: Level[] = [
+      { key: `e${p.id}`, price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entry") },
+      { key: `l${p.id}`, price: p.liquidation, color: "#ff9800", title: this.t("bot.level.liquidation"), style: "dashed" },
+      { key: `s${p.id}`, price: p.stop, color: THEME.down, title: label("stop", p.stop), drag: drag("stop") },
+      { key: `t${p.id}`, price: p.takeProfit, color: THEME.up, title: label("target", p.takeProfit), drag: drag("target") },
+    ];
+    const trigger = breakevenTrigger(p);
+    if (trigger !== null) levels.push({ key: `b${p.id}`, price: trigger, color: "#787b86", title: evenTitle, style: "dashed" });
+    return levels;
+  }
+
+  /** The owner let go of a dragged stop or target line: checked here first, then sent to the bot at once. */
+  private async moveLevel(p: PaperPosition, kind: "stop" | "target", price: number): Promise<void> {
+    const now = p.lastPrice ?? this.candles[this.candles.length - 1]?.close ?? p.entryPrice;
+    const problem = levelProblem(p, kind, price, now);
+    if (problem) {
+      this.error = this.t(`bot.drag.${problem}` as MessageKey);
+    } else {
+      try {
+        this.state = await this.backend.paperAction(kind === "stop"
+          ? { kind: "levels", position_id: p.id, stop: price }
+          : { kind: "levels", position_id: p.id, take_profit: price });
+        this.error = null;
+      } catch (error) {
+        const code = error instanceof Error ? error.message : String(error);
+        this.error = ["stop_side", "stop_liquidation", "target_side"].includes(code)
+          ? this.t(`bot.drag.${code}` as MessageKey)
+          : code.startsWith("no open position") ? this.t("bot.drag.missing") : code;
+      }
+    }
+    this.render();
+    this.drawTrades();   // the line goes to its new place, or back where it was
   }
 
   // ---------- screen ----------
@@ -852,7 +901,7 @@ export class BotApp {
       const result = closed ? (p as PaperTrade).pnl : p.openPnl ?? null;
       const cells: [string, string][] = [
         [closed ? t(`bot.reason.${(p as PaperTrade).exitReason}` as MessageKey) : t("bot.open"), closed ? "" : "open-badge"],
-        [p.base, "coin"],
+        [p.edited ? `${p.base} ✎` : p.base, "coin"],
         [p.timeframe, ""],
         [t(`strat.${p.strategy}` as MessageKey), ""],
         [t(p.side === "long" ? "strategies.long" : "strategies.short"), `side ${p.side}`],
@@ -870,6 +919,7 @@ export class BotApp {
         const td = document.createElement("td");
         td.textContent = text;
         td.className = cls;
+        if (cls === "coin" && p.edited) td.title = t("bot.edited");
         if (/^[\d×+−.—]/.test(text)) td.dir = "ltr";
         tr.append(td);
       }

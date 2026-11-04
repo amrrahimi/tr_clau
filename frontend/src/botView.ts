@@ -1,5 +1,7 @@
 // Small pieces of the automatic (bot) screen without screen code, so they can be tested.
 
+import { pricePrecision } from "./candles.ts";
+import { formatPrice } from "./format.ts";
 import type { MessageKey } from "./locales/en.ts";
 import type { BrainState, PaperEvent, PaperPosition, PaperState, PaperTrade, StrategyResults, Trade } from "./types.ts";
 
@@ -10,6 +12,31 @@ export const TIMEFRAME_SECONDS: Record<string, number> = {
 function candleStart(time: number, timeframe: string): number {
   const step = TIMEFRAME_SECONDS[timeframe] ?? 60;
   return Math.floor(time / step) * step;
+}
+
+/** Why a dragged stop or target cannot go there (null = fine). Same rules as the bot (paper.set_levels):
+ * the stop stays on the losing side of the price now and before the liquidation price,
+ * the target stays on the winning side of the price now. */
+export function levelProblem(p: PaperPosition, kind: "stop" | "target", price: number, now: number):
+  "stop_side" | "stop_liquidation" | "target_side" | null {
+  const long = p.side === "long";
+  if (kind === "target") return (long ? price > now : price < now) ? null : "target_side";
+  if (!(long ? price < now : price > now)) return "stop_side";
+  if (!(long ? price > p.liquidation : price < p.liquidation)) return "stop_liquidation";
+  return null;
+}
+
+/** USDT result if the position closed at this price, both fees paid (feePercent: the exit fee). */
+export function resultAt(p: PaperPosition, price: number, entryFeePercent: number, exitFeePercent: number): number {
+  const dir = p.side === "long" ? 1 : -1;
+  const gross = p.quantity * (price - p.entryPrice) * dir;
+  return gross - p.notional * entryFeePercent / 100 - p.quantity * price * exitFeePercent / 100;
+}
+
+/** Price that moves the stop to break-even (part of the way to this target), or null when off or done. */
+export function breakevenTrigger(p: PaperPosition, target: number = p.takeProfit): number | null {
+  if (!p.breakevenPart || p.breakevenAt) return null;
+  return p.entryPrice + (target - p.entryPrice) * p.breakevenPart;
 }
 
 /** A bot position or trade in the chart's format (arrows and boxes). */
@@ -100,6 +127,11 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
     case "askAnswer":
       return t(e.answer === "open" ? "bot.evAskOpen" : e.answer === "auto" ? "bot.evAskAuto" : "bot.evAskSkip",
         { coin: e.symbol ?? "", tf: e.timeframe ?? "" });
+    case "levels": {
+      const digits = pricePrecision(e.new ?? 0);
+      return t(e.what === "target" ? "bot.evTargetMoved" : "bot.evStopMoved", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
+        old: formatPrice(e.old ?? 0, digits), new: formatPrice(e.new ?? 0, digits) });
+    }
     case "pretrain":
       return t("bot.evPretrain", { n: String(e.count ?? 0) });
     case "brain":

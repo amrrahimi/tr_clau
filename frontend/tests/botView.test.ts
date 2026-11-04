@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainKnobHint, brainText, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, brainKnobHint, brainText, breakevenTrigger, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -154,4 +154,37 @@ test("AI events in the diary", () => {
     "The AI rejected RLC (1h) (confidence 35%): late entry");
   assert.equal(eventText({ time: 0, kind: "ask", symbol: "RLC", timeframe: "1h" }, t), "The AI did not answer for RLC (1h); waiting for you");
   assert.equal(eventText({ time: 0, kind: "askAnswer", symbol: "RLC", timeframe: "1h", answer: "open" }, t), "RLC (1h) opened by your choice");
+});
+
+test("a dragged stop or target is checked like the bot does", () => {
+  // long at 100, liquidation 67, price now 101
+  assert.equal(levelProblem(position, "stop", 99.5, 101), null);
+  assert.equal(levelProblem(position, "stop", 101.2, 101), "stop_side");
+  assert.equal(levelProblem(position, "stop", 66, 101), "stop_liquidation");
+  assert.equal(levelProblem(position, "target", 100.5, 101), "target_side");
+  assert.equal(levelProblem(position, "target", 103, 101), null);
+  const short = { ...position, side: "short" as const, liquidation: 133 };
+  assert.equal(levelProblem(short, "stop", 100.5, 101), "stop_side");
+  assert.equal(levelProblem(short, "stop", 134, 99), "stop_liquidation");
+  assert.equal(levelProblem(short, "target", 98, 99), null);
+});
+
+test("the label shows the USDT result at the dragged price, fees paid", () => {
+  // 1 coin at 100: stop 98 loses 2 + 0.06 in + 0.0588 out
+  assert.ok(Math.abs(resultAt(position, 98, 0.06, 0.06) - (-2.1188)) < 1e-9);
+  assert.ok(Math.abs(resultAt(position, 103, 0.06, 0.02) - (3 - 0.06 - 0.0206)) < 1e-9);
+});
+
+test("the break-even point follows the target and goes away when off or done", () => {
+  const p = { ...position, breakevenPart: 0.5 };
+  assert.equal(breakevenTrigger(p), 101);
+  assert.equal(breakevenTrigger(p, 104), 102);
+  assert.equal(breakevenTrigger({ ...p, breakevenAt: 5 }), null);
+  assert.equal(breakevenTrigger(position), null);
+});
+
+test("the owner's moved line is in the diary", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  const text = eventText({ time: 1, kind: "levels", symbol: "BTC", timeframe: "1h", what: "stop", old: 1, new: 1.2 }, t);
+  assert.ok(text.includes("1.2") && text.includes("BTC"));
 });

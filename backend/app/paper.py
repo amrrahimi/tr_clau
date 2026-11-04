@@ -230,7 +230,10 @@ def _maybe_breakeven(position: dict, extreme: float, when: int) -> None:
     long_ = position["side"] == LONG
     trigger = position["entryPrice"] + (position["takeProfit"] - position["entryPrice"]) * part
     if (extreme >= trigger) if long_ else (extreme <= trigger):
-        position["stop"] = position["breakevenPrice"]
+        be = position["breakevenPrice"]
+        if (be <= position["stop"]) if long_ else (be >= position["stop"]):
+            return   # the stop (moved by the owner) already locks more than break-even
+        position["stop"] = be
         position["breakevenAt"] = when
 
 
@@ -615,6 +618,50 @@ class PaperBot:
         self._close(p, price, "manual", self.now())
         self.save()
         return True
+
+    def set_levels(self, position_id: int, stop: Optional[float] = None,
+                   target: Optional[float] = None) -> Optional[str]:
+        """Owner drags the stop-loss or the take-profit line of an open position on the chart.
+
+        Takes effect at once. Returns None when done, else why not:
+        missing (no such open position), stop_side (the stop must stay on the losing side of the
+        price now), stop_liquidation (the stop must come before the liquidation price),
+        target_side (the target must stay on the winning side of the price now).
+        The size stays, so the risk at the stop is counted again. Break-even is counted again too:
+        its trigger follows the new target; it only ever moves the stop toward profit; a stop the
+        owner moved away from the break-even price is the owner's stop again (break-even re-arms)."""
+        p = next((p for p in self.account["positions"] if p["id"] == position_id), None)
+        if p is None:
+            return "missing"
+        long_ = p["side"] == LONG
+        price = self.prices.get(p["id"], p["entryPrice"])
+        if stop is not None:
+            if not ((stop < price) if long_ else (stop > price)):
+                return "stop_side"
+            if not ((stop > p["liquidation"]) if long_ else (stop < p["liquidation"])):
+                return "stop_liquidation"
+        if target is not None and not ((target > price) if long_ else (target < price)):
+            return "target_side"
+        changes = []
+        if stop is not None and stop != p["stop"]:
+            changes.append(("stop", p["stop"], stop))
+            p["stop"] = stop
+            if p.get("breakevenAt") and stop != p["breakevenPrice"]:
+                p["breakevenAt"] = None   # the owner's stop now; break-even may move it again later
+            p["risk"] = p["notional"] * (abs(p["entryPrice"] - stop) / p["entryPrice"] + 2 * self.fees.taker / 100)
+        if target is not None and target != p["takeProfit"]:
+            changes.append(("target", p["takeProfit"], target))
+            p["takeProfit"] = target
+            if stop is None:
+                # Only the target moved: if the price already passed the new break-even trigger, move now.
+                _maybe_breakeven(p, price, int(self.now()))
+        if not changes:
+            return None
+        p["edited"] = True
+        for what, old, new in changes:
+            self._event("levels", symbol=p["base"], timeframe=p["timeframe"], what=what, old=old, new=new)
+        self.save()
+        return None
 
     async def close_all_and_stop(self) -> int:
         """Owner's button: close every open position now and switch the bot off."""

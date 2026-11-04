@@ -666,6 +666,42 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await bot.close_all_and_stop(), 1)
         self.assertEqual((bot.account["positions"], bot.account["status"]), ([], "stopped"))
 
+    async def test_owner_moves_stop_and_target(self):
+        bot = self.bot
+        bot.reset(100)
+        await bot._open(cand("A", 2.0, 20), "1h", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0.5})
+        p = bot.account["positions"][0]
+        pid, liq = p["id"], p["liquidation"]
+        self.assertEqual(bot.set_levels(99, stop=98), "missing")
+        self.assertEqual(bot.set_levels(pid, stop=100.5), "stop_side")          # above the price now (long)
+        self.assertEqual(bot.set_levels(pid, stop=liq - 0.1), "stop_liquidation")
+        self.assertEqual(bot.set_levels(pid, target=99.8), "target_side")
+        self.assertEqual(p["stop"], 99)                                          # nothing changed
+        old_risk = p["risk"]
+        self.assertIsNone(bot.set_levels(pid, stop=98))                          # wider: more risk, same size
+        self.assertEqual(p["stop"], 98)
+        self.assertAlmostEqual(p["risk"], old_risk * (0.02 + 0.0012) / (0.01 + 0.0012))
+        self.assertTrue(p["edited"])
+        self.assertEqual(bot.account["events"][-1]["kind"], "levels")
+        self.assertIsNone(bot.set_levels(pid, target=104))
+        self.assertEqual(p["takeProfit"], 104)
+        # Break-even follows the new target: half way is now 102, a candle to 101.5 does not move it.
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 100, 100), bar(1_000_000, 100, 101.5, 99.9, 101)]
+        self.clock[0] = 1_000_000 + 3600 + 10
+        await bot._watch_positions(self.clock[0])
+        self.assertEqual((p["stop"], p["breakevenAt"]), (98, None))
+        # Target moved close to the price: past the new trigger, so break-even moves the stop at once.
+        self.assertIsNone(bot.set_levels(pid, target=101.6))
+        self.assertEqual(p["stop"], p["breakevenPrice"])
+        self.assertIsNotNone(p["breakevenAt"])
+        # The owner moves the stop away again: it is the owner's stop, the exit is a plain stop.
+        self.assertIsNone(bot.set_levels(pid, stop=99.5))
+        self.assertIsNone(p["breakevenAt"])
+        # A stop that locks profit is never pulled back to break-even.
+        self.assertIsNone(bot.set_levels(pid, stop=100.8))
+        pp._maybe_breakeven(p, 101.5, 1)
+        self.assertEqual(p["stop"], 100.8)
+
     async def test_profit_cap_takes_the_small_profit(self):
         bot = self.bot
         bot.reset(100)

@@ -131,6 +131,9 @@ class ServerTest(unittest.TestCase):
         from unittest import mock
         client = self.client(lambda market_type: MarketService(FakeExchange(), market_type))
         self.assertEqual(client.post("/api/paper/close", json={"position_id": 99}).status_code, 404)
+        self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99, "stop": 1.2}).status_code, 404)
+        self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99}).status_code, 400)
+        self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99, "stop": -1}).status_code, 400)
         self.assertEqual(client.post("/api/paper/cap", json={"usd": 0.1}).json()["rules"]["profitCap"], 0.1)
         self.assertEqual(client.post("/api/paper/cap", json={"usd": -1}).status_code, 400)
         rules = client.post("/api/paper/pause", json={"losses": 0, "fall": 8}).json()["rules"]

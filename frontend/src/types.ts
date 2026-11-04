@@ -221,6 +221,9 @@ export interface PaperPosition {
   risk: number; // USDT lost at the stop, fees included
   liquidation: number;
   breakevenAt: number | null;
+  breakevenPart?: number;   // share of the way to the target that moves the stop to break-even (0 = off)
+  breakevenPrice?: number;  // entry price plus both fees: the stop there loses nothing
+  edited?: boolean;         // the owner moved the stop or the target on the chart
   /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */
   advice?: { time: number; suggest: "hold" | "close"; reason: "fine" | "opposite" | "state" | "unknown";
     detail: string; pnl: number; answer: "hold" | null } | null;
@@ -241,7 +244,10 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
-    | "ai" | "ask" | "askAnswer";
+    | "ai" | "ask" | "askAnswer" | "levels";
+  what?: "stop" | "target"; // levels: which line the owner moved
+  old?: number; // levels: price before
+  new?: number; // levels: price after
   approve?: boolean; // ai: Gemini's answer
   confidence?: number | null; // ai
   text?: string; // ai: its one-line reason

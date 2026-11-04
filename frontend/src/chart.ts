@@ -42,6 +42,22 @@ export const THEME = {
 
 const OWN_PANE_HEIGHT = 120;
 const LEVEL_COLOR = "#787b86";
+/** How close (pixels) the mouse must be to a draggable line to grab it. */
+const DRAG_GRAB_PX = 6;
+
+/** A price level line of an open position. With drag, the owner can move it with the mouse. */
+export interface Level {
+  key?: string;
+  price: number;
+  color: string;
+  title: string;
+  style?: "dotted" | "dashed";
+  drag?: {
+    /** While dragging: the line's label, and other lines that move along (e.g. the break-even trigger). */
+    onMove(price: number): { title: string; others?: Record<string, { price: number; title: string }> };
+    onDrop(price: number): void;
+  };
+}
 
 /**
  * Which pane each indicator goes in: price-chart indicators share pane 0,
@@ -79,7 +95,9 @@ export class ChartView {
   private signature = "";
   private readonly markers: ISeriesMarkersPluginApi<Time>;
   private readonly boxes = new PositionBoxes();
-  private levelLines: IPriceLine[] = [];
+  private levelLines = new Map<string, { line: IPriceLine; level: Level }>();
+  private dragging: { key: string; level: Level; price: number } | null = null;
+  private pendingLevels: Level[] | null = null;   // levels that came in while a line was being dragged
 
   constructor(container: HTMLElement, private readonly onNeedOlder: () => void) {
     this.chart = createChart(container, {
@@ -113,6 +131,73 @@ export class ChartView {
     this.series.attachPrimitive(this.boxes);
     this.chart.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
       if (range && range.from < LOAD_OLDER_MARGIN) this.onNeedOlder();
+    });
+    this.listenForLineDrags(container);
+  }
+
+  /**
+   * The owner drags a stop-loss or take-profit line with the mouse. The library's price lines
+   * cannot be dragged, so: a press near a draggable line (in the price pane) starts a drag, the
+   * chart's own scrolling is switched off meanwhile, the line follows the mouse, and on release
+   * the level's onDrop gets the new price.
+   */
+  private listenForLineDrags(container: HTMLElement): void {
+    const yOf = (e: MouseEvent) => e.clientY - container.getBoundingClientRect().top;
+    const near = (y: number): { key: string; level: Level } | null => {
+      if (y > (this.chart.panes()[0]?.getHeight() ?? 0)) return null;   // below the price pane
+      let best: { key: string; level: Level; d: number } | null = null;
+      for (const [key, { level }] of this.levelLines) {
+        if (!level.drag) continue;
+        const ly = this.series.priceToCoordinate(level.price);
+        if (ly === null) continue;
+        const d = Math.abs(ly - y);
+        if (d <= DRAG_GRAB_PX && (!best || d < best.d)) best = { key, level, d };
+      }
+      return best;
+    };
+    const grab = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      if (this.dragging) {   // the mouse event after the pointer event: keep it from the chart too
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const hit = near(yOf(e));
+      if (!hit) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.dragging = { key: hit.key, level: hit.level, price: hit.level.price };
+      this.chart.applyOptions({ handleScroll: false, handleScale: false });
+      container.style.cursor = "ns-resize";
+    };
+    // Capture phase: seen before the chart's own handlers (some versions listen to pointer, some to mouse events).
+    container.addEventListener("pointerdown", grab, true);
+    container.addEventListener("mousedown", grab, true);
+    container.addEventListener("pointermove", (e) => {
+      if (!this.dragging) container.style.cursor = near(yOf(e)) ? "ns-resize" : "";
+    });
+    window.addEventListener("pointermove", (e) => {
+      const drag = this.dragging;
+      if (!drag) return;
+      const price = this.series.coordinateToPrice(yOf(e));
+      if (price === null || !(price > 0)) return;
+      drag.price = price;
+      const preview = drag.level.drag!.onMove(price);
+      this.levelLines.get(drag.key)?.line.applyOptions({ price, title: preview.title });
+      for (const [key, other] of Object.entries(preview.others ?? {})) {
+        this.levelLines.get(key)?.line.applyOptions(other);
+      }
+    });
+    window.addEventListener("pointerup", () => {
+      const drag = this.dragging;
+      if (!drag) return;
+      this.dragging = null;
+      this.chart.applyOptions({ handleScroll: true, handleScale: true });
+      container.style.cursor = "";
+      const pending = this.pendingLevels;
+      this.pendingLevels = null;
+      if (pending) this.setLevels(pending);
+      if (drag.price !== drag.level.price) drag.level.drag!.onDrop(drag.price);
     });
   }
 
@@ -248,11 +333,20 @@ export class ChartView {
    * Price levels of open positions on the price axis (entry, stop-loss, take-profit): a dotted line
    * across the chart and the price in a coloured label on the axis, like the current price.
    */
-  setLevels(levels: { price: number; color: string; title: string }[]): void {
-    for (const line of this.levelLines) this.series.removePriceLine(line);
-    this.levelLines = levels.map((l) => this.series.createPriceLine({
-      price: l.price, color: l.color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: l.title,
-    }));
+  setLevels(levels: Level[]): void {
+    if (this.dragging) {
+      this.pendingLevels = levels;   // drawn when the owner lets go of the line
+      return;
+    }
+    for (const { line } of this.levelLines.values()) this.series.removePriceLine(line);
+    this.levelLines.clear();
+    levels.forEach((l, n) => {
+      const line = this.series.createPriceLine({
+        price: l.price, color: l.color, lineWidth: l.drag ? 2 : 1,
+        lineStyle: l.style === "dashed" ? LineStyle.Dashed : LineStyle.Dotted, axisLabelVisible: true, title: l.title,
+      });
+      this.levelLines.set(l.key ?? String(n), { line, level: l });
+    });
   }
 
   /** Update the latest candle, or add a new one. */
