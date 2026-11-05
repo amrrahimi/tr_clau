@@ -247,7 +247,10 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
-    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel";
+    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind";
+  start?: number; // blind: from when the bot did not see the prices (seconds)
+  end?: number;   // blind: until when
+  filled?: boolean; // blind: the missing candles came from the exchange (else: stop/target at their own price)
   price?: number; // order: the limit price
   entryType?: "market" | "limit"; // open: how it was entered
   what?: "stop" | "target"; // levels: which line the owner moved

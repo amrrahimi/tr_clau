@@ -204,7 +204,7 @@ def pnl(position: dict, exit_price: float, exit_fee: float) -> tuple[float, floa
 # ---------------------------------------------------------------- exits
 
 def check_exit(position: dict, candles: list[dict], last_price: Optional[float], tf_seconds: int,
-               now: float) -> Optional[tuple[float, str]]:
+               now: float, hole_before: Optional[int] = None) -> Optional[tuple[float, str]]:
     """Exit (price, reason) if the stop or the target was reached, else None.
 
     Closed candles after the entry candle are checked with their high and low
@@ -213,7 +213,10 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
     the entry candle and the candle now forming only the live price is used,
     because part of those candles happened before the entry or is not known; a live price past
     the stop exits at that price (slippage), a live price past the target at the target.
-    Break-even moves the stop on closed candles, like in the history test."""
+    Break-even moves the stop on closed candles, like in the history test.
+    hole_before: the first candle after candles the bot never got (it was not watching and the
+    exchange did not give them): there the stop or target fills at its own price, as the order on an
+    exchange would have, not at that candle's open (that would read the missing hours as a gap)."""
     long_ = position["side"] == LONG
     for c in candles:
         if c["time"] <= position["entryCandle"] or c["time"] < position["checkedFrom"]:
@@ -225,6 +228,8 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
             reason = _stop_reason(position)
             # A gap past the stop (the candle opened beyond it) fills at the open, worse than the stop.
             gapped = (c["open"] < stop) if long_ else (c["open"] > stop)
+            if c["time"] == hole_before:
+                gapped = False
             return (c["open"] if gapped else stop), reason
         if (c["high"] >= target) if long_ else (c["low"] <= target):
             return target, "target"
@@ -234,6 +239,9 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
     if last_price is not None:
         stop, target = position["stop"], position["takeProfit"]
         if (last_price <= stop) if long_ else (last_price >= stop):
+            if hole_before is not None and not any(c["time"] >= hole_before and c["time"] + tf_seconds <= now
+                                                   for c in candles):
+                return stop, _stop_reason(position)   # crossed while unseen: the exchange's stop order
             # The price seen is already past the stop: the stop order fills there, not at the stop.
             return last_price, _stop_reason(position)
         if (last_price >= target) if long_ else (last_price <= target):
@@ -1068,12 +1076,14 @@ class PaperBot:
             p["lock"] = {"trigger": a.get("lockTrigger", LOCK_TRIGGER * 100) / 100, "at": a.get("lockAt", LOCK_AT * 100) / 100}
         else:
             p.pop("lock", None)
-        candles = await self.recent(p["symbol"], p["timeframe"])
+        tf_seconds = config.TIMEFRAME_SECONDS[p["timeframe"]]
+        since = max(p["checkedFrom"], p["entryCandle"] + tf_seconds)
+        candles, hole_before = await self._candles_since(p, p["symbol"], p["timeframe"], since)
         if not candles:
             return
         last = candles[-1]["close"]
         self.prices[p["id"]] = last
-        hit = check_exit(p, candles, last, config.TIMEFRAME_SECONDS[p["timeframe"]], now)
+        hit = check_exit(p, candles, last, tf_seconds, now, hole_before)
         cap = self.account.get("profitCap") or 0
         if hit is None and cap > 0 and pnl(p, last, self.fees.taker)[0] >= cap:
             hit = (last, "cap")   # owner's profit cap: take the small profit now
@@ -1081,6 +1091,25 @@ class PaperBot:
             self._close(p, hit[0], hit[1], now)
         elif self.profile.advice and p.get("advice") is None and self._half_way(p, last):
             await self._advise(p, now)
+
+    async def _candles_since(self, item: dict, symbol: str, tf: str, since: int) -> tuple[list[dict], Optional[int]]:
+        """The candles from `since` on. Normally the last 60 are enough; after the bot was not watching
+        (computer asleep, app closed, no connection) the missing ones come from the long history, so a
+        stop or target is found at the candle where it really happened, as on an exchange.
+        Returns the candles and, if some could not be had, the time of the first candle after the hole."""
+        recent = await self.recent(symbol, tf)
+        if not recent or recent[0]["time"] <= since:
+            return recent, None
+        try:
+            older = [c for c in await self.history(symbol, tf) if since <= c["time"] < recent[0]["time"]]
+        except Exception:
+            older = []
+        candles = older + recent
+        filled = bool(older) and older[0]["time"] <= since
+        if item.get("blindFrom") != since:   # one diary line per hole
+            item["blindFrom"] = since
+            self._event("blind", symbol=item["base"], timeframe=tf, start=since, end=recent[0]["time"], filled=filled)
+        return candles, (None if filled else candles[0]["time"])
 
     @staticmethod
     def _half_way(p: dict, price: float) -> bool:
@@ -1490,7 +1519,7 @@ class PaperBot:
         the candle is not known), and a fill whose candle also reached the stop is stopped out at once."""
         m = ORDER_CANDLE_SECONDS
         tf_seconds = config.TIMEFRAME_SECONDS[o["timeframe"]]
-        candles = await self.recent(o["symbol"], ORDER_CANDLE_TF)
+        candles, _ = await self._candles_since(o, o["symbol"], ORDER_CANDLE_TF, o["checkedFrom"])
         long_ = o["side"] == LONG
         price, stop, target = o["price"], o["stopLoss"], o["takeProfit"]
         for c in candles or []:

@@ -1240,3 +1240,62 @@ class LimitEntryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(p["lockedAt"])
         self.bot.reset(100)
         self.assertTrue(self.bot.account["lockEnabled"])                # a setting: kept on "start again"
+
+
+class MissedCandlesTest(unittest.IsolatedAsyncioTestCase):
+    """The CLANKER case (2026-11-05): the bot did not watch for hours; on waking it saw only the last 60
+    candles, all below the stop, and closed at the first one's open (-8.2 USDT instead of about -2.6)."""
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.history_rows, self.recent_rows = [], []
+
+        async def history(symbol, tf):
+            return self.history_rows
+
+        async def recent(symbol, tf):
+            return self.recent_rows
+
+        async def coins():
+            return []
+        self.bot = pp.PaperBot(pp.Store(Path(self.dir.name) / "paper.json"), coins, history, recent,
+                               now=lambda: 0, fees=FEES)
+        self.bot.reset(100)
+        # Long at 25.38 in the 3m candle at 0, stop moved to 22.54, target 28.21.
+        self.p = position(id=1, symbol="CLANKER/USDT:USDT", base="CLANKER", timeframe="3m", entryPrice=25.38,
+                          stop=22.54, stopLoss=24.22, takeProfit=28.21, breakevenPart=0, quantity=0.906,
+                          entryFee=0.0046, notional=23, margin=11.5, risk=2.6, entryCandle=0, checkedFrom=180)
+        self.bot.account["positions"].append(self.p)
+        # Falling candles every 3 minutes: crosses 22.54 at t=1080 (opens 22.96), then far below.
+        prices = [25.3, 25.0, 24.7, 24.2, 23.9, 23.4, 22.96, 21.0, 19.5, 18.0]
+        self.all = [bar(180 * (i + 1), o, o + 0.05, o - 1.6 if o == 22.96 else o - 0.3, o - 0.2)
+                    for i, o in enumerate(prices)]
+        self.all += [bar(180 * (11 + i), 17.0, 17.1, 16.6, 16.9) for i in range(70)]
+
+    async def test_missed_hours_are_read_from_history_and_the_stop_fills_at_its_price(self):
+        self.recent_rows = self.all[-60:]          # the bot woke up: only the last 60 candles
+        self.history_rows = self.all
+        now = self.all[-1]["time"] + 200
+        self.bot.now = lambda: now
+        await self.bot._watch_positions(now)
+        t = self.bot.account["closed"][-1]
+        self.assertEqual((t["exitPrice"], t["exitReason"]), (22.54, "stop"))   # not 17.0
+        self.assertGreater(t["pnl"], -2.7)
+        blind = [e for e in self.bot.account["events"] if e["kind"] == "blind"][-1]
+        self.assertEqual((blind["filled"], blind["start"]), (True, 180))
+
+    async def test_without_the_missing_candles_the_stop_still_fills_at_its_own_price(self):
+        self.recent_rows = self.all[-60:]
+        self.history_rows = []                      # the exchange did not give them
+        now = self.all[-1]["time"] + 200
+        self.bot.now = lambda: now
+        await self.bot._watch_positions(now)
+        t = self.bot.account["closed"][-1]
+        self.assertEqual((t["exitPrice"], t["exitReason"]), (22.54, "stop"))
+        self.assertFalse([e for e in self.bot.account["events"] if e["kind"] == "blind"][-1]["filled"])
+
+    async def test_watching_normally_nothing_changes(self):
+        self.recent_rows = self.all[:6]             # every candle seen, none past the stop yet
+        await self.bot._watch_positions(self.all[5]["time"] + 200)
+        self.assertEqual(self.bot.account["positions"], [self.p])
+        self.assertFalse([e for e in self.bot.account["events"] if e["kind"] == "blind"])

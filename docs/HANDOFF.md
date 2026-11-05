@@ -104,6 +104,13 @@ signals hit the stop (reversing them would also lose: fees and the reward ratio)
    on click, so the panel stopped redrawing and later ticks undid earlier ones); ticks use the latest
    state (toggled()); a poll answer from before a button press is dropped; /limit answers at once.
 
+## Missed candles (2026-11-05, owner's rule "like an exchange")
+CLANKER 3m long lost 8.2 USDT instead of about 2.6: the bot did not watch 01:00-09:22 (computer asleep / no
+connection); on waking it read only the last 60 candles, all below the stop, and the 2026-11-04 gap rule exited
+at the first one's open. Now positions and limit orders load the missing candles from the long history
+(_candles_since) and check them in order (stop, target, break-even, lock at the real candle). If the exchange
+cannot give them, a stop/target crossed meanwhile counts at its own price (owner). Diary line "blind".
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.

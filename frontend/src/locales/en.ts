@@ -454,6 +454,8 @@ export const en = {
   "bot.lock.trigger": "At % of the way",
   "bot.lock.at": "stop to %",
   "bot.lock.hint": "When a trade has gone {trigger}% of the way to its target, its stop moves to {at}% of the way: if the price turns back, the trade still closes with a profit; if it goes on, the full target is kept. Also for trades already open.",
+  "bot.evBlindFilled": "{coin} {tf}: the bot did not see the prices {from}-{to} (computer asleep or no connection); the missing candles were read from the exchange and the stop and target checked on them",
+  "bot.evBlindStop": "{coin} {tf}: the bot did not see the prices {from}-{to} and the exchange did not give those candles; a stop or target crossed meanwhile counts at its own price",
   "bot.level.liquidation": "Liquidation",
   "bot.level.breakevenAt": "Break-even at",
   "bot.drag.label": "{level} {price} · {pnl}$",

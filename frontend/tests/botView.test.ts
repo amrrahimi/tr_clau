@@ -244,3 +244,11 @@ test("a limit entry says so in the diary; the lock exit has its words", () => {
   assert.ok(!eventText(e, t).includes("لیمیت"));
   assert.equal(translate("fa", "bot.reason.lock"), "قفل سود");
 });
+
+test("the diary says when the bot did not see the prices", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  const filled = eventText({ time: 1, kind: "blind", symbol: "CLANKER", timeframe: "3m", start: 0, end: 3600, filled: true }, t);
+  const stop = eventText({ time: 1, kind: "blind", symbol: "CLANKER", timeframe: "3m", start: 0, end: 3600, filled: false }, t);
+  assert.ok(filled.includes("CLANKER") && filled.includes("صرافی خوانده"));
+  assert.ok(stop.includes("همان قیمت"));
+});
