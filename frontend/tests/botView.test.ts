@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
@@ -251,4 +251,10 @@ test("the diary says when the bot did not see the prices", () => {
   const stop = eventText({ time: 1, kind: "blind", symbol: "CLANKER", timeframe: "3m", start: 0, end: 3600, filled: false }, t);
   assert.ok(filled.includes("CLANKER") && filled.includes("صرافی خوانده"));
   assert.ok(stop.includes("همان قیمت"));
+});
+
+test("the manual list keeps the unticked strategies when the catalog did not load", () => {
+  const byTf = { "15m": ["ema_cross", "supertrend", "fvg_retest"], "1h": ["supertrend", "ichimoku"] };
+  assert.deepEqual(allStrategies([], byTf, ["supertrend"]), ["ema_cross", "supertrend", "fvg_retest", "ichimoku"]);
+  assert.deepEqual(allStrategies(["ichimoku", "ema_cross"], byTf, []), ["ichimoku", "ema_cross", "supertrend", "fvg_retest"]);
 });

@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME, type Level } from "./chart.ts";
-import { adviceText, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -54,11 +54,7 @@ export class BotApp {
   async start(): Promise<void> {
     this.build();
     this.applyLanguage();
-    try {
-      this.cards = await this.backend.getStrategyCatalog();
-    } catch {
-      // the panel still works; manual strategy names come later
-    }
+    await this.loadCatalog();
     await this.refresh();
     void this.loadConnection();
     setInterval(() => {
@@ -157,6 +153,7 @@ export class BotApp {
 
   private async refresh(): Promise<void> {
     const asked = this.actions;
+    if (!this.cards.length) void this.loadCatalog();   // it failed at start (engine busy): try again
     try {
       const state = await this.backend.getPaper();
       // A button was pressed while this answer was on its way: it may show the state from before the
@@ -177,6 +174,21 @@ export class BotApp {
     this.followBot();
     this.drawTrades();
     this.render();
+  }
+
+  private catalogLoading = false;
+
+  /** The strategy catalog (names for the manual list). The panel still works without it; tried again later. */
+  private async loadCatalog(): Promise<void> {
+    if (this.catalogLoading) return;
+    this.catalogLoading = true;
+    try {
+      this.cards = await this.backend.getStrategyCatalog();
+    } catch {
+      // engine busy at start: the next poll tries again
+    } finally {
+      this.catalogLoading = false;
+    }
   }
 
   private async loadConnection(): Promise<void> {
@@ -744,7 +756,9 @@ export class BotApp {
       const list = el("div", "bot-strategies");
       const stats = s.strategyStats ?? {};
       const onTf = timeframesOf(s.botStrategies ?? {});
-      const all = this.cards.length ? this.cards.map((c) => c.type) : s.strategies;
+      // All strategies: from the catalog, else from the bot's own lists per timeframe (always in its state),
+      // so the unticked ones never disappear when the catalog did not load at start.
+      const all = allStrategies(this.cards.map((c) => c.type), s.botStrategies ?? {}, s.strategies);
       const listed = s.botStrategies ? all.filter((k) => onTf[k]) : all;
       const kinds = strategyOrder(listed, stats);
       for (const kind of kinds) {

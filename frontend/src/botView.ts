@@ -39,6 +39,14 @@ export function breakevenTrigger(p: PaperPosition, target: number = p.takeProfit
   return p.entryPrice + (target - p.entryPrice) * p.breakevenPart;
 }
 
+/** Every strategy for the manual list: the catalog's order, else the bot's lists per timeframe, plus the
+ * chosen ones; each once. Without the catalog the panel used to show only the ticked strategies. */
+export function allStrategies(catalog: string[], byTf: Record<string, string[]>, chosen: string[]): string[] {
+  const out: string[] = [];
+  for (const k of [...catalog, ...Object.values(byTf).flat(), ...chosen]) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
 /** A list after ticking (on) or unticking (off) one item, in the order of `order`. Built from the latest
  * choice, so quick ticks one after another all count. */
 export function toggled<T>(order: readonly T[], chosen: readonly T[], item: T, on: boolean): T[] {

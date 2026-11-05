@@ -111,6 +111,11 @@ at the first one's open. Now positions and limit orders load the missing candles
 (_candles_since) and check them in order (stop, target, break-even, lock at the real candle). If the exchange
 cannot give them, a stop/target crossed meanwhile counts at its own price (owner). Diary line "blind".
 
+## Manual strategy list (2026-11-05)
+The panel loaded the strategy catalog once at start; when the engine was busy it failed and was never asked
+again, so the manual list showed only the ticked strategies (12 disappeared). Now it retries on each poll and
+builds the list from the bot's per-timeframe lists meanwhile (allStrategies()).
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.
