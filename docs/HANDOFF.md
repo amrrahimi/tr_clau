@@ -116,6 +116,12 @@ The panel loaded the strategy catalog once at start; when the engine was busy it
 again, so the manual list showed only the ticked strategies (12 disappeared). Now it retries on each poll and
 builds the list from the bot's per-timeframe lists meanwhile (allStrategies()).
 
+## Owner 2026-11-05 evening
+- "Stale" rule one-sided: a price that moved toward the stop since the signal is a better entry and is
+  taken (short signal, price went up); only a move toward the target (late, less profit) is stale. The stop
+  (past), fee and reward rules still apply at the price now. Filter on/off switches: cancelled by the owner.
+- Half-way "hold or close?" advice switched off (Profile.advice False): the profit lock does its job.
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.

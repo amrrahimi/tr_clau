@@ -238,8 +238,23 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.2, 100, 100.2)]   # within a quarter: taken
         await bot._open(cand("A", 2.0, 20), "15m", self.clock[0], {"fee_ratio": 0.33})
         self.assertEqual(len(bot.account["positions"]), 1)
-        self.assertTrue(pp.is_stale(100, 99.7, 99))
-        self.assertFalse(pp.is_stale(100, 99.8, 99))
+        self.assertTrue(pp.is_stale(100, 100.3, 99))     # a buy: the price went up (toward the target): late
+        self.assertFalse(pp.is_stale(100, 100.2, 99))
+        # Owner 2026-11-05: a move toward the stop is a better entry, never stale (the stop itself still counts).
+        self.assertFalse(pp.is_stale(100, 99.3, 99))      # a buy, cheaper now
+        self.assertFalse(pp.is_stale(100, 100.7, 101))    # a sell, higher now
+        self.assertTrue(pp.is_stale(100, 99.6, 101))      # a sell, already fell: late
+
+    async def test_short_signal_after_the_price_rose_is_entered_at_the_better_price(self):
+        bot = self.bot
+        bot.reset(100)
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.5, 100, 100.5)]   # short at 100, stop 101
+        await bot._open(cand("A", 2.0, 20, side=SHORT), "15m", self.clock[0], {"fee_ratio": 0.33})
+        p = bot.account["positions"][0]
+        self.assertEqual((p["entryPrice"], p["stop"], p["takeProfit"]), (100.5, 101, 98))
+        self.recent_rows["B/USDT:USDT"] = [bar(999_960, 100, 101.2, 100, 101.2)]   # past the stop: still no
+        await bot._open(cand("B", 2.0, 20, side=SHORT), "15m", self.clock[0], {"fee_ratio": 0.33})
+        self.assertEqual(bot.account["events"][-1]["reason"], "past")
 
     async def test_account_is_saved_and_loaded(self):
         self.bot.reset(80)
@@ -801,9 +816,19 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pp.BOT_STRATEGIES, tuple(pp.STRATEGIES))
         self.assertTrue(all(pp.BOT_STRATEGIES_BY_TF[tf] == tuple(pp.STRATEGIES) for tf in pp.TIMEFRAMES))
 
+    async def test_half_way_advice_is_off_now(self):
+        bot = self.bot
+        bot.reset(100)
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100, 100, 101.2)]   # past half way
+        await bot._watch_positions(self.clock[0])
+        self.assertIsNone(bot.account["positions"][0].get("advice"))      # owner 2026-11-05: removed
+
     async def test_half_way_advice_and_the_owners_answer(self):
+        from dataclasses import replace
         from unittest import mock
         bot = self.bot
+        bot.profile = replace(bot.profile, advice=True)   # the feature itself still works if switched on
         bot.reset(100)
         await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
         p = bot.account["positions"][0]

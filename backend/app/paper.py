@@ -82,7 +82,7 @@ class Profile:
     max_same_side: int = MAX_SAME_SIDE
     all_signals: bool = False     # True: not only reliable signals
     smart_pause: bool = True
-    advice: bool = True
+    advice: bool = False   # half-way "hold or close?" advice: removed by the owner 2026-11-05 (profit lock does it)
     default_cap: float = 0.0
     size_slots: int = MAX_OPEN    # sizing: one position may use at most equity / size_slots as margin
 
@@ -312,9 +312,13 @@ def _maybe_breakeven(position: dict, extreme: float, when: int) -> None:
 
 
 def is_stale(signal_price: float, price: float, stop: float) -> bool:
-    """The price moved more than STALE_PART of the stop distance since the signal."""
+    """The price moved more than STALE_PART of the stop distance since the signal, toward the target
+    (a late entry: less profit left). A move toward the stop is a better entry (owner 2026-11-05: e.g. a
+    short signal and the price went up): never stale; the stop itself, the fee rule and the reward rule
+    are checked at the price now as before."""
     distance = abs(signal_price - stop)
-    return distance > 0 and abs(price - signal_price) > STALE_PART * distance
+    toward_target = (price - signal_price) * (signal_price - stop) > 0
+    return distance > 0 and toward_target and abs(price - signal_price) > STALE_PART * distance
 
 
 # ---------------------------------------------------------------- choosing
