@@ -174,6 +174,10 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t(e.what === "target" ? "bot.evTargetMoved" : "bot.evStopMoved", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
         old: formatPrice(e.old ?? 0, digits), new: formatPrice(e.new ?? 0, digits) });
     }
+    case "consult":
+      return t("bot.evConsult", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
+        answer: e.suggest === "exit" ? t("consult.ai.exit") : e.suggest === "move_stop" ? t("bot.evConsultMove")
+          : e.suggest === "hold" ? t("consult.ai.hold") : "–" });
     case "blind": {
       const hm = (sec: number | undefined) => new Date((sec ?? 0) * 1000).toTimeString().slice(0, 5);
       return t(e.filled ? "bot.evBlindFilled" : "bot.evBlindStop", { coin: e.symbol ?? "", tf: e.timeframe ?? "",

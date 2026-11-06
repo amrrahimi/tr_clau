@@ -816,6 +816,35 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pp.BOT_STRATEGIES, tuple(pp.STRATEGIES))
         self.assertTrue(all(pp.BOT_STRATEGIES_BY_TF[tf] == tuple(pp.STRATEGIES) for tf in pp.TIMEFRAMES))
 
+    async def test_owner_consults_about_an_open_position(self):
+        from unittest import mock
+        bot = self.bot
+        bot.reset(100)
+        await bot._open(cand("A", 2.0, 20), "1m", self.clock[0], {"fee_ratio": 0.33, "breakeven": 0})
+        p = bot.account["positions"][0]
+        bot.prices[p["id"]] = 101.0
+        seen = {}
+
+        async def fake_consult(data, position, price, keys):
+            seen.update(data=data, price=price)
+            return {"action": "move_stop", "newStop": 100.2, "confidence": 65, "reason": "حمایت در ۱۰۰.۲", "levels": "", "note": ""}
+        bot.ai_consult = fake_consult
+        bot.ai_keys = lambda: ["k"]
+        overview = {"marketState": "trend_up", "rows": []}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            answer = await bot.consult(p["id"])
+        self.assertEqual(answer["ai"]["action"], "move_stop")
+        self.assertEqual((answer["bot"]["suggest"], answer["bot"]["progress"]), ("hold", 50.0))   # 101 of 100 -> 102
+        d = seen["data"]["position"]
+        self.assertEqual((d["entry"], d["stopLoss"], d["takeProfit"], d["priceNow"]), (100, 99, 102, 101.0))
+        self.assertIn("supportResistance", seen["data"])
+        self.assertEqual(p["stop"], 99)                          # nothing done automatically
+        self.assertEqual(p["consults"][-1]["ai"]["newStop"], 100.2)
+        bot.ai_keys = lambda: []
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            self.assertEqual((await bot.consult(p["id"]))["error"], "noKeys")
+        self.assertIsNone(await bot.consult(999))
+
     async def test_half_way_advice_is_off_now(self):
         bot = self.bot
         bot.reset(100)

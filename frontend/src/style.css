@@ -564,3 +564,17 @@ button:hover { background: var(--border); }
 .bot-compare td.down { color: var(--down, #f23645); }
 .bot-table td.entry-limit { color: #b388ff; }
 .bot-table td.money { cursor: help; }
+
+/* "Stay or exit?" under the chart: the button on the right, its answer to the left. */
+.bot-consult { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); max-height: 34vh; overflow-y: auto; }
+.consult-row { display: flex; align-items: flex-start; gap: 12px; }
+.consult-button { flex: 0 0 auto; padding: 8px 14px; border-radius: 6px; border: 1px solid #7e57c2; background: #4527a0; color: #fff; cursor: pointer; font-size: 13px; }
+.consult-button:disabled { opacity: 0.6; cursor: wait; }
+.consult-message { flex: 1 1 auto; font-size: 12.5px; line-height: 1.6; display: flex; flex-direction: column; gap: 2px; }
+.consult-bot.hold, .consult-ai.hold { color: var(--up, #089981); }
+.consult-bot.close, .consult-ai.exit { color: var(--down, #f23645); }
+.consult-ai.move_stop { color: #b388ff; }
+.consult-ai { font-weight: 600; margin-top: 4px; }
+.consult-facts, .consult-time, .consult-wait { color: var(--muted, #787b86); }
+.consult-error { color: #ff9800; }
+.consult-act { align-self: flex-start; margin-top: 4px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }

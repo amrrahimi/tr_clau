@@ -12,7 +12,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, ConnectionState, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
+import type { Candle, ConnectionState, ConsultAnswer, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -116,6 +116,7 @@ export class BotApp {
               <div class="chart" data-el="chart"></div>
               <div class="chart-message" data-el="chartMessage" hidden></div>
             </section>
+            <section class="bot-consult" data-el="consult" hidden></section>
             <section class="bot-trades" data-el="trades"></section>
           </div>
         </main>
@@ -362,6 +363,100 @@ export class BotApp {
     // Do not redraw the panel while the owner is typing (money, keys, coin search).
     if (!this.typing()) this.renderPanel();
     this.renderTrades();
+    this.renderConsult();
+  }
+
+  /** A new element with a class and text (the consult bar). */
+  private static el(tag: string, cls: string, text = ""): HTMLElement {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text) e.textContent = text;
+    return e;
+  }
+
+  /** Answers of the "stay or exit?" button by position id; asking: waiting for Gemini. */
+  private consults = new Map<number, ConsultAnswer>();
+  private consulting = new Set<number>();
+
+  /** Under the chart: for each open position of this chart, the button (right) and its answer (to its left). */
+  private renderConsult(): void {
+    const box = this.els.consult;
+    const t = this.t.bind(this);
+    const here = (this.state?.positions ?? []).filter((p) => this.target && p.symbol === this.target.symbol
+      && p.timeframe === this.target.timeframe);
+    box.hidden = !here.length;
+    box.replaceChildren();
+    for (const p of here) {
+      const row = BotApp.el("div", "consult-row");
+      const button = BotApp.el("button", "consult-button", this.consulting.has(p.id) ? t("consult.asking") : t("consult.button"));
+      (button as HTMLButtonElement).disabled = this.consulting.has(p.id);
+      button.addEventListener("click", () => void this.askConsult(p));
+      const answer = this.consults.get(p.id) ?? p.consults?.[p.consults.length - 1];
+      const message = BotApp.el("div", "consult-message");
+      if (this.consulting.has(p.id)) message.append(BotApp.el("div", "consult-wait", t("consult.wait")));
+      else if (answer) message.append(...this.consultLines(p, answer));
+      else message.append(BotApp.el("div", "consult-wait", t("consult.hint")));
+      row.append(button, message);
+      box.append(row);
+    }
+  }
+
+  private consultLines(p: PaperPosition, a: ConsultAnswer): HTMLElement[] {
+    const t = this.t.bind(this);
+    const digits = this.chart.pricePrecision;
+    const out: HTMLElement[] = [];
+    const b = a.bot;
+    const arrows = Object.entries(b.trends).map(([tf, tr]) => `${tf} ${tr === "up" ? "↑" : tr === "down" ? "↓" : "→"}`).join("  ");
+    const levels = [b.swingHighAbove != null ? t("consult.resistance", { price: formatPrice(b.swingHighAbove, digits) }) : "",
+      b.swingLowBelow != null ? t("consult.support", { price: formatPrice(b.swingLowBelow, digits) }) : ""].filter(Boolean).join(" · ");
+    const why = t(`bot.advice.why.${b.reason}` as MessageKey, { detail: b.reason === "opposite"
+      ? t(`strat.${b.detail}` as MessageKey) : t(`state.${b.detail || "unknown"}` as MessageKey) });
+    out.push(BotApp.el("div", `consult-bot ${b.suggest}`, t("consult.bot", {
+      suggest: t(b.suggest === "close" ? "consult.bot.close" : "consult.bot.hold"), why,
+      progress: b.progress == null ? "–" : String(b.progress), r: b.r == null ? "–" : formatR(b.r) })));
+    out.push(BotApp.el("div", "consult-facts", [arrows, b.rsi != null ? `RSI ${b.rsi}` : "", levels].filter(Boolean).join("   ·   ")));
+    if (a.ai) {
+      const ai = a.ai;
+      const verdict = ai.action === "exit" ? t("consult.ai.exit") : ai.action === "move_stop"
+        ? t("consult.ai.move", { price: formatPrice(ai.newStop ?? 0, digits) }) : t("consult.ai.hold");
+      const head = BotApp.el("div", `consult-ai ${ai.action}`, t("consult.ai", { verdict,
+        confidence: ai.confidence == null ? "–" : String(Math.round(ai.confidence)) }));
+      out.push(head, BotApp.el("div", "consult-reason", ai.reason));
+      if (ai.levels) out.push(BotApp.el("div", "consult-facts", t("consult.levels", { levels: ai.levels })));
+      if (ai.note === "badStop") out.push(BotApp.el("div", "consult-facts", t("consult.badStop")));
+      const still = this.state?.positions.some((x) => x.id === p.id);
+      if (still && ai.action === "exit") {
+        const go = BotApp.el("button", "consult-act", t("consult.doExit"));
+        go.addEventListener("click", () => void this.act({ kind: "close", position_id: p.id }));
+        out.push(go);
+      }
+      if (still && ai.action === "move_stop" && ai.newStop != null) {
+        const go = BotApp.el("button", "consult-act", t("consult.doMove", { price: formatPrice(ai.newStop, digits) }));
+        go.addEventListener("click", () => void this.act({ kind: "levels", position_id: p.id, stop: ai.newStop! }));
+        out.push(go);
+      }
+    } else {
+      out.push(BotApp.el("div", "consult-error", a.error === "noKeys" ? t("consult.noKeys") : t("consult.error", { error: a.error ?? "" })));
+    }
+    out.push(BotApp.el("div", "consult-time", t("consult.when", { time: new Date(a.time * 1000).toTimeString().slice(0, 5) })));
+    return out;
+  }
+
+  private async askConsult(p: PaperPosition): Promise<void> {
+    if (this.consulting.has(p.id)) return;
+    this.consulting.add(p.id);
+    this.renderConsult();
+    try {
+      this.consults.set(p.id, await this.backend.consult(p.id));
+    } catch (error) {
+      this.consults.set(p.id, { position: p.id, time: Date.now() / 1000, ai: null,
+        error: error instanceof Error ? error.message : String(error),
+        bot: { suggest: "hold", reason: "unknown", detail: "", marketState: null, progress: null, pnl: 0, r: null,
+          price: p.entryPrice, trends: {}, rsi: null, swingHighAbove: null, swingLowBelow: null } });
+    } finally {
+      this.consulting.delete(p.id);
+      this.renderConsult();
+    }
   }
 
   private renderTitle(): void {

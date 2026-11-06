@@ -164,6 +164,15 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             b.set_limit_entry(enabled)   # no waiting for a running scan: the switch answers at once
             return b.public()
 
+        @app.post(f"/api/{prefix}/consult")
+        async def paper_consult(position_id: int = Body(..., embed=True)):
+            """The owner's button: the bot's own view and Gemini's advice (hold / exit / move the stop) for an
+            open position. Nothing is done automatically. Takes up to about a minute (Gemini)."""
+            answer = await b.consult(position_id)
+            if answer is None:
+                raise HTTPException(404, "no open position with this id")
+            return answer
+
         @app.post(f"/api/{prefix}/lock")
         async def paper_lock(enabled: bool = Body(...), trigger: float = Body(80.0), at: float = Body(40.0)):
             """The owner's profit lock: at `trigger` % of the way to the target the stop moves to `at` %."""

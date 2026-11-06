@@ -8,7 +8,7 @@ import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, ConnectionState, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
-  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade, AiTestResult } from "./types.ts";
+  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade, AiTestResult, ConsultAnswer } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -162,6 +162,22 @@ export class MockBackend implements Backend {
       if (!state.positions.length && !state.closed.length) await this.sampleTrades(state);
     }
     return this.paper!;
+  }
+
+  async consult(positionId: number): Promise<ConsultAnswer> {
+    const state = await this.getPaper();
+    const p = state.positions.find((x) => x.id === positionId);
+    if (!p) throw new Error("no open position with this id");
+    const price = p.lastPrice ?? p.entryPrice;
+    const way = p.takeProfit - p.entryPrice;
+    return { position: p.id, time: Date.now() / 1000, error: null,
+      bot: { suggest: "hold", reason: "fine", detail: "", marketState: "trend_up",
+        progress: way ? Math.round((price - p.entryPrice) / way * 1000) / 10 : null, pnl: p.openPnl ?? 0, r: 0.4, price,
+        trends: { "15m": "up", "1h": "up", "4h": "flat", "1d": "down" }, rsi: 58, swingHighAbove: p.takeProfit,
+        swingLowBelow: p.stop },
+      ai: { action: "move_stop", newStop: p.side === "long" ? (p.stop + price) / 2 : (p.stop + price) / 2, confidence: 62,
+        reason: "روند ۱۵ دقیقه و ۱ ساعت هم‌جهت معامله است ولی مقاومت نزدیک است؛ بهتر است بخشی از سود قفل شود.",
+        levels: "مقاومت نزدیک حد سود، حمایت زیر قیمت ورود", note: "" } };
   }
 
   async testAi(): Promise<{ results: AiTestResult[] }> {

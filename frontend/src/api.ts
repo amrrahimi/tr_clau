@@ -4,7 +4,7 @@
 import type {
   Analysis, Candle, CatalogSpec, ConnectionState, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
   StrategyOverview,
- AiTestResult } from "./types.ts";
+ AiTestResult, ConsultAnswer } from "./types.ts";
 
 export interface AnalysisRequest {
   marketType: MarketType;
@@ -80,6 +80,7 @@ export interface Backend {
   setAiKeys(keys: string[]): Promise<PaperState>;
   /** One tiny request to Gemini with each saved key. */
   testAi(): Promise<{ results: AiTestResult[] }>;
+  consult(positionId: number): Promise<ConsultAnswer>;
   getConnection(): Promise<ConnectionState>;
   setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
@@ -185,6 +186,11 @@ export class HttpBackend implements Backend {
   async paperAction(action: PaperAction): Promise<PaperState> {
     const { kind, ...body } = action;
     return this.post<PaperState>(`${PAPER_PATH}/${kind}`, body);
+  }
+
+  /** The owner's "stay or exit?" button: the bot's view and Gemini's advice (up to about a minute). */
+  async consult(positionId: number): Promise<ConsultAnswer> {
+    return this.post<ConsultAnswer>(`${PAPER_PATH}/consult`, { position_id: positionId });
   }
 
   /** The owner's Gemini keys: sent once, kept on this computer, never shown again. */

@@ -338,6 +338,68 @@ async def ask(data: dict, keys: list[str], model: Optional[str] = None, post: Op
     return parse(await _call(body, keys, model, post or default_post, save_model if post is None else None))
 
 
+CONSULT_PROMPT = """You are a careful, experienced crypto futures trader. The owner of an automated bot (paper
+trading) has an OPEN position and asks you, now, what to do with it. Look at the position, the strategy that
+opened it, the trend on the higher timeframes and of Bitcoin, momentum (RSI, volume), and the nearest support
+and resistance (swing highs / lows) between the price now, the stop and the target. Choose one:
+- "hold": keep the position as it is (stop and target unchanged);
+- "exit": close it now at the market price;
+- "move_stop": keep it but move the stop-loss to a better place (give the price in "newStop": for a long it must
+  be below the price now and above the current stop; for a short above the price now and below the current stop),
+  for example just beyond a support / resistance level or to lock part of the profit.
+Be concrete: name the levels you see. Fees are 0.06% per side.
+
+Reply with JSON only:
+{"action": "hold" | "exit" | "move_stop", "newStop": number or null, "confidence": 0-100,
+ "reason": "3-5 sentences in Persian (Farsi): what the chart shows (trend, support/resistance, momentum) and why this action",
+ "levels": "the key support and resistance prices you used, short, in Persian"}
+
+Position and market data (candles are [open, high, low, close, volume], oldest first):
+"""
+
+
+def parse_consult(text: str, position: dict, price: float) -> dict:
+    """The model's answer about an open position -> {"action", "newStop", "confidence", "reason", "levels"}.
+    A new stop on the wrong side (past the price now, or worse than the current stop) is dropped: the
+    action then becomes "hold" and the reason says why."""
+    found = re.search(r"\{.*\}", text or "", re.S)
+    if not found:
+        raise AdvisorUnavailable("no JSON in the answer")
+    try:
+        data = json.loads(found.group(0))
+    except ValueError as error:
+        raise AdvisorUnavailable(f"bad JSON: {error}") from error
+    action = data.get("action")
+    if action not in ("hold", "exit", "move_stop"):
+        raise AdvisorUnavailable("no action field")
+    try:
+        confidence = float(data.get("confidence"))
+        confidence = None if math.isnan(confidence) else confidence
+    except (TypeError, ValueError):
+        confidence = None
+    new_stop, note = None, ""
+    if action == "move_stop":
+        try:
+            new_stop = float(data.get("newStop"))
+        except (TypeError, ValueError):
+            new_stop = None
+        long_ = position["side"] == "long"
+        ok = new_stop is not None and ((position["stop"] < new_stop < price) if long_ else (price < new_stop < position["stop"]))
+        if not ok:
+            action, new_stop, note = "hold", None, "badStop"
+    return {"action": action, "newStop": new_stop, "confidence": confidence,
+            "reason": str(data.get("reason") or "")[:900], "levels": str(data.get("levels") or "")[:300], "note": note}
+
+
+async def consult(data: dict, position: dict, price: float, keys: list[str], model: Optional[str] = None,
+                  post: Optional[Post] = None) -> dict:
+    """Ask Gemini about an open position: hold, exit or move the stop (the owner's button)."""
+    body = {"contents": [{"parts": [{"text": CONSULT_PROMPT + json.dumps(data, ensure_ascii=False, default=lambda x: None)}]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}}
+    text = await _call(body, keys, model, post or default_post, save_model if post is None else None)
+    return parse_consult(text, position, price)
+
+
 async def test_keys(keys: list[str], model: Optional[str] = None, post: Optional[Post] = None) -> list[dict]:
     """The panel's "test connection": per key, a tiny request -> [{key, ok, seconds, model, error}].
     The first model that answers is remembered for the trades."""

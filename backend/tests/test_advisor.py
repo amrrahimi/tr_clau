@@ -223,3 +223,29 @@ class OwnDataTest(unittest.TestCase):
         from app import connection
         self.assertNotEqual(connection.data_folder(), Path.home() / ".trading-bot")
         self.assertEqual(advisor.load_model(), advisor.MODELS[0])   # nothing saved in the test folder
+
+
+class ConsultTest(unittest.TestCase):
+    """The owner's "stay or exit?" button: Gemini's answer about an open position."""
+    long = {"side": "long", "stop": 98.0, "entryPrice": 100.0, "takeProfit": 110.0}
+
+    def test_answers_are_read(self):
+        a = advisor.parse_consult('{"action":"hold","newStop":null,"confidence":70,"reason":"روند صعودی است","levels":"۱۰۵"}',
+                                  self.long, 104)
+        self.assertEqual((a["action"], a["newStop"], a["confidence"]), ("hold", None, 70))
+        a = advisor.parse_consult('{"action":"move_stop","newStop":102.5,"confidence":60,"reason":"x"}', self.long, 104)
+        self.assertEqual((a["action"], a["newStop"]), ("move_stop", 102.5))
+        self.assertEqual(advisor.parse_consult('{"action":"exit","confidence":80}', self.long, 104)["action"], "exit")
+
+    def test_a_new_stop_on_the_wrong_side_becomes_hold(self):
+        for bad in (104.5, 97.0, None):   # past the price now / worse than the stop now / missing
+            a = advisor.parse_consult(json.dumps({"action": "move_stop", "newStop": bad, "confidence": 50}), self.long, 104)
+            self.assertEqual((a["action"], a["newStop"], a["note"]), ("hold", None, "badStop"))
+        short = {"side": "short", "stop": 102.0, "entryPrice": 100.0, "takeProfit": 90.0}
+        self.assertEqual(advisor.parse_consult('{"action":"move_stop","newStop":99,"confidence":50}', short, 96)["newStop"], 99)
+
+    def test_no_answer_is_an_error(self):
+        with self.assertRaises(advisor.AdvisorUnavailable):
+            advisor.parse_consult("sorry", self.long, 104)
+        with self.assertRaises(advisor.AdvisorUnavailable):
+            advisor.parse_consult('{"action":"buy more"}', self.long, 104)

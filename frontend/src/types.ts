@@ -227,6 +227,7 @@ export interface PaperPosition {
   entryType?: "market" | "limit";   // how it was entered (older trades: market)
   openRisk?: number;        // USDT lost at the stop when it opened (before the owner moved the stop)
   lockedAt?: number | null; // when the profit lock moved the stop
+  consults?: ConsultAnswer[]; // the owner's "stay or exit?" questions about it
   /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */
   advice?: { time: number; suggest: "hold" | "close"; reason: "fine" | "opposite" | "state" | "unknown";
     detail: string; pnl: number; answer: "hold" | null } | null;
@@ -247,7 +248,7 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
-    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind";
+    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult";
   start?: number; // blind: from when the bot did not see the prices (seconds)
   end?: number;   // blind: until when
   filled?: boolean; // blind: the missing candles came from the exchange (else: stop/target at their own price)
@@ -260,7 +261,7 @@ export interface PaperEvent {
   confidence?: number | null; // ai
   text?: string; // ai: its one-line reason
   answer?: "open" | "skip" | "auto"; // askAnswer: the owner's answer, or "auto" after 30 s
-  suggest?: "hold" | "close"; // advice
+  suggest?: "hold" | "close" | "exit" | "move_stop"; // advice; consult: the AI's action
   detail?: string; // advice: the strategy or market state behind it
   version?: number; // brain: model number
   until?: number; // pause: until when
@@ -337,6 +338,29 @@ export interface AiTestResult {
 export interface PendingAsk {
   id: number; symbol: string; base: string; timeframe: string; strategy: string; side: Side;
   entry: number; stopLoss: number; takeProfit: number; expires: number; error?: string | null;
+}
+
+/** The owner's "stay or exit?" button: the bot's own view and Gemini's advice for an open position. */
+export interface ConsultAnswer {
+  position: number;
+  time: number;
+  bot: {
+    suggest: "hold" | "close";
+    reason: "fine" | "opposite" | "state" | "unknown";
+    detail: string;
+    marketState: string | null;
+    progress: number | null;   // % of the way to the target (negative: toward the stop)
+    pnl: number;
+    r: number | null;
+    price: number;
+    trends: Record<string, string | null>;
+    rsi: number | null;
+    swingHighAbove: number | null;
+    swingLowBelow: number | null;
+  };
+  ai: { action: "hold" | "exit" | "move_stop"; newStop: number | null; confidence: number | null;
+    reason: string; levels: string; note: string } | null;
+  error: string | null;
 }
 
 /** A limit order waiting to fill (limit entry, paper only). */

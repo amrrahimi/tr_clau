@@ -258,3 +258,10 @@ test("the manual list keeps the unticked strategies when the catalog did not loa
   assert.deepEqual(allStrategies([], byTf, ["supertrend"]), ["ema_cross", "supertrend", "fvg_retest", "ichimoku"]);
   assert.deepEqual(allStrategies(["ichimoku", "ema_cross"], byTf, []), ["ichimoku", "ema_cross", "supertrend", "fvg_retest"]);
 });
+
+test("the diary line of a stay-or-exit question", () => {
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string>) => translate("fa", k, p);
+  for (const [suggest, word] of [["exit", "خارج"], ["move_stop", "حد ضرر"], ["hold", "بمان"]] as const) {
+    assert.ok(eventText({ time: 1, kind: "consult", symbol: "ON", timeframe: "30m", suggest }, t).includes(word));
+  }
+});

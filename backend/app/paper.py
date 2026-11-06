@@ -550,6 +550,7 @@ class PaperBot:
         self.lock = asyncio.Lock()
         self._performance: Optional[tuple[float, dict]] = None   # (time, per-strategy results) cache
         self.ai_ask = advisor.ask            # replaced in tests
+        self.ai_consult = advisor.consult    # the owner's "stay or exit?" button (replaced in tests)
         self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
         self.ai_error: Optional[str] = None  # the last reason Gemini did not answer (for the screen)
         self.ask_timers = True               # open an unanswered question after ASK_AUTO_SECONDS (off in tests)
@@ -1125,8 +1126,18 @@ class PaperBot:
         close: another strategy now gives a reliable signal the other way, or the market state no
         longer suits the strategy (or turned against the trade). The owner answers with a button;
         without an answer the position simply goes on."""
+        suggest, reason, detail, _ = await self._bot_opinion(p, now)
+        open_pnl = pnl(p, self.prices.get(p["id"], p["entryPrice"]), self.fees.taker)[0]
+        p["advice"] = {"time": now, "suggest": suggest, "reason": reason, "detail": detail, "pnl": open_pnl,
+                       "answer": None}
+        self._event("advice", symbol=p["base"], timeframe=p["timeframe"], reason=reason, suggest=suggest, detail=detail)
+
+    async def _bot_opinion(self, p: dict, now: float) -> tuple[str, str, str, Optional[str]]:
+        """The bot's own view of an open position: "close" when another strategy now gives a reliable signal
+        the other way (opposite, detail: that strategy) or the market state no longer suits the strategy or
+        turned against the trade (state); else "hold". Also returns the market state."""
         tf = p["timeframe"]
-        suggest, reason, detail = "hold", "fine", ""
+        suggest, reason, detail, state = "hold", "fine", "", None
         try:
             rows = await self.history(p["symbol"], tf)
             overview = await asyncio.to_thread(strategy_overview, rows, tf, bot_settings(tf), None, MODE_OF[tf],
@@ -1145,10 +1156,71 @@ class PaperBot:
                     suggest, reason, detail = "close", "state", state
         except Exception:
             suggest, reason = "hold", "unknown"
-        open_pnl = pnl(p, self.prices.get(p["id"], p["entryPrice"]), self.fees.taker)[0]
-        p["advice"] = {"time": now, "suggest": suggest, "reason": reason, "detail": detail, "pnl": open_pnl,
-                       "answer": None}
-        self._event("advice", symbol=p["base"], timeframe=tf, reason=reason, suggest=suggest, detail=detail)
+        return suggest, reason, detail, state
+
+    # ---- the owner's "stay or exit?" button (2026-11-06)
+
+    async def consult(self, position_id: int) -> Optional[dict]:
+        """For one open position: the bot's own view (at once) and Gemini's advice: hold, exit or move the
+        stop, with its confidence, reason and the support/resistance it used. Nothing is done automatically:
+        the owner decides. Each consultation is kept on the position (and so on the closed trade in memory)
+        to check later whether the advice was right. None: no such open position."""
+        p = next((x for x in self.account["positions"] if x["id"] == position_id), None)
+        if p is None:
+            return None
+        now = self.now()
+        tf = p["timeframe"]
+        charts, btc = await self._ai_context(p["symbol"])
+        if tf not in charts:
+            try:
+                charts[tf] = closed_only(await self.recent(p["symbol"], tf), tf, now)
+            except Exception:
+                charts[tf] = []
+        price = self.prices.get(p["id"]) or (charts[tf][-1]["close"] if charts.get(tf) else p["entryPrice"])
+        suggest, reason, detail, state = await self._bot_opinion(p, now)
+        way = p["takeProfit"] - p["entryPrice"]
+        result = pnl(p, price, self.fees.taker)[0]
+        risk = p.get("openRisk") or p["risk"]
+        own = charts.get(tf) or []
+        trends = {k: (advisor.summarize(v) or {}).get("trend") for k, v in charts.items() if v}
+        bot = {"suggest": suggest, "reason": reason, "detail": detail, "marketState": state,
+               "progress": round((price - p["entryPrice"]) / way * 100, 1) if way else None,
+               "pnl": round(result, 4), "r": round(result / risk, 2) if risk else None, "price": price,
+               "trends": trends, "rsi": (advisor.summarize(own) or {}).get("rsi") if own else None,
+               **(advisor.swings(own) if len(own) > 10 else {"swingHighAbove": None, "swingLowBelow": None})}
+        data = {"position": {"coin": p["base"], "timeframe": tf, "side": p["side"], "entry": p["entryPrice"],
+                             "stopLoss": p["stop"], "originalStopLoss": p["stopLoss"], "takeProfit": p["takeProfit"],
+                             "priceNow": price, "percentOfTheWayToTarget": bot["progress"], "resultInR": bot["r"],
+                             "openedMinutesAgo": round((now - p["entryTime"]) / 60), "leverage": p["leverage"],
+                             "liquidation": p["liquidation"]},
+                "strategy": {"name": STRATEGIES[p["strategy"]].name if p["strategy"] in STRATEGIES else p["strategy"],
+                             "suitsMarketStates": list(STRATEGIES[p["strategy"]].states) if p["strategy"] in STRATEGIES else [],
+                             "uses": list(STRATEGIES[p["strategy"]].uses) if p["strategy"] in STRATEGIES else []},
+                "marketStateNow": state, "botView": {"suggest": suggest, "reason": reason, "detail": detail},
+                "timeframes": {k: advisor.summarize(v) for k, v in charts.items() if v},
+                "supportResistance": {k: advisor.swings(v) for k, v in charts.items() if len(v) > 10},
+                "bitcoin": {k: advisor.summarize(v) for k, v in btc.items() if v}}
+        if own:
+            data["last30Candles"] = [[round(c["open"], 10), round(c["high"], 10), round(c["low"], 10),
+                                      round(c["close"], 10), round(c.get("volume") or 0, 2)] for c in own[-30:]]
+        ai, error = None, None
+        keys = self.ai_keys()
+        if not keys:
+            error = "noKeys"
+        else:
+            try:
+                ai = await self.ai_consult(data, p, price, keys)
+                self.ai_error = None
+            except advisor.AdvisorUnavailable as e:
+                error = self.ai_error = str(e)
+            except Exception as e:
+                error = repr(e)
+        answer = {"position": p["id"], "time": now, "bot": bot, "ai": ai, "error": error}
+        if p in self.account["positions"]:   # not closed meanwhile
+            p["consults"] = (p.get("consults") or [])[-4:] + [answer]
+            self._event("consult", symbol=p["base"], timeframe=tf, suggest=(ai or {}).get("action"))
+            self.save()
+        return answer
 
     def answer_advice(self, position_id: int, answer: str) -> bool:
         """Owner's answer "hold" (the position goes on). "close" goes through close_position."""

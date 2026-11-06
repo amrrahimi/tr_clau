@@ -122,6 +122,16 @@ builds the list from the bot's per-timeframe lists meanwhile (allStrategies()).
   (past), fee and reward rules still apply at the price now. Filter on/off switches: cancelled by the owner.
 - Half-way "hold or close?" advice switched off (Profile.advice False): the profit lock does its job.
 
+## "Stay or exit?" button (owner 2026-11-06)
+Under the chart (right), for each open position of the shown chart; the answer to its left. POST
+/api/paper/consult {position_id} -> the bot's view (PaperBot._bot_opinion: opposite reliable signal / market
+state, progress %, R now, trends 15m-1d, RSI, nearest swing high/low) and Gemini's advice (advisor.consult,
+CONSULT_PROMPT: hold / exit / move_stop with newStop, confidence, Persian reason, levels; a new stop on the
+wrong side becomes hold). Nothing automatic: buttons "close" / "move the stop" next to the answer. Kept on the
+position (consults, last 5) and so in the closed trade in memory, to check later. Diary "consult".
+The 33-min 3m scan (screenshot 07:22): no errors in the log; the computer slept during that scan (events
+05:34 -> 06:36 gap); scans are 40-63 s again.
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.
