@@ -578,3 +578,9 @@ button:hover { background: var(--border); }
 .consult-facts, .consult-time, .consult-wait { color: var(--muted, #787b86); }
 .consult-error { color: #ff9800; }
 .consult-act { align-self: flex-start; margin-top: 4px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
+.bot-consult { position: relative; max-height: 28vh; resize: vertical; }
+.bot-consult.folded { max-height: none; padding-top: 4px; padding-bottom: 4px; resize: none; }
+.consult-tab { align-self: center; padding: 1px 14px; margin-bottom: 2px; border: 1px solid var(--border); border-radius: 0 0 8px 8px; background: transparent; color: var(--muted, #787b86); cursor: pointer; font-size: 11.5px; }
+.consult-tab:hover { color: inherit; }
+.consult-button.small { padding: 4px 10px; font-size: 12px; }
+.consult-line { align-self: center; font-size: 12.5px; color: var(--muted, #787b86); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -377,6 +377,16 @@ export class BotApp {
   /** Answers of the "stay or exit?" button by position id; asking: waiting for Gemini. */
   private consults = new Map<number, ConsultAnswer>();
   private consulting = new Set<number>();
+  /** The consult window open (full answers) or folded to one line, so the chart gets its room back. */
+  private consultOpen = (() => {
+    try { return localStorage.getItem("consultOpen") !== "0"; } catch { return true; }
+  })();
+
+  private setConsultOpen(open: boolean): void {
+    this.consultOpen = open;
+    try { localStorage.setItem("consultOpen", open ? "1" : "0"); } catch { /* not kept */ }
+    this.renderConsult();   // the chart follows its box by itself (autoSize)
+  }
 
   /** Under the chart: for each open position of this chart, the button (right) and its answer (to its left). */
   private renderConsult(): void {
@@ -386,8 +396,22 @@ export class BotApp {
       && p.timeframe === this.target.timeframe);
     box.hidden = !here.length;
     box.replaceChildren();
+    box.classList.toggle("folded", !this.consultOpen);
+    // The tab: folds the window to one line (the verdicts) or opens it again.
+    const tab = BotApp.el("button", "consult-tab", `${this.consultOpen ? "▾" : "▴"} ${t(this.consultOpen ? "consult.fold" : "consult.unfold")}`);
+    tab.addEventListener("click", () => this.setConsultOpen(!this.consultOpen));
+    box.append(tab);
     for (const p of here) {
       const row = BotApp.el("div", "consult-row");
+      if (!this.consultOpen) {   // folded: the button and one line with the latest verdicts
+        const button = BotApp.el("button", "consult-button small", this.consulting.has(p.id) ? t("consult.asking") : t("consult.button"));
+        (button as HTMLButtonElement).disabled = this.consulting.has(p.id);
+        button.addEventListener("click", () => void this.askConsult(p));
+        const last = this.consults.get(p.id) ?? p.consults?.[p.consults.length - 1];
+        row.append(button, BotApp.el("div", "consult-line", last ? this.consultSummary(last) : t("consult.hint")));
+        box.append(row);
+        continue;
+      }
       const button = BotApp.el("button", "consult-button", this.consulting.has(p.id) ? t("consult.asking") : t("consult.button"));
       (button as HTMLButtonElement).disabled = this.consulting.has(p.id);
       button.addEventListener("click", () => void this.askConsult(p));
@@ -399,6 +423,16 @@ export class BotApp {
       row.append(button, message);
       box.append(row);
     }
+  }
+
+  /** One line for the folded window: the bot's and the AI's verdicts. */
+  private consultSummary(a: ConsultAnswer): string {
+    const t = this.t.bind(this);
+    const bot = t(a.bot.suggest === "close" ? "consult.bot.close" : "consult.bot.hold");
+    if (!a.ai) return t("consult.summaryBot", { bot });
+    const verdict = a.ai.action === "exit" ? t("consult.ai.exit") : a.ai.action === "move_stop"
+      ? t("consult.ai.move", { price: formatPrice(a.ai.newStop ?? 0, this.chart.pricePrecision) }) : t("consult.ai.hold");
+    return t("consult.summary", { bot, verdict, confidence: a.ai.confidence == null ? "–" : String(Math.round(a.ai.confidence)) });
   }
 
   private consultLines(p: PaperPosition, a: ConsultAnswer): HTMLElement[] {
@@ -448,6 +482,7 @@ export class BotApp {
     this.renderConsult();
     try {
       this.consults.set(p.id, await this.backend.consult(p.id));
+      if (!this.consultOpen) this.setConsultOpen(true);   // a new answer opens the window to be read
     } catch (error) {
       this.consults.set(p.id, { position: p.id, time: Date.now() / 1000, ai: null,
         error: error instanceof Error ? error.message : String(error),

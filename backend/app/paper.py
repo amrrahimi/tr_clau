@@ -2,8 +2,8 @@
 
 Everything is chosen by the bot: it scans the coins (top 100 by volume, the 30 most volatile, or
 the owner's list) on the ticked timeframes (1m-4h) with the strategies of each timeframe, keeps
-only reliable signals (the cautious conditions, the fee rule per timeframe and the market-state
-rule all apply; optionally the brain and the AI approval), and opens a virtual futures position.
+signals that pass the fee rule per timeframe, the market-state rule and, on the slow charts, the strict
+rule (the "reliable" rule was removed by the owner 2026-11-06; optionally the brain and the AI approval), and opens a virtual futures position.
 It then watches the price and closes the position at the take-profit, the stop-loss, the
 break-even stop or the owner's profit cap. The owner can move the stop and the target on the chart.
 
@@ -81,6 +81,11 @@ class Profile:
     group_slots: tuple[tuple[str, int], ...] = tuple(GROUP_SLOTS.items())
     max_same_side: int = MAX_SAME_SIDE
     all_signals: bool = False     # True: not only reliable signals
+    # The "reliable" rule (scanner.reliable) as a trade filter: removed by the owner 2026-11-06. On 15k live
+    # signals the rejected ones did as well (34.8% won, -0.137 R) as the passed ones (32.6%, -0.141 R),
+    # better on 30m (+0.42 vs +0.14 R for his strategies), while it threw away 72% of the signals. It is still
+    # worked out and kept in memory for every signal, to compare with a better rule later.
+    use_reliable: bool = False
     smart_pause: bool = True
     advice: bool = False   # half-way "hold or close?" advice: removed by the owner 2026-11-05 (profit lock does it)
     default_cap: float = 0.0
@@ -1284,21 +1289,22 @@ class PaperBot:
                     feats["reliable"] = ok
                     entry["memoryKey"] = memory.record(entry, tf, feats, now, reliable=ok,
                                                        seen_price=rows[-1]["close"] if rows else None)
-                    if ok and self.brain is not None:
+                    if self.brain is not None:
                         entry["chance"] = self.brain.chance(feats, row["strategy"], tf, entry["signal"]["side"])
                         if entry["chance"] is not None:
                             memory.set_chance(entry["memoryKey"], entry["chance"])
                 entry["reliable"] = ok
+                passed = ok or not self.profile.use_reliable
                 if ticked:   # the screen's counter: only timeframes the owner trades
                     self._count("seen")
-                    if not ok:
+                    if not passed:
                         self._count("unreliable")
                     elif row["strategy"] not in allowed:
                         self._count("benched" if row["strategy"] in benched else "notChosen")
                     elif not trade:
                         self._count("paused" if self._paused(now) else "full")
-                # The bot trades reliable signals only, and on the slow charts only very sure ones.
-                if ok and row["strategy"] in allowed and strict_ok(entry, tf):
+                # On the slow charts only very sure ones (strict_ok); the "reliable" rule only if switched on.
+                if passed and row["strategy"] in allowed and strict_ok(entry, tf):
                     candidates.append(entry)
 
         async def one(symbol: str, base: str) -> None:

@@ -701,7 +701,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(bot.brain.last)                 # the brain learns right away
         self.assertEqual(await bot.pretrain_round(), 0)   # charts done today are skipped
 
-    async def test_every_signal_is_remembered_but_only_reliable_ones_traded(self):
+    async def test_every_signal_is_remembered_and_unreliable_ones_are_tried_too(self):
         from unittest import mock
         from app.memory import Memory
 
@@ -715,6 +715,15 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
                     "rows": [{"strategy": "ema_cross", "stats": weak["stats"], "signal": weak["signal"]}]}
         with mock.patch.object(pp, "strategy_overview", return_value=overview):
             await bot._scan_and_open("1m", self.clock[0], trade=True)
+        # Owner 2026-11-06: the "reliable" rule no longer filters. This one still is marked not reliable in
+        # memory, and went on to the trade checks (here the 1m fee rule stopped it).
+        self.assertEqual(memory.db.execute("SELECT reliable, skip_reason FROM signals").fetchone(), (0, "fee"))
+        # With the rule switched on (the old behaviour) it never reaches the trade checks.
+        from dataclasses import replace
+        memory.db.execute("DELETE FROM signals")
+        bot.profile = replace(bot.profile, use_reliable=True)
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0] + 60, trade=True)
         self.assertEqual(bot.account["positions"], [])
         self.assertEqual(memory.db.execute("SELECT reliable, skip_reason FROM signals").fetchone(), (0, None))
 
@@ -934,6 +943,13 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         overview = {"marketState": "trend_up", "adx": 30, "atrRatio": 1,
                     "rows": [{"strategy": "ema_cross", "stats": weak["stats"], "signal": weak["signal"]},
                              {"strategy": "supertrend", "stats": good["stats"], "signal": good["signal"]}]}
+        with mock.patch.object(pp, "strategy_overview", return_value=overview):
+            await bot._scan_and_open("1m", self.clock[0], trade=False)
+        flow = bot.public()["flow"]
+        self.assertEqual((flow["seen"], flow["skipped"]), (2, {"full": 2}))   # no "reliable" rule (owner 2026-11-06)
+        from dataclasses import replace
+        bot.flow = []   # the counter of the last 10 minutes, from zero
+        bot.profile = replace(bot.profile, use_reliable=True)
         with mock.patch.object(pp, "strategy_overview", return_value=overview):
             await bot._scan_and_open("1m", self.clock[0], trade=False)
         flow = bot.public()["flow"]
