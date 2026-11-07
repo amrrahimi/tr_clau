@@ -154,6 +154,32 @@ closes when the price comes back to the entry, reason "timeBe"). Tests behind ea
 Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.11 R on 91k history signals in
 "range"; with Toobit fees the textbook 5m BTC example (stop $40, target $280) is about 1:1, not 1:7.
 
+## Chart update (owner 2026-11-07 16:50-17:05) — BUILT
+- For each position, on the chart: the strategy and the data that made the bot enter (the strategy's own lines,
+  e.g. EMAs / bands / the FVG gap or zone, the signal candle; the higher-timeframe trend and Bitcoin's state).
+- Support and resistance lines on the chart (swing highs / lows).
+- An "Explanation" button per position: the bot's own words on why it entered (strategy and its condition, the
+  higher-timeframe trend, Bitcoin link / trend, fee and reward checks, entry type, the price vs the signal price).
+- The profit-lock line ("lock at", purple dashed) draggable on the chart, like the stop and target lines;
+  per position only (owner: a); the stop-after-lock moves with it at the same ratio (80 -> 40: half the way).
+- Bot chart: timeframe buttons; support / resistance from the chart's timeframe (thin) and its companion
+  (bold): 1m->5m, 3m/5m->15m, 15m->1h, 30m/1h->4h, 4h->1d; 2 levels above and 2 below each.
+- Owner 17:01: the profit-lock point and the stop-after-lock are drawn INSIDE the position's green / red boxes
+  (short lines, no separate full-width labelled lines) and dragged there. Only the boxes carry the text:
+  green: target $, reward:risk (e.g. 1:2), lock at X%; red: stop $, stop after lock Y%. Cleaner chart.
+  Both lock lines sit in the green box (the stop after lock is on the profit side). Owner 17:03: every overlay
+  can be hidden / shown with the eye list, the green / red boxes and entry / exit markers too.
+- Top-left of the chart: a list of line groups (entry/stop/target, liquidation, break-even/lock points,
+  strategy lines, S/R chart TF, S/R companion TF) each with an eye button to hide / show; kept in the browser.
+- How it was built: backend stores `why` (signal price/time, market state, higher TF, fee share, reward, brain chance)
+  when a position opens; `set_lock_point` (POST levels with `lock_point`) stores `lockOwn` {trigger, at} shares for
+  that position only (at = trigger * lockAt/lockTrigger), errors lock_off / lock_done / lock_side. Frontend:
+  botView `swingLevels` (pivot 3, 2 each side, merge 0.15%), `lockPrices`, `explainLines`, `COMPANION_TF`,
+  `CHART_TFS`, `EYE_GROUPS` / `loadEye` / `saveEye` (localStorage "bot.eye"); chart.ts `BoxDecor` / `setDecor`
+  (texts + short lines in the boxes, yellow signal-candle band), hidden draggable Level for the lock point;
+  botApp: positions of the coin drawn on any chart timeframe (times snapped to its candles), strategy lines via
+  /api/strategies/run (cached 2 min), companion candles cached 2 min, «توضیحات» button in the consult bar.
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.

@@ -164,6 +164,10 @@ export class MockBackend implements Backend {
     return this.paper!;
   }
 
+  async runStrategy(): Promise<{ indicators: IndicatorResult[]; trades: Trade[] }> {
+    return { indicators: [], trades: [] };
+  }
+
   async consult(positionId: number): Promise<ConsultAnswer> {
     const state = await this.getPaper();
     const p = state.positions.find((x) => x.id === positionId);

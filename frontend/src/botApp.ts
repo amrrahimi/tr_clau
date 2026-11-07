@@ -5,14 +5,14 @@
 
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
-import { ChartView, THEME, type Level } from "./chart.ts";
-import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { ChartView, THEME, type BoxDecor, type Level } from "./chart.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, loadEye, lockPrices, saveEye, swingLevels, type EyeGroup, formatR, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, ConnectionState, ConsultAnswer, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
+import type { Candle, ConnectionState, IndicatorResult, ConsultAnswer, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -105,6 +105,7 @@ export class BotApp {
           <span class="app-name" data-el="title"></span>
           <div class="segmented" data-el="view"></div>
           <span class="symbol" data-el="chartTitle"></span>
+          <div class="segmented small chart-tfs" data-el="tfs"></div>
           <div class="spacer"></div>
           <button class="lang-button" data-el="language"></button>
         </header>
@@ -114,6 +115,7 @@ export class BotApp {
           <div class="chart-column">
             <section class="chart-area" dir="ltr">
               <div class="chart" data-el="chart"></div>
+              <div class="chart-eye" data-el="eye"></div>
               <div class="chart-message" data-el="chartMessage" hidden></div>
             </section>
             <section class="bot-consult" data-el="consult" hidden></section>
@@ -268,26 +270,132 @@ export class BotApp {
   /** Arrows and boxes of the bot's trades on the coin and timeframe shown. */
   private drawTrades(): void {
     if (!this.state || !this.target || !this.candles.length) return;
-    const same = (p: PaperPosition) => p.symbol === this.target!.symbol && p.timeframe === this.target!.timeframe;
+    const symbol = this.target.symbol;
+    const tf = this.target.timeframe;
+    const same = (p: PaperPosition) => p.symbol === symbol;   // any timeframe of this coin
     const first = this.candles[0].time;
-    const trades = [...this.state.closed.filter(same), ...this.state.positions.filter(same)]
-      .filter((p) => p.entryCandle >= first)
+    const open = this.state.positions.filter(same);
+    const trades = [...this.state.closed.filter(same), ...open]
+      .filter((p) => p.entryTime >= first)
       .map(paperAsTrade)
+      .map((x) => {   // drawn on the candles of the chart's timeframe, whatever timeframe the trade had
+        const at = (time: number) => candleStart(time, tf);
+        return { ...x, signalTime: at(x.signalTime), entryTime: at(x.entryTime), exitTime: x.exitTime == null ? null : at(x.exitTime),
+          breakevenTime: x.breakevenTime == null ? null : at(x.breakevenTime) };
+      })
       .sort((a, b) => a.entryTime - b.entryTime);
-    this.chart.setTrades(trades, this.candles[this.candles.length - 1].time,
-      { long: this.t("strategies.long"), short: this.t("strategies.short") });
-    // Open positions of this chart: entry, liquidation, break-even trigger, and the stop-loss and
-    // take-profit lines, which the owner can drag with the mouse (takes effect when let go).
-    // Waiting limit orders: dashed, not draggable (the test compares the bot's own limit rule).
-    const orders = (this.state.orders ?? []).filter((o) => o.symbol === this.target!.symbol && o.timeframe === this.target!.timeframe);
-    this.chart.setLevels([
-      ...this.state.positions.filter(same).flatMap((p) => this.positionLevels(p)),
-      ...orders.flatMap((o): Level[] => [
+    const last = this.candles[this.candles.length - 1].time;
+    this.chart.setTrades(trades, last, { long: this.t("strategies.long"), short: this.t("strategies.short") }, null,
+      { markers: this.eye.markers, boxes: this.eye.boxes });
+    this.applyDecor();
+    // Lines: entry / stop / target (stop and target draggable), liquidation, the hidden draggable lock
+    // point (drawn inside the green box), waiting limit orders, and support / resistance.
+    const orders = (this.state.orders ?? []).filter((o) => o.symbol === symbol);
+    const levels: Level[] = open.flatMap((p) => this.positionLevels(p));
+    if (this.eye.orders) {
+      levels.push(...orders.flatMap((o): Level[] => [
         { key: `o${o.id}`, price: o.price, color: "#2962ff", title: this.t("bot.level.order"), style: "dashed" },
         { key: `os${o.id}`, price: o.stopLoss, color: THEME.down, title: this.t("bot.level.orderStop"), style: "dashed" },
         { key: `ot${o.id}`, price: o.takeProfit, color: THEME.up, title: this.t("bot.level.orderTarget"), style: "dashed" },
-      ]),
-    ]);
+      ]));
+    }
+    levels.push(...this.supportResistance());
+    this.chart.setLevels(levels);
+    void this.drawStrategy(open);
+  }
+
+  /** Inside the boxes of the open positions: texts (target / stop $, reward:risk, lock) and the lock lines. */
+  private applyDecor(): void {
+    if (!this.state || !this.target) return;
+    const fees = this.state.rules.fees;
+    const decor: BoxDecor[] = [];
+    const signals: number[] = [];
+    for (const p of this.state.positions.filter((x) => x.symbol === this.target!.symbol)) {
+      if (this.eye.strategy && p.why?.signalTime) signals.push(candleStart(p.why.signalTime, this.target.timeframe));
+      if (!this.eye.boxes) continue;
+      const lock = lockPrices(p, this.state.rules.lock);
+      const point = this.lockPoint?.id === p.id ? this.lockPoint.price : lock?.point;
+      const way = p.takeProfit - p.entryPrice;
+      const trigger = lock && point != null && way ? (point - p.entryPrice) / way : null;
+      const at = lock && trigger != null ? trigger * (lock.at / lock.trigger) : null;
+      const profit = resultAt(p, p.takeProfit, fees.taker, fees.maker);
+      const loss = resultAt(p, p.stop, fees.taker, fees.taker);
+      const rr = Math.abs(p.takeProfit - p.entryPrice) / Math.abs(p.entryPrice - p.stop);
+      const texts = [this.t("box.profit", { pnl: formatMoney(profit), rr: rr.toFixed(1) })];
+      const lines: BoxDecor["lines"] = [];
+      if (this.eye.lock && trigger != null && at != null) {
+        texts.push(this.t("box.lock", { trigger: String(Math.round(trigger * 100)), at: String(Math.round(at * 100)) }));
+        lines.push({ price: p.entryPrice + way * trigger, color: "#b388ff" },
+          { price: p.entryPrice + way * at, color: "#b388ff", dash: true });
+      }
+      const even = breakevenTrigger(p);
+      if (this.eye.lock && even !== null) lines.push({ price: even, color: "#787b86", dash: true });
+      const from = candleStart(p.entryCandle, this.target.timeframe);
+      decor.push({ from, kind: "profit", texts, lines },
+        { from, kind: "loss", texts: [this.t("box.loss", { pnl: formatMoney(loss) })], lines: [] });
+    }
+    this.chart.setDecor(decor, signals);
+  }
+
+  /** Support / resistance: swing highs / lows of this chart (thin) and of its companion timeframe (bold). */
+  private supportResistance(): Level[] {
+    const out: Level[] = [];
+    if (!this.target || !this.candles.length) return out;
+    const price = this.candles[this.candles.length - 1].close;
+    const add = (candles: Candle[], tf: string, bold: boolean) => {
+      const sr = swingLevels(candles, price);
+      sr.above.forEach((x, n) => out.push({ key: `r${tf}${n}`, price: x, color: "rgba(242,54,69,0.7)", title: this.t("chart.resistance", { tf }),
+        style: "dashed", width: bold ? 2 : 1, axisLabel: false }));
+      sr.below.forEach((x, n) => out.push({ key: `u${tf}${n}`, price: x, color: "rgba(8,153,129,0.8)", title: this.t("chart.support", { tf }),
+        style: "dashed", width: bold ? 2 : 1, axisLabel: false }));
+    };
+    if (this.eye.srChart) add(this.candles, this.target.timeframe, false);
+    const higher = COMPANION_TF[this.target.timeframe];
+    if (this.eye.srHigher && higher) {
+      const key = `${this.target.symbol}|${higher}`;
+      const got = this.companion.get(key);
+      if (got) add(got.candles, higher, true);
+      if (!got || Date.now() - got.time > 120_000) void this.loadCompanion(this.target.symbol, higher);
+    }
+    return out;
+  }
+
+  private async loadCompanion(symbol: string, tf: string): Promise<void> {
+    const key = `${symbol}|${tf}`;
+    const got = this.companion.get(key);
+    if (got && Date.now() - got.time < 30_000) return;
+    this.companion.set(key, { time: Date.now(), candles: got?.candles ?? [] });
+    try {
+      const candles = await this.backend.getCandles({ marketType: "futures", symbol, timeframe: tf });
+      this.companion.set(key, { time: Date.now(), candles });
+      if (this.target?.symbol === symbol) this.drawTrades();
+    } catch {
+      // drawn without it
+    }
+  }
+
+  /** The lines of the strategy that opened the position shown (the one clicked, else the newest). */
+  private async drawStrategy(open: PaperPosition[]): Promise<void> {
+    if (!this.target) return;
+    const p = open.find((x) => x.id === this.target!.id) ?? open[open.length - 1];
+    if (!this.eye.strategy || !p) {
+      this.chart.setIndicators([]);
+      return;
+    }
+    const key = `${p.symbol}|${this.target.timeframe}|${p.strategy}`;
+    const got = this.strategyLines.get(key);
+    if (got) this.chart.setIndicators(got.indicators.filter((r) => r.pane === "price"));
+    if (got && Date.now() - got.time < 120_000) return;
+    this.strategyLines.set(key, { time: Date.now(), indicators: got?.indicators ?? [] });
+    try {
+      const run = await this.backend.runStrategy(p.symbol, this.target.timeframe, p.strategy);
+      this.strategyLines.set(key, { time: Date.now(), indicators: run.indicators });
+      if (this.target && `${this.target.symbol}|${this.target.timeframe}|${p.strategy}` === key && this.eye.strategy) {
+        this.chart.setIndicators(run.indicators.filter((r) => r.pane === "price"));
+      }
+    } catch {
+      // drawn without them
+    }
   }
 
   private positionLevels(p: PaperPosition): Level[] {
@@ -306,29 +414,58 @@ export class BotApp {
     const drag = (kind: "stop" | "target") => ({
       onMove: (price: number) => {
         const others: Record<string, { price: number; title: string }> = {};
-        if (kind === "target") {   // the break-even and profit-lock points follow the target
-          const even = breakevenTrigger(p, price);
-          if (even !== null) others[`b${p.id}`] = { price: even, title: evenTitle };
-          const lock = lockTrigger(p, this.state?.rules.lock, price);
-          if (lock !== null) others[`k${p.id}`] = { price: lock, title: lockTitle };
+        if (kind === "target") {   // the lock point follows the target (its hidden handle too)
+          const lock = lockPrices(p, this.state?.rules.lock, price);
+          if (lock !== null) others[`k${p.id}`] = { price: lock.point, title: "" };
         }
         return { title: label(kind, price), others };
       },
       onDrop: (price: number) => void this.moveLevel(p, kind, Number(price.toFixed(digits))),
     });
-    const levels: Level[] = [
-      { key: `e${p.id}`, price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entrySized", {
-        kind: this.t(p.entryType === "limit" ? "bot.entry.limit" : "bot.entry.market"),
-        margin: p.margin.toFixed(2), lev: String(p.leverage) }) },
-      { key: `l${p.id}`, price: p.liquidation, color: "#ff9800", title: this.t("bot.level.liquidation"), style: "dashed" },
-      { key: `s${p.id}`, price: p.stop, color: THEME.down, title: label("stop", p.stop), drag: drag("stop") },
-      { key: `t${p.id}`, price: p.takeProfit, color: THEME.up, title: label("target", p.takeProfit), drag: drag("target") },
-    ];
-    const trigger = breakevenTrigger(p);
-    if (trigger !== null) levels.push({ key: `b${p.id}`, price: trigger, color: "#787b86", title: evenTitle, style: "dashed" });
-    const lock = lockTrigger(p, this.state!.rules.lock);
-    if (lock !== null) levels.push({ key: `k${p.id}`, price: lock, color: "#b388ff", title: lockTitle, style: "dashed" });
+    const short = (kind: "stop" | "target") => this.t(kind === "target" ? "bot.level.target"
+      : p.lockedAt ? "bot.level.locked" : p.breakevenAt ? "bot.level.breakeven" : "bot.level.stop");
+    const levels: Level[] = [];
+    if (this.eye.levels) {
+      levels.push(
+        { key: `e${p.id}`, price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entrySized", {
+          kind: this.t(p.entryType === "limit" ? "bot.entry.limit" : "bot.entry.market"),
+          margin: p.margin.toFixed(2), lev: String(p.leverage) }) },
+        { key: `s${p.id}`, price: p.stop, color: THEME.down, title: short("stop"), drag: drag("stop") },
+        { key: `t${p.id}`, price: p.takeProfit, color: THEME.up, title: short("target"), drag: drag("target") },
+      );
+    }
+    if (this.eye.liquidation) {
+      levels.push({ key: `l${p.id}`, price: p.liquidation, color: "#ff9800", title: this.t("bot.level.liquidation"), style: "dashed" });
+    }
+    // The profit-lock point: drawn inside the green box; this hidden line only makes it draggable.
+    const lock = lockPrices(p, this.state!.rules.lock);
+    if (lock && this.eye.lock && this.eye.boxes) {
+      levels.push({ key: `k${p.id}`, price: lock.point, color: "#b388ff", title: "", hidden: true, drag: {
+        onMove: (price: number) => {
+          this.lockPoint = { id: p.id, price };
+          this.applyDecor();
+          return { title: "" };
+        },
+        onDrop: (price: number) => void this.moveLockPoint(p, Number(price.toFixed(digits))),
+      } });
+    }
+    void lockTitle;
+    void evenTitle;
     return levels;
+  }
+
+  /** The owner let go of the profit-lock point of one position: sent to the bot at once. */
+  private async moveLockPoint(p: PaperPosition, price: number): Promise<void> {
+    try {
+      this.state = await this.backend.paperAction({ kind: "levels", position_id: p.id, lock_point: price });
+      this.error = null;
+    } catch (error) {
+      const code = error instanceof Error ? error.message : String(error);
+      this.error = ["lock_off", "lock_done", "lock_side"].includes(code) ? this.t(`bot.drag.${code}` as MessageKey) : code;
+    }
+    this.lockPoint = null;
+    this.render();
+    this.drawTrades();
   }
 
   /** The owner let go of a dragged stop or target line: checked here first, then sent to the bot at once. */
@@ -375,6 +512,16 @@ export class BotApp {
   }
 
   /** Answers of the "stay or exit?" button by position id; asking: waiting for Gemini. */
+  /** What is drawn on the chart (the eye buttons, top-left), kept in the browser. */
+  private eye: Record<EyeGroup, boolean> = loadEye();
+  private eyeOpen = false;
+  /** A profit-lock point being dragged (position id, price), drawn in the box until let go. */
+  private lockPoint: { id: number; price: number } | null = null;
+  /** Explanations open in the bar under the chart, by position id. */
+  private explaining = new Set<number>();
+  /** Companion-timeframe candles for support / resistance, and strategy lines, by key, with their time. */
+  private companion = new Map<string, { time: number; candles: Candle[] }>();
+  private strategyLines = new Map<string, { time: number; indicators: IndicatorResult[] }>();
   private consults = new Map<number, ConsultAnswer>();
   private consulting = new Set<number>();
   /** The consult window open (full answers) or folded to one line, so the chart gets its room back. */
@@ -392,8 +539,7 @@ export class BotApp {
   private renderConsult(): void {
     const box = this.els.consult;
     const t = this.t.bind(this);
-    const here = (this.state?.positions ?? []).filter((p) => this.target && p.symbol === this.target.symbol
-      && p.timeframe === this.target.timeframe);
+    const here = (this.state?.positions ?? []).filter((p) => this.target && p.symbol === this.target.symbol);
     box.hidden = !here.length;
     box.replaceChildren();
     box.classList.toggle("folded", !this.consultOpen);
@@ -415,12 +561,24 @@ export class BotApp {
       const button = BotApp.el("button", "consult-button", this.consulting.has(p.id) ? t("consult.asking") : t("consult.button"));
       (button as HTMLButtonElement).disabled = this.consulting.has(p.id);
       button.addEventListener("click", () => void this.askConsult(p));
+      // «Explanation»: why the bot entered this position (from what it stored when it opened).
+      const explain = BotApp.el("button", `consult-button why-button${this.explaining.has(p.id) ? " active" : ""}`, t("why.button"));
+      explain.addEventListener("click", () => {
+        if (this.explaining.has(p.id)) this.explaining.delete(p.id);
+        else this.explaining.add(p.id);
+        this.renderConsult();
+      });
+      const buttons = BotApp.el("div", "consult-buttons");
+      buttons.append(button, explain);
       const answer = this.consults.get(p.id) ?? p.consults?.[p.consults.length - 1];
       const message = BotApp.el("div", "consult-message");
-      if (this.consulting.has(p.id)) message.append(BotApp.el("div", "consult-wait", t("consult.wait")));
+      if (this.explaining.has(p.id)) {
+        message.append(BotApp.el("div", "why-title", t("why.title", { symbol: p.symbol.split(":")[0], tf: p.timeframe })),
+          ...explainLines(p, t, this.chart.pricePrecision).map((line) => BotApp.el("div", "why-line", line)));
+      } else if (this.consulting.has(p.id)) message.append(BotApp.el("div", "consult-wait", t("consult.wait")));
       else if (answer) message.append(...this.consultLines(p, answer));
       else message.append(BotApp.el("div", "consult-wait", t("consult.hint")));
-      row.append(button, message);
+      row.append(buttons, message);
       box.append(row);
     }
   }
@@ -497,6 +655,56 @@ export class BotApp {
   private renderTitle(): void {
     if (!this.target) return;
     this.els.chartTitle.textContent = `${this.target.symbol.split(":")[0]} · ${this.target.timeframe}`;
+    // The chart's timeframe can be changed; the trades of this coin are drawn on any timeframe.
+    const tfs = this.els.tfs;
+    tfs.replaceChildren();
+    for (const tf of CHART_TFS) {
+      const b = document.createElement("button");
+      b.textContent = tf;
+      if (tf === this.target.timeframe) b.className = "active";
+      b.addEventListener("click", () => {
+        if (!this.target || tf === this.target.timeframe) return;
+        this.pinned = true;
+        void this.showChart({ ...this.target, timeframe: tf });
+      });
+      tfs.append(b);
+    }
+    this.renderEye();
+  }
+
+  /** Top-left of the chart: an eye button that opens the list of things drawn, each with its own eye. */
+  private renderEye(): void {
+    const box = this.els.eye;
+    const t = this.t.bind(this);
+    box.replaceChildren();
+    const toggle = document.createElement("button");
+    toggle.className = "eye-toggle";
+    toggle.textContent = "👁";
+    toggle.title = t("eye.title");
+    toggle.addEventListener("click", () => {
+      this.eyeOpen = !this.eyeOpen;
+      this.renderEye();
+    });
+    box.append(toggle);
+    if (!this.eyeOpen) return;
+    const tf = this.target?.timeframe ?? "";
+    const list = document.createElement("div");
+    list.className = "eye-list";
+    for (const g of EYE_GROUPS) {
+      const row = document.createElement("button");
+      row.className = `eye-row${this.eye[g] ? "" : " off"}`;
+      const label = g === "srChart" ? t("eye.srChart", { tf }) : g === "srHigher" ? t("eye.srHigher", { tf: COMPANION_TF[tf] ?? "" })
+        : t(`eye.${g}` as MessageKey);
+      row.textContent = `${this.eye[g] ? "👁" : "◌"}  ${label}`;
+      row.addEventListener("click", () => {
+        this.eye[g] = !this.eye[g];
+        saveEye(this.eye);
+        this.renderEye();
+        this.drawTrades();
+      });
+      list.append(row);
+    }
+    box.append(list);
   }
 
   private renderPanel(): void {

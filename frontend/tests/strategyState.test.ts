@@ -93,10 +93,10 @@ test("boxes: green to take-profit, red to stop-loss; open trades reach the last 
     trade({ side: "short", entryPrice: 100, stopLoss: 101, takeProfit: 98, exitTime: null, result: "open" }),
   ], 900);
   assert.deepEqual(boxes, [
-    { from: 60, to: 180, top: 102, bottom: 100, color: COLORS.profitBox },
-    { from: 60, to: 180, top: 100, bottom: 99, color: COLORS.lossBox },
-    { from: 60, to: 900, top: 100, bottom: 98, color: COLORS.profitBox },
-    { from: 60, to: 900, top: 101, bottom: 100, color: COLORS.lossBox },
+    { from: 60, to: 180, top: 102, bottom: 100, color: COLORS.profitBox, kind: "profit" },
+    { from: 60, to: 180, top: 100, bottom: 99, color: COLORS.lossBox, kind: "loss" },
+    { from: 60, to: 900, top: 100, bottom: 98, color: COLORS.profitBox, kind: "profit" },
+    { from: 60, to: 900, top: 101, bottom: 100, color: COLORS.lossBox, kind: "loss" },
   ]);
 });
 

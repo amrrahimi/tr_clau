@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, loadEye, lockPrices, swingLevels, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
+import { en } from "../src/locales/en.ts";
+import { fa } from "../src/locales/fa.ts";
 import type { PaperPosition, PaperState, PaperTrade } from "../src/types.ts";
 
 const position: PaperPosition = {
@@ -273,4 +275,60 @@ test("the new skip reasons, the break-even exit and the trend words have texts",
     assert.notEqual(translate("en", k as Parameters<typeof translate>[1]), k);
   }
   assert.ok(translate("fa", "bot.btcLine", { h1: "صعودی", h4: "رنج" }).includes("بیت‌کوین"));
+});
+
+test("support / resistance: nearest swing highs above and swing lows below, close ones merged", () => {
+  const highs = [10, 11, 12, 15, 12, 11, 10, 11, 12, 18, 12, 11, 10, 11, 13, 11, 10, 9, 8, 9, 10, 9, 8];
+  const candles = highs.map((h) => ({ high: h, low: h - 5, close: h - 2 }));
+  const sr = swingLevels(candles, 11);
+  assert.deepEqual(sr.above, [13, 15]);   // nearest first: 13 then 15 (18 is the third, only two kept)
+  assert.ok(sr.below.every((x) => x < 11));
+  assert.deepEqual(swingLevels(candles.slice(0, 4), 11), { above: [], below: [] });
+});
+
+test("companion timeframe of each chart timeframe; chart timeframes offered", () => {
+  assert.deepEqual(["1m", "3m", "5m", "15m", "30m", "1h", "4h"].map((tf) => COMPANION_TF[tf]),
+    ["5m", "15m", "15m", "1h", "4h", "4h", "1d"]);
+  assert.deepEqual(CHART_TFS, ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]);
+  assert.equal(candleStart(1000 + 3 * 60 + 5, "3m") % 180, 0);
+});
+
+test("profit lock in the box: the account setting, or this position's own point; none when off or done", () => {
+  const rule = { enabled: true, trigger: 80, at: 40 };
+  const lock = lockPrices(position, rule)!;
+  assert.ok(Math.abs(lock.point - 101.6) < 1e-9);
+  assert.ok(Math.abs(lock.stopAfter - 100.8) < 1e-9);
+  const own = lockPrices({ ...position, lockOwn: { trigger: 0.6, at: 0.3 } }, rule)!;
+  assert.ok(Math.abs(own.point - 101.2) < 1e-9);
+  assert.ok(Math.abs(own.stopAfter - 100.6) < 1e-9);
+  assert.ok(Math.abs(lockPrices(position, rule, 110)!.point - 108) < 1e-9);   // follows a dragged target
+  assert.equal(lockPrices(position, { ...rule, enabled: false }), null);
+  assert.equal(lockPrices({ ...position, lockedAt: 5 }, rule), null);
+});
+
+test("eye buttons: all shown at first; hidden ones remembered; bad saved text ignored", () => {
+  assert.ok(EYE_GROUPS.every((g) => loadEye(() => null)[g]));
+  const eye = loadEye(() => JSON.stringify({ boxes: false, srHigher: false }));
+  assert.equal(eye.boxes, false);
+  assert.equal(eye.srHigher, false);
+  assert.equal(eye.levels, true);
+  assert.ok(loadEye(() => "{bad").markers);
+});
+
+test("explanation: why the bot entered, in Persian and English", () => {
+  const p = { ...position, entryType: "limit" as const, trend: "up" as const, btcLink: 0.05,
+    why: { signalPrice: 100.2, signalTime: 900, marketState: "trend", higherTf: "1h", feeShare: 0.12, reward: 2, chance: 0.61 } };
+  for (const lang of ["fa", "en"] as const) {
+    const t = (k: Parameters<typeof translate>[1], v?: Record<string, string>) => translate(lang, k, v);
+    const lines = explainLines(p as PaperPosition, t, 2);
+    assert.ok(lines.length >= 8, lines.join("\n"));
+    assert.ok(lines.every((l) => l && !l.includes("{") && !l.startsWith("why.")), lines.join("\n"));
+    assert.ok(lines.some((l) => l.includes("100.20")));
+  }
+  const names = Object.keys(en).filter((k) => k.startsWith("strat.") && k.split(".").length === 2).map((k) => k.slice(6))
+    .filter((k) => !k.startsWith("scalp_"));   // old scalping names, not run by the bot
+  assert.ok(names.length >= 18);
+  for (const s of names) {   // every strategy has its rule in words, in both languages
+    assert.ok(`why.rule.${s}` in en && `why.rule.${s}` in fa, s);
+  }
 });

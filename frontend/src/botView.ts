@@ -9,7 +9,7 @@ export const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "1d": 86400,
 };
 
-function candleStart(time: number, timeframe: string): number {
+export function candleStart(time: number, timeframe: string): number {
   const step = TIMEFRAME_SECONDS[timeframe] ?? 60;
   return Math.floor(time / step) * step;
 }
@@ -44,6 +44,80 @@ export function breakevenTrigger(p: PaperPosition, target: number = p.takeProfit
 export function allStrategies(catalog: string[], byTf: Record<string, string[]>, chosen: string[]): string[] {
   const out: string[] = [];
   for (const k of [...catalog, ...Object.values(byTf).flat(), ...chosen]) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
+/** The chart's companion timeframe for support / resistance (about 3-4 times bigger). */
+export const COMPANION_TF: Record<string, string> = {
+  "1m": "5m", "3m": "15m", "5m": "15m", "15m": "1h", "30m": "4h", "1h": "4h", "4h": "1d",
+};
+
+/** Support and resistance from swing highs / lows (a candle higher or lower than `pivot` candles on each
+ * side), the nearest `each` above and below the price; levels closer than `merge` (share) are one. */
+export function swingLevels(candles: { high: number; low: number; close: number }[], price: number,
+  pivot = 3, each = 2, merge = 0.0015, lookback = 300): { above: number[]; below: number[] } {
+  const c = candles.slice(-lookback);
+  const highs: number[] = [], lows: number[] = [];
+  for (let i = pivot; i < c.length - pivot; i++) {
+    let hi = true, lo = true;
+    for (let j = i - pivot; j <= i + pivot; j++) {
+      if (j === i) continue;
+      if (c[j].high >= c[i].high) hi = false;
+      if (c[j].low <= c[i].low) lo = false;
+    }
+    if (hi) highs.push(c[i].high);
+    if (lo) lows.push(c[i].low);
+  }
+  const pick = (xs: number[], up: boolean) => {
+    const out: number[] = [];
+    for (const x of xs.filter((x) => (up ? x > price : x < price)).sort((a, b) => (up ? a - b : b - a))) {
+      if (out.every((y) => Math.abs(y - x) / x > merge)) out.push(x);
+      if (out.length >= each) break;
+    }
+    return out;
+  };
+  return { above: pick([...highs, ...lows], true), below: pick([...highs, ...lows], false) };
+}
+
+/** The profit-lock point and the stop after the lock of a position (its own setting, else the panel's);
+ * null when the lock is off or already happened. */
+export function lockPrices(p: PaperPosition, lock: { enabled: boolean; trigger: number; at: number } | undefined,
+  target: number = p.takeProfit): { point: number; stopAfter: number; trigger: number; at: number } | null {
+  if (!lock?.enabled || p.lockedAt) return null;
+  const own = p.lockOwn;
+  const trigger = own ? own.trigger : lock.trigger / 100;
+  const at = own ? own.at : lock.at / 100;
+  const way = target - p.entryPrice;
+  return { point: p.entryPrice + way * trigger, stopAfter: p.entryPrice + way * at, trigger, at };
+}
+
+/** The bot's own words on why it entered a position (the "explanation" button). */
+export function explainLines(p: PaperPosition, t: (k: MessageKey, v?: Record<string, string>) => string,
+  digits: number): string[] {
+  const w = p.why ?? {};
+  const out: string[] = [];
+  const side = t(p.side === "long" ? "strategies.long" : "strategies.short");
+  out.push(t("why.head", { strategy: t(`strat.${p.strategy}` as MessageKey), tf: p.timeframe, side }));
+  out.push(t(`why.rule.${p.strategy}` as MessageKey));
+  if (p.history) out.push(t("why.history", { trades: String(p.history.trades),
+    win: p.history.winRate == null ? "–" : String(Math.round(p.history.winRate)),
+    pf: p.history.profitFactor == null ? "∞" : p.history.profitFactor.toFixed(2) }));
+  if (w.marketState) out.push(t("why.state", { state: t(`state.${w.marketState}` as MessageKey) }));
+  if (p.trend) out.push(t("why.trend", { tf: w.higherTf ?? "", trend: t(`bot.trend.${p.trend}` as MessageKey) }));
+  if (p.btcLink != null) {
+    out.push(p.btcLink >= 0.2
+      ? t("why.follower", { corr: p.btcLink.toFixed(2), trend: p.btcTrend ? t(`bot.trend.${p.btcTrend}` as MessageKey) : "–" })
+      : t("why.independent", { corr: p.btcLink.toFixed(2) }));
+  }
+  if (w.signalPrice != null) {
+    const diff = (p.entryPrice - w.signalPrice) / w.signalPrice * 100 * (p.side === "long" ? 1 : -1);
+    out.push(t("why.price", { signal: formatPrice(w.signalPrice, digits), entry: formatPrice(p.entryPrice, digits),
+      better: diff <= 0 ? t("why.better") : t("why.later", { pct: Math.abs(diff).toFixed(2) }),
+      type: t(p.entryType === "limit" ? "bot.entry.limit" : "bot.entry.market") }));
+  }
+  if (w.reward != null) out.push(t("why.reward", { rr: w.reward.toFixed(1) }));
+  if (w.feeShare != null) out.push(t("why.fee", { pct: String(Math.round(w.feeShare * 100)) }));
+  if (w.chance != null) out.push(t("why.brain", { pct: String(Math.round(w.chance * 100)) }));
   return out;
 }
 
@@ -281,4 +355,32 @@ export function brainKnobHint(
   if (set == null) return t("bot.brainHint.auto", { own: own == null ? "–" : String(own) });
   if (set <= 0) return t("bot.brainHint.off");
   return t("bot.brainHint.set", { value: String(Math.round(set * 100)), own: own == null ? "–" : String(own) });
+}
+
+/** Timeframes offered above the bot's chart. */
+export const CHART_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"];
+
+/** Groups of things drawn on the bot's chart, each with its own eye button. */
+export const EYE_GROUPS = ["boxes", "markers", "levels", "lock", "liquidation", "orders", "strategy", "srChart", "srHigher"] as const;
+export type EyeGroup = (typeof EYE_GROUPS)[number];
+const EYE_KEY = "bot.eye";
+
+/** Which groups are shown; all on unless the owner hid them (kept in this browser). */
+export function loadEye(read: () => string | null = () => localStorage.getItem(EYE_KEY)): Record<EyeGroup, boolean> {
+  const eye = Object.fromEntries(EYE_GROUPS.map((g) => [g, true])) as Record<EyeGroup, boolean>;
+  try {
+    const saved = JSON.parse(read() ?? "{}") as Record<string, unknown>;
+    for (const g of EYE_GROUPS) if (saved[g] === false) eye[g] = false;
+  } catch {
+    // all shown
+  }
+  return eye;
+}
+
+export function saveEye(eye: Record<EyeGroup, boolean>): void {
+  try {
+    localStorage.setItem(EYE_KEY, JSON.stringify(eye));
+  } catch {
+    // not kept
+  }
 }

@@ -45,13 +45,24 @@ const LEVEL_COLOR = "#787b86";
 /** How close (pixels) the mouse must be to a draggable line to grab it. */
 const DRAG_GRAB_PX = 6;
 
+/** What is written and drawn inside one box of a position (matched by entry time and kind). */
+export interface BoxDecor {
+  from: number;
+  kind: "profit" | "loss";
+  texts: string[];
+  lines: { price: number; color: string; dash?: boolean }[];
+}
+
 /** A price level line of an open position. With drag, the owner can move it with the mouse. */
 export interface Level {
   key?: string;
   price: number;
   color: string;
   title: string;
-  style?: "dotted" | "dashed";
+  style?: "dotted" | "dashed" | "solid";
+  width?: number;
+  axisLabel?: boolean;   // default true
+  hidden?: boolean;      // not drawn (its picture is drawn elsewhere, e.g. inside a box) but still draggable
   drag?: {
     /** While dragging: the line's label, and other lines that move along (e.g. the break-even trigger). */
     onMove(price: number): { title: string; others?: Record<string, { price: number; title: string }> };
@@ -316,9 +327,10 @@ export class ChartView {
    * boxes. An empty list removes them.
    */
   setTrades(trades: Trade[], lastTime: number | null, labels?: MarkerLabels,
-    signal?: { trade: Trade; labels: MarkerLabels } | null): void {
-    const markers = tradeMarkers(trades, labels);
-    const boxes = tradeBoxes(trades, lastTime);
+    signal?: { trade: Trade; labels: MarkerLabels } | null,
+    show: { markers?: boolean; boxes?: boolean } = {}): void {
+    const markers = show.markers === false ? [] : tradeMarkers(trades, labels);
+    const boxes = show.boxes === false ? [] : tradeBoxes(trades, lastTime);
     if (signal) {
       // The fresh signal: its own words ("long signal") and boxes on the forming candle.
       markers.push(...tradeMarkers([signal.trade], signal.labels));
@@ -327,6 +339,11 @@ export class ChartView {
     }
     this.markers.setMarkers(markers.map((m) => ({ ...m, time: m.time as UTCTimestamp })));
     this.boxes.setBoxes(boxes);
+  }
+
+  /** Text and short lines drawn inside the position boxes, and the signal candles' bands. */
+  setDecor(decor: BoxDecor[], signalTimes: number[] = []): void {
+    this.boxes.setDecor(decor, signalTimes);
   }
 
   /**
@@ -342,8 +359,9 @@ export class ChartView {
     this.levelLines.clear();
     levels.forEach((l, n) => {
       const line = this.series.createPriceLine({
-        price: l.price, color: l.color, lineWidth: l.drag ? 2 : 1,
-        lineStyle: l.style === "dashed" ? LineStyle.Dashed : LineStyle.Dotted, axisLabelVisible: true, title: l.title,
+        price: l.price, color: l.color, lineWidth: (l.width ?? (l.drag ? 2 : 1)) as 1 | 2 | 3 | 4,
+        lineStyle: l.style === "dashed" ? LineStyle.Dashed : l.style === "solid" ? LineStyle.Solid : LineStyle.Dotted,
+        axisLabelVisible: !l.hidden && l.axisLabel !== false, title: l.hidden ? "" : l.title, lineVisible: !l.hidden,
       });
       this.levelLines.set(l.key ?? String(n), { line, level: l });
     });
@@ -377,15 +395,60 @@ export class ChartView {
  */
 class PositionBoxes implements ISeriesPrimitive<Time> {
   private boxes: Box[] = [];
+  private decor: BoxDecor[] = [];
+  private signals: number[] = [];
   private param: SeriesAttachedParameter<Time> | null = null;
   private readonly view: IPrimitivePaneView;
 
+  /** Pixel rectangle of a box on screen, or null when it is not on the loaded candles. */
+  private rect(box: Box): { left: number; right: number; top: number; bottom: number } | null {
+    const param = this.param!;
+    const timeScale = param.chart.timeScale();
+    const x1 = timeScale.timeToCoordinate(box.from as UTCTimestamp);
+    const x2 = timeScale.timeToCoordinate(box.to as UTCTimestamp);
+    const y1 = param.series.priceToCoordinate(box.top);
+    const y2 = param.series.priceToCoordinate(box.bottom);
+    if (x1 === null || x2 === null || y1 === null || y2 === null) return null;
+    const barSpacing = Math.abs((timeScale.logicalToCoordinate(1 as Logical) ?? 0) - (timeScale.logicalToCoordinate(0 as Logical) ?? 0));
+    const width = Math.max(Math.abs(x2 - x1), Math.max(6, (box.minBars ?? 0) * barSpacing));
+    const left = Math.min(x1, x2);
+    return { left, right: left + width, top: Math.min(y1, y2), bottom: Math.max(y1, y2) };
+  }
+
   constructor() {
     const renderer: IPrimitivePaneRenderer = {
-      draw: () => undefined,
+      draw: (target) => {   // inside the boxes: short lines (profit lock) and the texts
+        const param = this.param;
+        if (!param || !this.decor.length) return;
+        target.useMediaCoordinateSpace(({ context }) => {
+          for (const d of this.decor) {
+            const box = this.boxes.find((b) => b.from === d.from && b.kind === d.kind);
+            if (!box) continue;
+            const r = this.rect(box);
+            if (!r) continue;
+            for (const line of d.lines) {
+              const y = param.series.priceToCoordinate(line.price);
+              if (y === null) continue;
+              context.strokeStyle = line.color;
+              context.lineWidth = 2;
+              context.setLineDash(line.dash ? [5, 4] : []);
+              context.beginPath();
+              context.moveTo(r.left, y);
+              context.lineTo(r.right, y);
+              context.stroke();
+            }
+            context.setLineDash([]);
+            context.font = "11px sans-serif";
+            context.fillStyle = "rgba(255,255,255,0.85)";
+            context.textBaseline = "top";
+            const near = d.kind === "profit" ? r.top + 3 : r.bottom - 3 - 13 * d.texts.length;
+            d.texts.forEach((text, n) => context.fillText(text, r.left + 4, near + 13 * n));
+          }
+        });
+      },
       drawBackground: (target) => {
         const param = this.param;
-        if (!param || !this.boxes.length) return;
+        if (!param || (!this.boxes.length && !this.signals.length)) return;
         const timeScale = param.chart.timeScale();
         const series = param.series;
         target.useBitmapCoordinateSpace(({ context, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
@@ -404,6 +467,14 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
             const height = Math.max(Math.round(Math.abs(y2 - y1) * vr), 1);
             context.fillStyle = box.color;
             context.fillRect(left, top, width, height);
+          }
+          // The candle that gave the signal: a light band over its whole height.
+          const barSpacing = Math.abs((timeScale.logicalToCoordinate(1 as Logical) ?? 0) - (timeScale.logicalToCoordinate(0 as Logical) ?? 0));
+          for (const t of this.signals) {
+            const x = timeScale.timeToCoordinate(t as UTCTimestamp);
+            if (x === null) continue;
+            context.fillStyle = "rgba(255, 213, 79, 0.16)";
+            context.fillRect(Math.round((x - barSpacing / 2) * hr), 0, Math.max(2, Math.round(barSpacing * hr)), context.canvas.height);
           }
         });
       },
@@ -425,6 +496,12 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
 
   setBoxes(boxes: Box[]): void {
     this.boxes = boxes;
+    this.param?.requestUpdate();
+  }
+
+  setDecor(decor: BoxDecor[], signals: number[]): void {
+    this.decor = decor;
+    this.signals = signals;
     this.param?.requestUpdate();
   }
 }

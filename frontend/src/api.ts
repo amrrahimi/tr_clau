@@ -4,7 +4,7 @@
 import type {
   Analysis, Candle, CatalogSpec, ConnectionState, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
   StrategyOverview,
- AiTestResult, ConsultAnswer } from "./types.ts";
+ AiTestResult, ConsultAnswer, IndicatorResult, Trade } from "./types.ts";
 
 export interface AnalysisRequest {
   marketType: MarketType;
@@ -34,7 +34,7 @@ export type PaperAction =
   | { kind: "reset"; capital: number }
   | { kind: "mode"; mode: "auto" | "manual"; strategies: string[] }
   | { kind: "close"; position_id: number }
-  | { kind: "levels"; position_id: number; stop?: number; take_profit?: number }
+  | { kind: "levels"; position_id: number; stop?: number; take_profit?: number; lock_point?: number }
   | { kind: "limit"; enabled: boolean }
   | { kind: "lock"; enabled: boolean; trigger: number; at: number }
   | { kind: "close-all" }
@@ -81,6 +81,8 @@ export interface Backend {
   /** One tiny request to Gemini with each saved key. */
   testAi(): Promise<{ results: AiTestResult[] }>;
   consult(positionId: number): Promise<ConsultAnswer>;
+  /** One strategy on a chart: the lines it reads (drawn on the bot chart) and its trades. */
+  runStrategy(symbol: string, timeframe: string, strategy: string): Promise<{ indicators: IndicatorResult[]; trades: Trade[] }>;
   getConnection(): Promise<ConnectionState>;
   setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
@@ -186,6 +188,14 @@ export class HttpBackend implements Backend {
   async paperAction(action: PaperAction): Promise<PaperState> {
     const { kind, ...body } = action;
     return this.post<PaperState>(`${PAPER_PATH}/${kind}`, body);
+  }
+
+  async runStrategy(symbol: string, timeframe: string, strategy: string): Promise<{ indicators: IndicatorResult[]; trades: Trade[] }> {
+    const scalping = ["1m", "3m", "5m"].includes(timeframe);
+    const body = await this.getJson<{ indicators: IndicatorResult[]; trades: Trade[] }>("/api/strategies/run", {
+      symbol, timeframe, strategy, market_type: "futures", trading_mode: scalping ? "scalping" : "daily",
+    });
+    return { indicators: body.indicators ?? [], trades: body.trades ?? [] };
   }
 
   /** The owner's "stay or exit?" button: the bot's view and Gemini's advice (up to about a minute). */

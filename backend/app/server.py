@@ -183,8 +183,15 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
 
         @app.post(f"/api/{prefix}/levels")
         async def paper_levels(position_id: int = Body(...), stop: Optional[float] = Body(None),
-                               take_profit: Optional[float] = Body(None)):
-            """The owner moved the stop-loss and/or the take-profit of an open position (chart lines)."""
+                               take_profit: Optional[float] = Body(None), lock_point: Optional[float] = Body(None)):
+            """The owner moved the stop-loss, the take-profit or the profit-lock point of an open position."""
+            if lock_point is not None:
+                why = b.set_lock_point(position_id, lock_point)
+                if why == "missing":
+                    raise HTTPException(404, "no open position with this id")
+                if why:
+                    raise HTTPException(400, why)
+                return b.public()
             if stop is None and take_profit is None:
                 raise HTTPException(400, "give stop or take_profit")
             if (stop is not None and stop <= 0) or (take_profit is not None and take_profit <= 0):

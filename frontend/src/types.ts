@@ -229,6 +229,9 @@ export interface PaperPosition {
   lockedAt?: number | null; // when the profit lock moved the stop
   consults?: ConsultAnswer[]; // the owner's "stay or exit?" questions about it
   trend?: "up" | "down" | "range" | null;   // the coin's trend on the higher timeframe when it opened
+  lockOwn?: { trigger: number; at: number } | null;   // this position's own profit-lock point (shares of the way)
+  why?: { signalPrice?: number; signalTime?: number; marketState?: string | null; higherTf?: string | null;
+    feeShare?: number | null; reward?: number | null; chance?: number | null };
   btcLink?: number | null;   // correlation with Bitcoin (1h, 30 days)
   btcTrend?: "up" | "down" | "range" | null;
   /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */

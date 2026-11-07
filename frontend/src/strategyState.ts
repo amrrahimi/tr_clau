@@ -181,6 +181,7 @@ export interface Box {
   bottom: number; // price
   color: string;
   minBars?: number; // drawn at least this many candles wide (a fresh signal has no length yet)
+  kind?: "profit" | "loss";
 }
 
 /** Two boxes per trade: take-profit side (green) and stop-loss side (red). */
@@ -189,8 +190,8 @@ export function tradeBoxes(trades: Trade[], lastTime: number | null): Box[] {
   for (const t of trades) {
     const to = t.exitTime ?? lastTime ?? t.entryTime;
     boxes.push(
-      { from: t.entryTime, to, top: Math.max(t.entryPrice, t.takeProfit), bottom: Math.min(t.entryPrice, t.takeProfit), color: COLORS.profitBox },
-      { from: t.entryTime, to, top: Math.max(t.entryPrice, t.stopLoss), bottom: Math.min(t.entryPrice, t.stopLoss), color: COLORS.lossBox },
+      { from: t.entryTime, to, top: Math.max(t.entryPrice, t.takeProfit), bottom: Math.min(t.entryPrice, t.takeProfit), color: COLORS.profitBox, kind: "profit" },
+      { from: t.entryTime, to, top: Math.max(t.entryPrice, t.stopLoss), bottom: Math.min(t.entryPrice, t.stopLoss), color: COLORS.lossBox, kind: "loss" },
     );
   }
   return boxes;

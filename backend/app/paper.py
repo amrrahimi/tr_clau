@@ -817,6 +817,32 @@ class PaperBot:
         self.save()
         return True
 
+    def set_lock_point(self, position_id: int, price: float) -> Optional[str]:
+        """The owner drags the profit-lock point of one position (2026-11-07). Only this position changes;
+        the stop-after-lock moves with it at the same ratio as the panel's setting (80 -> 40: half the way).
+        Errors: missing, lock_off (profit lock is switched off), lock_done (it already moved the stop),
+        lock_side (the point must be between the entry and the target)."""
+        p = next((x for x in self.account["positions"] if x["id"] == position_id), None)
+        if p is None:
+            return "missing"
+        a = self.account
+        if not a.get("lockEnabled"):
+            return "lock_off"
+        if p.get("lockedAt"):
+            return "lock_done"
+        way = p["takeProfit"] - p["entryPrice"]
+        share = (price - p["entryPrice"]) / way if way else 0
+        if not 0.05 <= share <= 0.99:
+            return "lock_side"
+        ratio = a.get("lockAt", LOCK_AT * 100) / a.get("lockTrigger", LOCK_TRIGGER * 100)
+        p["lockOwn"] = {"trigger": share, "at": share * ratio}
+        p["lock"] = dict(p["lockOwn"])
+        p["edited"] = True
+        self._event("levels", symbol=p["base"], timeframe=p["timeframe"], what="lock",
+                    old=None, new=price)
+        self.save()
+        return None
+
     def set_levels(self, position_id: int, stop: Optional[float] = None,
                    target: Optional[float] = None) -> Optional[str]:
         """Owner drags the stop-loss or the take-profit line of an open position on the chart.
@@ -1162,8 +1188,9 @@ class PaperBot:
 
     async def _watch_one(self, p: dict, now: float) -> None:
         a = self.account
-        if a.get("lockEnabled"):   # the owner's profit lock, for open positions too
-            p["lock"] = {"trigger": a.get("lockTrigger", LOCK_TRIGGER * 100) / 100, "at": a.get("lockAt", LOCK_AT * 100) / 100}
+        if a.get("lockEnabled"):   # the owner's profit lock, for open positions too (or this position's own)
+            p["lock"] = dict(p["lockOwn"]) if p.get("lockOwn") else \
+                {"trigger": a.get("lockTrigger", LOCK_TRIGGER * 100) / 100, "at": a.get("lockAt", LOCK_AT * 100) / 100}
         else:
             p.pop("lock", None)
         tf_seconds = config.TIMEFRAME_SECONDS[p["timeframe"]]
@@ -1674,6 +1701,11 @@ class PaperBot:
             "history": {"trades": c["stats"]["trades"], "winRate": c["stats"].get("winRate"),
                         "profitFactor": c["stats"]["profitFactor"]},
             "trend": c.get("trend"), "btcLink": c.get("btcLink"), "btcTrend": c.get("btcTrend"),
+            # Why the bot entered (the owner's "explanation" button, 2026-11-07).
+            "why": {"signalPrice": s.get("entry"), "signalTime": s["time"], "marketState": c.get("marketState"),
+                    "higherTf": HIGHER_TF.get(tf), "feeShare": 2 * self.fees.taker / 100 * entry / abs(entry - stop)
+                    if entry != stop else None, "reward": abs(target - entry) / abs(entry - stop) if entry != stop else None,
+                    "chance": c.get("chance")},
         }
         a["nextId"] += 1
         a["positions"].append(position)
@@ -1726,7 +1758,8 @@ class PaperBot:
                  "checkedFrom": int(now // ORDER_CANDLE_SECONDS) * ORDER_CANDLE_SECONDS + ORDER_CANDLE_SECONDS,
                  "stopLoss": stop, "takeProfit": s["takeProfit"], "margin": size.margin,
                  "params": {"breakeven": params.get("breakeven", 0), "fee_ratio": params.get("fee_ratio", 0)},
-                 "c": {k: c[k] for k in ("symbol", "base", "strategy", "stats", "signal", "trend", "btcLink", "btcTrend") if k in c}
+                 "c": {k: c[k] for k in ("symbol", "base", "strategy", "stats", "signal", "trend", "btcLink", "btcTrend",
+                                         "marketState", "chance") if k in c}
                       | {"memoryKey": c.get("memoryKey")}}
         a["nextId"] += 1
         a["orders"].append(order)

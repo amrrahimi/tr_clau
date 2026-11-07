@@ -1475,3 +1475,45 @@ class OwnersDesignTest(unittest.IsolatedAsyncioTestCase):
         hours = [bar(0, 100, 100, 100, 100)] + [bar(3600 * i, 99.8, 100.05, 99.6, 99.8) for i in range(1, 14)]
         pp.check_exit(h, hours, 99.8, 3600, now=3600 * 14 + 1)
         self.assertNotIn("beExit", h)                                      # not on 1h (no effect there)
+
+
+class LockPointAndWhyTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+        async def recent(symbol, tf):
+            return [bar(999_960, 100, 100, 100, 100)]
+
+        async def empty(*a):
+            return []
+        self.bot = pp.PaperBot(pp.Store(Path(self.dir.name) / "p.json"), empty, empty, recent,
+                               now=lambda: 1_000_000, fees=FEES)
+        self.bot.reset(100)
+
+    async def test_entry_reason_is_kept(self):
+        c = cand("A", 2.0, 20)
+        c.update(marketState="trend_up", trend="up", btcLink=0.1)
+        await self.bot._open(c, "15m", 1_000_000, {"fee_ratio": 0.33})
+        p = self.bot.account["positions"][0]
+        w = p["why"]
+        self.assertEqual((w["signalPrice"], w["marketState"], w["higherTf"]), (100, "trend_up", "1h"))
+        self.assertAlmostEqual(w["reward"], 2.0)                       # entry 100, stop 99, target 102
+        self.assertAlmostEqual(w["feeShare"], 0.0012 * 100 / 1)
+        self.assertEqual((p["trend"], p["btcLink"]), ("up", 0.1))
+
+    async def test_lock_point_of_one_position(self):
+        bot = self.bot
+        await bot._open(cand("A", 2.0, 20), "15m", 1_000_000, {"fee_ratio": 0.33})
+        p = bot.account["positions"][0]
+        self.assertEqual(bot.set_lock_point(p["id"], 101.2), "lock_off")
+        bot.set_lock(True, 80, 40)
+        self.assertEqual(bot.set_lock_point(p["id"], 103), "lock_side")    # past the target (102)
+        self.assertIsNone(bot.set_lock_point(p["id"], 101.2))               # 60% of the way
+        self.assertAlmostEqual(p["lockOwn"]["trigger"], 0.6)
+        self.assertAlmostEqual(p["lockOwn"]["at"], 0.3)                      # same ratio as 80 -> 40
+        await bot._watch_positions(1_000_000)                                # kept, not overwritten by the panel's
+        self.assertAlmostEqual(p["lock"]["trigger"], 0.6)
+        p["lockedAt"] = 1
+        self.assertEqual(bot.set_lock_point(p["id"], 101.4), "lock_done")
+        self.assertEqual(bot.set_lock_point(999, 101), "missing")

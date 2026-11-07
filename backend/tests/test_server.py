@@ -134,6 +134,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99, "stop": 1.2}).status_code, 404)
         self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99}).status_code, 400)
         self.assertEqual(client.post("/api/paper/consult", json={"position_id": 99}).status_code, 404)
+        self.assertEqual(client.post("/api/paper/levels", json={"position_id": 99, "lock_point": 1.0}).status_code, 404)
         body = client.post("/api/paper/limit", json={"enabled": True}).json()
         self.assertEqual((body["limitEntry"], body["orders"]), (True, []))
         self.assertIn("fillRate", body["entryStats"]["limit"])
