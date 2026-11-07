@@ -265,3 +265,12 @@ test("the diary line of a stay-or-exit question", () => {
     assert.ok(eventText({ time: 1, kind: "consult", symbol: "ON", timeframe: "30m", suggest }, t).includes(word));
   }
 });
+
+test("the new skip reasons, the break-even exit and the trend words have texts", () => {
+  for (const k of ["bot.skip.range", "bot.skip.against", "bot.skip.btcFlat", "bot.skip.btcAgainst", "bot.reason.timeBe",
+    "bot.trend.up", "bot.trend.down", "bot.trend.range"]) {
+    assert.notEqual(translate("fa", k as Parameters<typeof translate>[1]), k);
+    assert.notEqual(translate("en", k as Parameters<typeof translate>[1]), k);
+  }
+  assert.ok(translate("fa", "bot.btcLine", { h1: "صعودی", h4: "رنج" }).includes("بیت‌کوین"));
+});

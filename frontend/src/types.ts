@@ -119,7 +119,7 @@ export interface Trade {
   takeProfit: number;
   exitTime: number | null; // null while open
   exitPrice: number | null;
-  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | "lock" | null;
+  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | "lock" | "timeBe" | null;
   breakevenTime: number | null; // when the stop moved to the entry price
   result: "win" | "loss" | "breakeven" | "open";
   pnlPercent: number | null; // after fees
@@ -228,6 +228,9 @@ export interface PaperPosition {
   openRisk?: number;        // USDT lost at the stop when it opened (before the owner moved the stop)
   lockedAt?: number | null; // when the profit lock moved the stop
   consults?: ConsultAnswer[]; // the owner's "stay or exit?" questions about it
+  trend?: "up" | "down" | "range" | null;   // the coin's trend on the higher timeframe when it opened
+  btcLink?: number | null;   // correlation with Bitcoin (1h, 30 days)
+  btcTrend?: "up" | "down" | "range" | null;
   /** Half way to the target the bot looks again and advises: hold or close (the owner answers). */
   advice?: { time: number; suggest: "hold" | "close"; reason: "fine" | "opposite" | "state" | "unknown";
     detail: string; pnl: number; answer: "hold" | null } | null;
@@ -239,7 +242,7 @@ export interface PaperPosition {
 export interface PaperTrade extends PaperPosition {
   exitPrice: number;
   exitTime: number;
-  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap" | "lock";
+  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap" | "lock" | "timeBe";
   pnl: number; // USDT after fees
   fees: number;
   pnlPercent: number; // of the margin
@@ -396,6 +399,7 @@ export interface PaperState {
   /** What happened to the signals in the last minutes (skipped: reason -> count). */
   flow?: { minutes: number; seen: number; opened: number; placed?: number; skipped: Record<string, number> };
   limitEntry?: boolean;                 // the owner's switch: enter with limit orders (paper only)
+  btc?: { time?: number; "1h"?: "up" | "down" | "range" | null; "4h"?: "up" | "down" | "range" | null };
   orders?: PaperOrder[];                // limit orders waiting to fill
   entryStats?: { market: EntryStats; limit: EntryStats & { fillRate: number | null;
     orders: { placed: number; filled: number; expired: number; cancelled: number } } };
@@ -444,6 +448,7 @@ export interface PaperState {
     maxLeverage: number; pauseLosses?: number; pauseFall?: number; pauseHours?: number; recoverWins?: number; profitCap?: number; totalStop: number;
     smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
     limitOffset?: number; limitExpireCandles?: number;   // limit entry: % of the stop distance, candles
-    lock?: { enabled: boolean; trigger: number; at: number };   // profit lock: % of the way to the target
+    lock?: { enabled: boolean; trigger: number; at: number };
+    timeBeCandles?: Record<string, number>; staleTolerance?: number;   // profit lock: % of the way to the target
     fees: { maker: number; taker: number } };
 }

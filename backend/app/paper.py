@@ -52,7 +52,8 @@ from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_p
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
-STALE_PART = 0.25             # of the stop distance: further than this from the signal price = too late
+STALE_PART = 0.10             # of the stop distance: further than this toward the target = too late
+                              # (owner 2026-11-07: 10%, was 25%; the target stays, so a late entry exits sooner)
 MODE_OF = {"1m": "scalping", "3m": "scalping", "5m": "scalping", "15m": "daily", "30m": "daily", "1h": "daily",
            "4h": "daily"}
 MARKET = "futures"            # long and short (spot cannot short)
@@ -63,7 +64,28 @@ GROUP = {"1m": "fast", "3m": "fast", "5m": "fast", "15m": "slow", "30m": "slow",
 UNLIMITED = 1000
 GROUP_SLOTS = {"fast": UNLIMITED, "slow": UNLIMITED}
 MAX_SAME_SIDE = UNLIMITED
-MAX_OPEN = 6                  # sizing only: one position may lock at most a sixth of the money as margin
+MAX_OPEN = 6                  # sizing: one position may lock at most a sixth of the money as margin
+MAX_POSITIONS = 6             # owner 2026-11-07: at most 6 open trades (waiting limit orders count too)
+
+# The owner's design of 2026-11-07 (steps 2-3): the trend of a coin is read on a higher timeframe and a trade
+# goes only with it; in a range nothing opens. Efficiency ratio over TREND_CANDLES closed candles: the straight
+# move divided by the whole path; at least TREND_ER = trend (direction: the sign of the move), else range.
+# Tested 2026-11-07 (18k engine trades): against the higher trend was the worst in every method; independent
+# coins on 1h with the 4h trend +0.12 R (both halves positive).
+HIGHER_TF = {"1m": "1h", "3m": "1h", "5m": "1h", "15m": "1h", "30m": "4h", "1h": "4h", "4h": "1d"}
+TREND_CANDLES = 20
+TREND_ER = 0.3
+# Coins that follow Bitcoin (correlation of 1h returns over BTC_LINK_HOURS at least BTC_FOLLOWER) trade only
+# with Bitcoin's trend on the same higher timeframe, and not while Bitcoin is in a range (followers then lost
+# -0.26 R in both halves, 5.7k live signals). Independent coins: their own trend only. Worked out once a day.
+BTC_SYMBOL = "BTC/USDT:USDT"
+BTC_FOLLOWER = 0.2
+BTC_LINK_HOURS = 720
+BTC_LINK_SECONDS = 86400
+# Step "blocked money" (owner 2026-11-07): after TIME_BE_CANDLES candles a trade still open aims at break-even:
+# in profit, the stop goes to break-even; in loss, it closes when the price comes back to the entry (fees paid).
+# Tested on 5m / 15m: -0.18 -> -0.15 and -0.11 -> -0.09 R, better in both halves (no effect on 1h).
+TIME_BE_CANDLES = {"1m": 12, "3m": 12, "5m": 12, "15m": 12}
 
 # Owner's rule: trades on the slow charts take long and move a lot, so they must be much surer.
 # A signal on 15m / 1h is traded only if its strategy did clearly well on that coin's history.
@@ -229,6 +251,7 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
         if c["time"] + tf_seconds > now:
             break  # still forming
         stop, target = position["stop"], position["takeProfit"]
+        be_exit = position.get("beExit")
         if (c["low"] <= stop) if long_ else (c["high"] >= stop):
             reason = _stop_reason(position)
             # A gap past the stop (the candle opened beyond it) fills at the open, worse than the stop.
@@ -238,9 +261,12 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
             return (c["open"] if gapped else stop), reason
         if (c["high"] >= target) if long_ else (c["low"] <= target):
             return target, "target"
+        if be_exit is not None and ((c["high"] >= be_exit) if long_ else (c["low"] <= be_exit)):
+            return be_exit, "timeBe"
         position["checkedFrom"] = c["time"] + tf_seconds
         _maybe_breakeven(position, c["high"] if long_ else c["low"], c["time"])
         _maybe_lock(position, c["high"] if long_ else c["low"], c["time"])
+        _maybe_time_be(position, c, tf_seconds)
     if last_price is not None:
         stop, target = position["stop"], position["takeProfit"]
         if (last_price <= stop) if long_ else (last_price >= stop):
@@ -251,8 +277,28 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
             return last_price, _stop_reason(position)
         if (last_price >= target) if long_ else (last_price <= target):
             return target, "target"
+        be_exit = position.get("beExit")
+        if be_exit is not None and ((last_price >= be_exit) if long_ else (last_price <= be_exit)):
+            return be_exit, "timeBe"
         _maybe_lock(position, last_price, int(now))   # the price seen now can lock the profit too
     return None
+
+
+def _maybe_time_be(position: dict, candle: dict, tf_seconds: int) -> None:
+    """After TIME_BE_CANDLES closed candles: in profit, the stop moves to break-even; in loss, the trade
+    will close at break-even when the price comes back (beExit). Once."""
+    n = TIME_BE_CANDLES.get(position.get("timeframe", ""))
+    if not n or position.get("timeBeAt") or candle["time"] < position["entryCandle"] + n * tf_seconds:
+        return
+    long_ = position["side"] == LONG
+    be = position["breakevenPrice"]
+    position["timeBeAt"] = candle["time"]
+    if (candle["close"] > be) if long_ else (candle["close"] < be):
+        if (be > position["stop"]) if long_ else (be < position["stop"]):
+            position["stop"] = be
+            position["breakevenAt"] = candle["time"]
+    else:
+        position["beExit"] = be
 
 
 def _stop_reason(position: dict) -> str:
@@ -419,10 +465,39 @@ STRATEGY_SET = f"{len(STRATEGIES)}b{len(BOT_STRATEGIES)}"
 EVEN_PART = 1e-4    # a result smaller than this share of the position counts as break-even
 
 
+def trend_of(candles: list[dict], n: int = TREND_CANDLES, threshold: float = TREND_ER) -> Optional[str]:
+    """up / down / range from the efficiency ratio of the last n closed candles; None: too few candles."""
+    if len(candles) < n + 1:
+        return None
+    closes = [c["close"] for c in candles[-(n + 1):]]
+    path = sum(abs(b - a) for a, b in zip(closes, closes[1:]))
+    move = closes[-1] - closes[0]
+    if not path or abs(move) / path < threshold:
+        return "range"
+    return "up" if move > 0 else "down"
+
+
+def btc_correlation(coin: list[dict], btc: list[dict], hours: int = BTC_LINK_HOURS) -> Optional[float]:
+    """Correlation of the hourly returns of a coin and Bitcoin (same hours), None with too little data."""
+    def returns(rows):
+        rows = rows[-(hours + 1):]
+        return {b["time"]: math.log(b["close"] / a["close"]) for a, b in zip(rows, rows[1:]) if a["close"] > 0 and b["close"] > 0}
+    a, b = returns(coin), returns(btc)
+    common = [t for t in a if t in b]
+    if len(common) < 200:
+        return None
+    xs, ys = [b[t] for t in common], [a[t] for t in common]
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    return sxy / math.sqrt(sxx * syy) if sxx and syy else None
+
+
 def trade_outcome(trade: dict) -> str:
     """win / loss / even. A trade closed at the break-even stop (or with a result of practically
     zero, e.g. a billionth of a dollar from rounding) is "even", not a loss."""
-    if trade.get("exitReason") == "breakeven" or abs(trade["pnl"]) < trade["notional"] * EVEN_PART:
+    if trade.get("exitReason") in ("breakeven", "timeBe") or abs(trade["pnl"]) < trade["notional"] * EVEN_PART:
         return "even"
     return "win" if trade["pnl"] > 0 else "loss"
 
@@ -556,6 +631,8 @@ class PaperBot:
         self._performance: Optional[tuple[float, dict]] = None   # (time, per-strategy results) cache
         self.ai_ask = advisor.ask            # replaced in tests
         self.ai_consult = advisor.consult    # the owner's "stay or exit?" button (replaced in tests)
+        self.btc_links: dict[str, tuple[float, Optional[float]]] = {}   # symbol -> (when, correlation with BTC)
+        self.btc_state: dict = {}                                       # Bitcoin's 1h / 4h trend for the panel
         self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
         self.ai_error: Optional[str] = None  # the last reason Gemini did not answer (for the screen)
         self.ask_timers = True               # open an unanswered question after ASK_AUTO_SECONDS (off in tests)
@@ -608,6 +685,7 @@ class PaperBot:
                              "entry": q["c"]["signal"]["entry"], "stopLoss": q["c"]["signal"]["stopLoss"],
                              "takeProfit": q["c"]["signal"]["takeProfit"], "expires": q["expires"],
                              "error": q.get("error")} for q in a.get("pendingAsks", [])],
+            "btc": self.btc_state,
             "limitEntry": a.get("limitEntry", False),
             "orders": [{k: o[k] for k in ("id", "symbol", "base", "timeframe", "strategy", "side", "price",
                                           "placedPrice", "placedAt", "expires", "stopLoss", "takeProfit", "margin")}
@@ -639,7 +717,7 @@ class PaperBot:
             "flow": self.flow_summary(),
             "scanSeconds": self.scan_seconds,
             "rules": {"risk": RISK * 100,
-                      "maxOpen": None if self.profile.max_open >= UNLIMITED else self.profile.max_open,
+                      "maxOpen": MAX_POSITIONS, "timeBeCandles": TIME_BE_CANDLES, "staleTolerance": STALE_PART * 100,
                       "maxSameSide": None if self.profile.max_same_side >= UNLIMITED else self.profile.max_same_side,
                       "brainThreshold": a.get("brainThreshold"),
                       "coinMode": a.get("coinMode", "top"), "coins": a.get("coins", []),
@@ -896,6 +974,8 @@ class PaperBot:
             now = self.now()
             self._new_day(now)
             await self._auto_open_asks(now)
+            if now - self.btc_state.get("time", 0) >= 300:
+                await self._btc_view(now)
             await self._watch_orders(now)
             await self._watch_positions(now)
             equity = self.equity()
@@ -1337,7 +1417,19 @@ class PaperBot:
                 self._count("brain", len(weak))
         open_coins = {p["symbol"] for p in self.account["positions"]} | {o["symbol"] for o in self.account["orders"]}
         positions = self.account["positions"]
-        chosen = pick(candidates, open_coins, free_slots(positions, tf, self.profile.slots),
+        room = MAX_POSITIONS - len(positions) - len(self.account.get("orders", []))
+        if room <= 0:
+            for c in candidates:
+                self._skip(c, tf, "full")
+            return
+        # Steps 2-3 (owner 2026-11-07): only with the coin's higher-timeframe trend, never in a range,
+        # and for coins that follow Bitcoin only with Bitcoin's trend.
+        fresh = [c for c in candidates if c["symbol"] not in open_coins]
+        checked = []
+        for c in sorted(fresh, key=lambda c: c["stats"]["trades"], reverse=True)[:max(room * 3, 6)]:
+            if await self._direction_ok(c, tf, now):
+                checked.append(c)
+        chosen = pick(checked, open_coins, min(room, free_slots(positions, tf, self.profile.slots)),
                       side_room(positions, self.profile.max_same_side))
         for c in chosen:
             if self._ai_on(tf):
@@ -1450,6 +1542,76 @@ class PaperBot:
         self.account["aiTimeframes"] = [tf for tf in self.profile.timeframes if tf in timeframes]
         self.save()
 
+    def _skip(self, c: dict, tf: str, reason: str) -> None:
+        self._count(reason)
+        self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
+        if self.memory is not None and c.get("memoryKey"):
+            self.memory.mark(c["memoryKey"], skip_reason=reason)
+
+    async def _trend(self, symbol: str, tf: str, now: float) -> Optional[str]:
+        htf = HIGHER_TF.get(tf)
+        if htf is None:
+            return None
+        try:
+            return trend_of(closed_only(await self.history(symbol, htf), htf, now))
+        except Exception:
+            return None
+
+    async def _btc_link(self, symbol: str, now: float) -> Optional[float]:
+        """The coin's correlation with Bitcoin (1h returns, 30 days), worked out once a day per coin."""
+        if symbol == BTC_SYMBOL:
+            return 1.0
+        cached = self.btc_links.get(symbol)
+        if cached and now - cached[0] < BTC_LINK_SECONDS:
+            return cached[1]
+        try:
+            coin = closed_only(await self.history(symbol, "1h"), "1h", now)
+            btc = closed_only(await self.history(BTC_SYMBOL, "1h"), "1h", now)
+            corr = btc_correlation(coin, btc)
+        except Exception:
+            corr = None
+        self.btc_links[symbol] = (now, corr)
+        return corr
+
+    async def _direction_ok(self, c: dict, tf: str, now: float) -> bool:
+        """Steps 2-3 of the owner's design: the coin's trend on the higher timeframe must be the trade's way
+        (range: skip "range"; the other way: "against"); a coin that follows Bitcoin also needs Bitcoin's trend
+        the same way (Bitcoin in a range: "btcFlat"; the other way: "btcAgainst")."""
+        side = c["signal"]["side"]
+        want = "up" if side == LONG else "down"
+        trend = await self._trend(c["symbol"], tf, now)
+        c["trend"] = trend
+        if trend is None:
+            return True   # not enough candles to tell: as before
+        if trend == "range":
+            self._skip(c, tf, "range")
+            return False
+        if trend != want:
+            self._skip(c, tf, "against")
+            return False
+        link = await self._btc_link(c["symbol"], now)
+        c["btcLink"] = link
+        if link is not None and link >= BTC_FOLLOWER and c["symbol"] != BTC_SYMBOL:
+            btc = await self._trend(BTC_SYMBOL, tf, now)
+            c["btcTrend"] = btc
+            if btc == "range":
+                self._skip(c, tf, "btcFlat")
+                return False
+            if btc is not None and btc != want:
+                self._skip(c, tf, "btcAgainst")
+                return False
+        return True
+
+    async def _btc_view(self, now: float) -> None:
+        """Bitcoin's trend on 1h and 4h for the panel (step 3)."""
+        view = {}
+        for htf in ("1h", "4h"):
+            try:
+                view[htf] = trend_of(closed_only(await self.history(BTC_SYMBOL, htf), htf, now))
+            except Exception:
+                view[htf] = None
+        self.btc_state = {"time": now, **view}
+
     async def _open(self, c: dict, tf: str, now: float, params: dict) -> None:
         recent = await self.recent(c["symbol"], tf)
         if not recent:
@@ -1477,6 +1639,8 @@ class PaperBot:
             return skip("reward")
         if any(o["symbol"] == c["symbol"] for o in self.account["orders"]):
             return skip("full")   # a limit order for this coin is already waiting (one per coin)
+        if len(self.account["positions"]) + len(self.account.get("orders", [])) >= MAX_POSITIONS:
+            return skip("full")   # owner 2026-11-07: at most 6 open trades
         equity = self.equity()
         if self.account.get("limitEntry"):
             return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip, price_step(recent))
@@ -1509,6 +1673,7 @@ class PaperBot:
             "breakevenPrice": breakeven_price(s["side"], entry, self.fees, entry_fee), "breakevenAt": None,
             "history": {"trades": c["stats"]["trades"], "winRate": c["stats"].get("winRate"),
                         "profitFactor": c["stats"]["profitFactor"]},
+            "trend": c.get("trend"), "btcLink": c.get("btcLink"), "btcTrend": c.get("btcTrend"),
         }
         a["nextId"] += 1
         a["positions"].append(position)
@@ -1561,7 +1726,7 @@ class PaperBot:
                  "checkedFrom": int(now // ORDER_CANDLE_SECONDS) * ORDER_CANDLE_SECONDS + ORDER_CANDLE_SECONDS,
                  "stopLoss": stop, "takeProfit": s["takeProfit"], "margin": size.margin,
                  "params": {"breakeven": params.get("breakeven", 0), "fee_ratio": params.get("fee_ratio", 0)},
-                 "c": {k: c[k] for k in ("symbol", "base", "strategy", "stats", "signal") if k in c}
+                 "c": {k: c[k] for k in ("symbol", "base", "strategy", "stats", "signal", "trend", "btcLink", "btcTrend") if k in c}
                       | {"memoryKey": c.get("memoryKey")}}
         a["nextId"] += 1
         a["orders"].append(order)

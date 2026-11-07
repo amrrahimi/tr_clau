@@ -564,6 +564,10 @@ export class BotApp {
       }
     }
     // What happened to the signals lately.
+    if (s.btc && (s.btc["1h"] || s.btc["4h"])) {   // step 3: Bitcoin's trend, which the coins that follow it need
+      const word = (x: string | null | undefined) => x ? t(`bot.trend.${x}` as MessageKey) : "–";
+      parts.push(el("div", "bot-hint btc-line", t("bot.btcLine", { h1: word(s.btc["1h"]), h4: word(s.btc["4h"]) })));
+    }
     if (s.flow) {
       parts.push(el("div", "bot-hint", t("bot.flow", { seen: String(s.flow.seen), opened: String(s.flow.opened) })));
       if (s.flow.placed) parts.push(el("div", "bot-hint", t("bot.flowPlaced", { n: String(s.flow.placed) })));
@@ -1214,7 +1218,11 @@ export class BotApp {
         const td = document.createElement("td");
         td.textContent = text;
         td.className = cls;
-        if (cls === "coin" && p.edited) td.title = t("bot.edited");
+        if (cls === "coin") {
+          const lines = [p.edited ? t("bot.edited") : "", p.trend ? t("bot.coinTrend", { trend: t(`bot.trend.${p.trend}` as MessageKey) }) : "",
+            p.btcLink != null ? t(p.btcLink >= 0.2 ? "bot.coinFollower" : "bot.coinIndependent", { corr: p.btcLink.toFixed(2) }) : ""];
+          td.title = lines.filter(Boolean).join("\n");
+        }
         if (cls === "money") td.title = t("bot.riskAtStop", { usd: (p.risk ?? 0).toFixed(2) });
         if (/^[\d×+−.—]/.test(text)) td.dir = "ltr";
         tr.append(td);

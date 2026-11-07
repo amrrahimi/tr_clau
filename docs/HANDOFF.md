@@ -140,6 +140,20 @@ The strict rule for slow charts was already off (STRICT_TIMEFRAMES empty). Expec
 Consult window: a tab folds it to one line (verdicts) and opens it; folded state kept in the browser; a new
 answer opens it; the open window is at most 28% of the height and can be resized by dragging its corner.
 
+## Owner's 6-step design (2026-11-07)
+1 coins: top 100 by volume (as before). 2 trend on a higher timeframe (HIGHER_TF: 1m-15m -> 1h, 30m/1h -> 4h,
+4h -> 1d) from the efficiency ratio of 20 closed candles (>= 0.3 trend, else range): trades only with it; range ->
+skip "range", other way -> "against". 3 Bitcoin link: correlation of 1h returns over 30 days per coin (worked out
+once a day, only for candidates); followers (>= 0.2) need Bitcoin's trend (same higher timeframe) the same way:
+"btcFlat" / "btcAgainst". Panel line: Bitcoin 1h / 4h trend. 4 strategies per timeframe: the owner's manual list
+(unchanged). 5 equal risk (1%), margin at most 1/6, at most 6 open trades (MAX_POSITIONS, waiting limit orders
+count). 6 entry at the signal price or better; at most 10% of the stop distance toward the target (STALE_PART);
+the target stays (a late entry exits sooner) and the reward rule is checked at the price now.
+Exit: after 12 candles (1m-15m) a trade still open aims at break-even (in profit: stop to break-even; in loss:
+closes when the price comes back to the entry, reason "timeBe"). Tests behind each choice: see progress notes.
+Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.11 R on 91k history signals in
+"range"; with Toobit fees the textbook 5m BTC example (stop $40, target $280) is about 1:1, not 1:7.
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.

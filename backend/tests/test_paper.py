@@ -230,20 +230,21 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
     async def test_stale_signal_is_skipped_with_reason(self):
         bot = self.bot
         bot.reset(100)
-        # Signal at 100 with the stop at 99: 100.3 is more than a quarter of the stop distance away.
-        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.3, 100, 100.3)]
+        # Signal at 100 with the stop at 99: 100.15 is more than 10% of the stop distance away (owner 2026-11-07).
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.15, 100, 100.15)]
         await bot._open(cand("A", 2.0, 20), "15m", self.clock[0], {"fee_ratio": 0.33})
         self.assertEqual(bot.account["positions"], [])
         self.assertEqual((bot.account["events"][-1]["kind"], bot.account["events"][-1]["reason"]), ("skip", "stale"))
-        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.2, 100, 100.2)]   # within a quarter: taken
+        self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.08, 100, 100.08)]   # within 10%: taken
         await bot._open(cand("A", 2.0, 20), "15m", self.clock[0], {"fee_ratio": 0.33})
         self.assertEqual(len(bot.account["positions"]), 1)
-        self.assertTrue(pp.is_stale(100, 100.3, 99))     # a buy: the price went up (toward the target): late
-        self.assertFalse(pp.is_stale(100, 100.2, 99))
+        self.assertEqual(bot.account["positions"][0]["takeProfit"], 102)   # the target stays: a late entry exits sooner
+        self.assertTrue(pp.is_stale(100, 100.15, 99))    # a buy: the price went up (toward the target): late
+        self.assertFalse(pp.is_stale(100, 100.1, 99))
         # Owner 2026-11-05: a move toward the stop is a better entry, never stale (the stop itself still counts).
         self.assertFalse(pp.is_stale(100, 99.3, 99))      # a buy, cheaper now
         self.assertFalse(pp.is_stale(100, 100.7, 101))    # a sell, higher now
-        self.assertTrue(pp.is_stale(100, 99.6, 101))      # a sell, already fell: late
+        self.assertTrue(pp.is_stale(100, 99.85, 101))     # a sell, already fell: late
 
     async def test_short_signal_after_the_price_rose_is_entered_at_the_better_price(self):
         bot = self.bot
@@ -1369,3 +1370,108 @@ class MissedCandlesTest(unittest.IsolatedAsyncioTestCase):
         await self.bot._watch_positions(self.all[5]["time"] + 200)
         self.assertEqual(self.bot.account["positions"], [self.p])
         self.assertFalse([e for e in self.bot.account["events"] if e["kind"] == "blind"])
+
+
+class OwnersDesignTest(unittest.IsolatedAsyncioTestCase):
+    """The owner's design of 2026-11-07: trend from the higher timeframe, Bitcoin link, 6 trades, time break-even."""
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.hist = {}
+
+        async def history(symbol, tf):
+            return self.hist.get((symbol, tf), [])
+
+        async def recent(symbol, tf):
+            return [bar(999_960, 100, 100, 100, 100)]
+
+        async def coins():
+            return []
+        self.bot = pp.PaperBot(pp.Store(Path(self.dir.name) / "p.json"), coins, history, recent,
+                               now=lambda: 1_000_000, fees=FEES)
+        self.bot.reset(100)
+
+    @staticmethod
+    def series(start, step, n=40, tf=3600, wiggle=0.0, t0=800_000):
+        """Closed 1h candles going up (step > 0), down, or sideways (step 0 with a wiggle)."""
+        out, p = [], start
+        for i in range(n):
+            p = p + step + (wiggle if i % 2 else -wiggle)
+            out.append(bar(t0 + i * tf, p, p, p, p))
+        return out
+
+    def test_trend_from_the_efficiency_ratio(self):
+        self.assertEqual(pp.trend_of(self.series(100, 1)), "up")
+        self.assertEqual(pp.trend_of(self.series(100, -1)), "down")
+        self.assertEqual(pp.trend_of(self.series(100, 0, wiggle=2)), "range")   # back and forth
+        self.assertIsNone(pp.trend_of(self.series(100, 1, n=10)))               # too few candles
+
+    def test_bitcoin_correlation(self):
+        import random
+        rnd = random.Random(1)
+        btc, same, own, p, q, r = [], [], [], 100.0, 50.0, 10.0
+        for i in range(400):
+            m = rnd.gauss(0, 0.01)
+            p *= 1 + m
+            q *= 1 + m + rnd.gauss(0, 0.002)
+            r *= 1 + rnd.gauss(0, 0.01)
+            btc.append(bar(i * 3600, p, p, p, p))
+            same.append(bar(i * 3600, q, q, q, q))
+            own.append(bar(i * 3600, r, r, r, r))
+        self.assertGreater(pp.btc_correlation(same, btc), 0.9)
+        self.assertLess(abs(pp.btc_correlation(own, btc)), 0.2)
+        self.assertIsNone(pp.btc_correlation(own[:50], btc))
+
+    async def test_only_with_the_higher_trend_and_with_bitcoin_for_followers(self):
+        bot, c = self.bot, cand("A", 2.0, 20)                       # a long on 15m: the trend comes from 1h
+        self.hist[("A/USDT:USDT", "1h")] = self.series(100, 0, wiggle=2)
+        self.assertFalse(await bot._direction_ok(c, "15m", 1_000_000))
+        self.assertEqual(bot.account["events"][-1]["reason"], "range")
+        self.hist[("A/USDT:USDT", "1h")] = self.series(100, -1)
+        self.assertFalse(await bot._direction_ok(cand("A", 2.0, 20), "15m", 1_000_000))
+        self.assertEqual(bot.account["events"][-1]["reason"], "against")
+        self.hist[("A/USDT:USDT", "1h")] = self.series(100, 1)
+        bot.btc_links["A/USDT:USDT"] = (1_000_000, 0.05)            # independent: its own trend is enough
+        self.assertTrue(await bot._direction_ok(cand("A", 2.0, 20), "15m", 1_000_000))
+        bot.btc_links["A/USDT:USDT"] = (1_000_000, 0.7)             # follows Bitcoin
+        self.hist[("BTC/USDT:USDT", "1h")] = self.series(80_000, 0, wiggle=200)
+        self.assertFalse(await bot._direction_ok(cand("A", 2.0, 20), "15m", 1_000_000))
+        self.assertEqual(bot.account["events"][-1]["reason"], "btcFlat")
+        self.hist[("BTC/USDT:USDT", "1h")] = self.series(80_000, -100)
+        self.assertFalse(await bot._direction_ok(cand("A", 2.0, 20), "15m", 1_000_000))
+        self.assertEqual(bot.account["events"][-1]["reason"], "btcAgainst")
+        self.hist[("BTC/USDT:USDT", "1h")] = self.series(80_000, 100)
+        c = cand("A", 2.0, 20)
+        self.assertTrue(await bot._direction_ok(c, "15m", 1_000_000))
+        self.assertEqual((c["trend"], c["btcLink"], c["btcTrend"]), ("up", 0.7, "up"))
+        # 1h trades read the 4h chart
+        self.hist[("A/USDT:USDT", "4h")] = self.series(100, -1, tf=14400, t0=1_000_000 - 41 * 14400)
+        self.assertFalse(await bot._direction_ok(cand("A", 2.0, 20), "1h", 1_000_000))
+
+    async def test_at_most_six_open_trades(self):
+        bot = self.bot
+        for n in range(6):
+            bot.account["positions"].append(position(id=100 + n, symbol=f"X{n}/USDT:USDT", quantity=0.1,
+                                                     notional=10, margin=2, entryFee=0.006))
+        await bot._open(cand("A", 2.0, 20), "15m", 1_000_000, {"fee_ratio": 0.33})
+        self.assertEqual(len(bot.account["positions"]), 6)
+        self.assertEqual(bot.account["events"][-1]["reason"], "full")
+        self.assertEqual(bot.public()["rules"]["maxOpen"], 6)
+
+    def test_break_even_after_twelve_candles(self):
+        # 5m long at 100, stop 99, target 102, break-even price about 100.12
+        p = position(timeframe="5m", entryCandle=0, checkedFrom=0, breakevenPart=0, breakevenPrice=100.12)
+        flat = [bar(0, 100, 100, 100, 100)] + [bar(300 * i, 99.8, 100.05, 99.6, 99.8) for i in range(1, 13)]
+        self.assertIsNone(pp.check_exit(p, flat, 99.8, 300, now=300 * 13 + 1))
+        self.assertEqual((p["beExit"], p["stop"]), (100.12, 99))           # in loss after 12: aims at break-even
+        flat.append(bar(300 * 13, 99.8, 100.2, 99.7, 100.1))               # comes back to the entry
+        self.assertEqual(pp.check_exit(p, flat, 100.1, 300, now=300 * 14 + 1), (100.12, "timeBe"))
+        q = position(timeframe="5m", entryCandle=0, checkedFrom=0, breakevenPart=0, breakevenPrice=100.12)
+        up = [bar(0, 100, 100, 100, 100)] + [bar(300 * i, 100.5, 100.9, 100.4, 100.6) for i in range(1, 13)]
+        self.assertIsNone(pp.check_exit(q, up, 100.6, 300, now=300 * 13 + 1))
+        self.assertEqual((q["stop"], q.get("beExit")), (100.12, None))     # in profit: the stop to break-even
+        self.assertEqual(pp.trade_outcome({"exitReason": "timeBe", "pnl": -0.001, "notional": 50}), "even")
+        h = position(timeframe="1h", entryCandle=0, checkedFrom=0, breakevenPart=0, breakevenPrice=100.12)
+        hours = [bar(0, 100, 100, 100, 100)] + [bar(3600 * i, 99.8, 100.05, 99.6, 99.8) for i in range(1, 14)]
+        pp.check_exit(h, hours, 99.8, 3600, now=3600 * 14 + 1)
+        self.assertNotIn("beExit", h)                                      # not on 1h (no effect there)
