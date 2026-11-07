@@ -152,7 +152,7 @@ class ServerTest(unittest.TestCase):
         self.assertIsNone(client.post("/api/paper/brain", json={"threshold": None}).json()["rules"]["brainThreshold"])
         self.assertEqual(client.post("/api/paper/brain", json={"threshold": 0.9}).status_code, 400)
         rules = client.get("/api/paper").json()["rules"]
-        self.assertEqual((rules["maxOpen"], rules["maxSameSide"]), (None, None))     # no limits
+        self.assertEqual((rules["maxOpen"], rules["maxSameSide"]), (6, None))     # owner 2026-11-07: at most 6 trades, no side limit
         body = client.post("/api/paper/coins", json={"mode": "manual", "coins": ["ETH/USDT:USDT"]}).json()
         self.assertEqual((body["rules"]["coinMode"], body["rules"]["coins"]), ("manual", ["ETH/USDT:USDT"]))
         self.assertEqual(client.post("/api/paper/coins", json={"mode": "manual", "coins": ["NOPE/USDT:USDT"]}).status_code, 400)
