@@ -83,10 +83,13 @@ jobs:
         run: |
           npm install
           npx tauri icon src-tauri/app-icon.png
-          # The installer tools (WiX / NSIS) are downloaded from GitHub while packaging; that download
-          # sometimes fails (HTTP 504). Try again: the second build only re-packages.
+          # The installer tools are downloaded from GitHub while packaging; that download sometimes
+          # fails (HTTP 504). Windows builds only the NSIS installer (.exe): the MSI needs WiX, whose
+          # download kept failing on 2026-11-09. Try again: the second build only re-packages.
+          BUNDLES=""
+          if [ "$RUNNER_OS" = "Windows" ]; then BUNDLES="--bundles nsis"; fi
           for n in 1 2 3; do
-            npx tauri build && break
+            npx tauri build $BUNDLES && break
             if [ "$n" = 3 ]; then exit 1; fi
             echo "packaging failed, trying again in 60 s"; sleep 60
           done
@@ -95,7 +98,6 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: |
-            frontend/src-tauri/target/release/bundle/msi/*.msi
             frontend/src-tauri/target/release/bundle/nsis/*.exe
             frontend/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
