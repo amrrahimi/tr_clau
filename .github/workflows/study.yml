@@ -1,0 +1,25 @@
+# Owner's study of 2026-11-09 (read-only experiments on Toobit history; changes nothing in the bot).
+name: Study
+on:
+  workflow_dispatch:
+  push:
+    branches: [study-2026-11-09]
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python scripts/study.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: study-report
+          path: backend/study-report.md
