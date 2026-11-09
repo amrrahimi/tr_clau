@@ -608,46 +608,48 @@ button:hover { background: var(--border); }
 
 /* ---------- glass look and moving background (owner 2026-11-09) ---------- */
 :root {
-  --bg: rgba(19, 23, 34, 0.80);
-  --panel: rgba(36, 41, 56, 0.78);
-  --border: rgba(255, 255, 255, 0.09);
-  --glass-blur: blur(22px) saturate(150%);
+  --bg: rgba(14, 18, 30, 0.42);
+  --panel: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.12);
+  --glass-blur: blur(26px) saturate(170%);
 }
-html, body { background: #070a12; }
+html, body { background: #05070d; }
 #app { position: relative; z-index: 1; }
-.scene { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
-  background: radial-gradient(ellipse at 30% 20%, #16203a 0%, #0a0e1a 55%, #05070d 100%); }
+.scene { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: #05070d; }
 .scene canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.scene .aurora { position: absolute; inset: -20%; display: none; filter: blur(60px); opacity: 0.75; }
-.scene[data-mode="galaxy"] canvas { display: block; }
+.scene .aurora { position: absolute; inset: -20%; display: none; filter: blur(50px); }
 .scene[data-mode="aurora"] canvas, .scene[data-mode="matte"] canvas { display: none; }
-.scene[data-mode="aurora"] { background: linear-gradient(180deg, #050915 0%, #0a1426 60%, #0d1a2a 100%); }
+.scene[data-mode="aurora"] { background: linear-gradient(180deg, #040814 0%, #081325 60%, #0b1a28 100%); }
 .scene[data-mode="aurora"] .aurora { display: block; }
-.scene .band { position: absolute; width: 70%; height: 38%; border-radius: 50%; mix-blend-mode: screen; }
-.scene .band.b0 { left: 0%; top: 8%; background: radial-gradient(closest-side, rgba(0, 255, 170, 0.55), transparent); animation: aurora0 26s ease-in-out infinite alternate; }
-.scene .band.b1 { left: 30%; top: 0%; background: radial-gradient(closest-side, rgba(60, 140, 255, 0.5), transparent); animation: aurora1 32s ease-in-out infinite alternate; }
-.scene .band.b2 { left: 15%; top: 28%; background: radial-gradient(closest-side, rgba(170, 80, 255, 0.45), transparent); animation: aurora2 38s ease-in-out infinite alternate; }
-.scene .band.b3 { left: 45%; top: 20%; background: radial-gradient(closest-side, rgba(0, 220, 255, 0.35), transparent); animation: aurora0 44s ease-in-out infinite alternate-reverse; }
+.scene .band { position: absolute; width: 75%; height: 45%; border-radius: 50%; mix-blend-mode: screen; }
+.scene .band.b0 { left: 0%; top: 6%; background: radial-gradient(closest-side, rgba(0, 255, 170, 0.75), transparent); animation: aurora0 22s ease-in-out infinite alternate; }
+.scene .band.b1 { left: 30%; top: 0%; background: radial-gradient(closest-side, rgba(60, 140, 255, 0.7), transparent); animation: aurora1 28s ease-in-out infinite alternate; }
+.scene .band.b2 { left: 12%; top: 30%; background: radial-gradient(closest-side, rgba(170, 80, 255, 0.65), transparent); animation: aurora2 34s ease-in-out infinite alternate; }
+.scene .band.b3 { left: 45%; top: 22%; background: radial-gradient(closest-side, rgba(0, 220, 255, 0.55), transparent); animation: aurora0 40s ease-in-out infinite alternate-reverse; }
 @keyframes aurora0 { from { transform: translate(0, 0) rotate(-8deg) scaleX(1); } to { transform: translate(18%, 6%) rotate(6deg) scaleX(1.3); } }
 @keyframes aurora1 { from { transform: translate(0, 0) rotate(10deg); } to { transform: translate(-20%, 10%) rotate(-6deg) scaleY(1.4); } }
 @keyframes aurora2 { from { transform: translate(0, 0) scale(1); } to { transform: translate(12%, -8%) scale(1.25) rotate(12deg); } }
 @media (prefers-reduced-motion: reduce) { .scene .band { animation: none; } }
 
+/* glass panels: see-through, blurred, a light edge */
 .topbar, .watchlist, .bot-panel, .bot-trades, .bot-consult, .chart-area, .strategy-panel, .scanner-panel {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
 }
-.topbar { background: rgba(19, 23, 34, 0.72); }
-.bot-app .body { gap: 8px; padding: 8px; }
+/* the top bar above the panels, so its menus open over them */
+.topbar { position: relative; z-index: 20; background: rgba(14, 18, 30, 0.35); border-block-end: 1px solid var(--border); }
+.bot-app .body { gap: 10px; padding: 10px; }
 .bot-app .bot-panel, .bot-app .chart-area, .bot-app .bot-consult, .bot-app .bot-trades {
-  border-radius: 16px; border: 1px solid var(--border); background: var(--bg); overflow: hidden;
+  border-radius: 18px; border: 1px solid var(--border); background: var(--bg); overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 30px rgba(0, 0, 0, 0.25);
 }
 .bot-app .bot-panel { overflow-y: auto; }
-.bot-app .chart-column { gap: 8px; display: flex; flex-direction: column; }
-.segmented, .timeframes { border-radius: 10px; }
+.bot-app .chart-column { gap: 10px; display: flex; flex-direction: column; }
+.bot-table thead th { background: transparent; }
+.segmented, .timeframes { border-radius: 10px; background: rgba(255, 255, 255, 0.07); }
 .segmented button, .timeframes button { border-radius: 8px; }
 .chart-eye .eye-list, .chart-eye .eye-toggle, .bg-list { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
-  background: rgba(24, 28, 40, 0.78); border-radius: 12px; }
+  background: rgba(20, 24, 38, 0.6); border-radius: 12px; }
 
 /* the 🎨 menu */
 .bg-menu { position: relative; }

@@ -63,9 +63,9 @@ export class Background {
     const ratio = Math.min(devicePixelRatio || 1, 2);
     this.canvas.width = innerWidth * ratio;
     this.canvas.height = innerHeight * ratio;
-    const count = Math.round(Math.min(260, (innerWidth * innerHeight) / 6000));
+    const count = Math.round(Math.min(420, (innerWidth * innerHeight) / 3500));
     this.stars = Array.from({ length: count }, () => ({
-      x: Math.random(), y: Math.random(), r: (Math.random() ** 3 * 1.6 + 0.3) * ratio,
+      x: Math.random(), y: Math.random(), r: (Math.random() ** 3 * 2 + 0.5) * ratio,
       speed: 0.002 + Math.random() * 0.006, phase: Math.random() * Math.PI * 2, hue: 200 + Math.random() * 80,
     }));
     if (this.choice.mode === "galaxy") this.draw(performance.now());
@@ -95,19 +95,26 @@ export class Background {
     const w = this.canvas.width;
     const h = this.canvas.height;
     c.clearRect(0, 0, w, h);
-    // a faint milky band across the sky
-    const glow = c.createRadialGradient(w * 0.62, h * 0.38, 0, w * 0.62, h * 0.38, Math.max(w, h) * 0.6);
-    glow.addColorStop(0, "rgba(90,70,160,0.20)");
-    glow.addColorStop(0.5, "rgba(40,60,120,0.08)");
-    glow.addColorStop(1, "rgba(0,0,0,0)");
-    c.fillStyle = glow;
-    c.fillRect(0, 0, w, h);
+    // nebulae: soft coloured clouds of light that drift very slowly
+    const drift = now / 1000 / 60;
+    for (const [x, y, r, color] of [
+      [0.25 + 0.03 * Math.sin(drift), 0.3, 0.55, "rgba(120, 70, 220, 0.38)"],
+      [0.75, 0.25 + 0.03 * Math.cos(drift), 0.5, "rgba(40, 110, 230, 0.32)"],
+      [0.6 + 0.02 * Math.cos(drift * 1.3), 0.8, 0.45, "rgba(0, 180, 200, 0.22)"],
+      [0.1, 0.85, 0.35, "rgba(220, 60, 160, 0.18)"],
+    ] as const) {
+      const g = c.createRadialGradient(w * x, h * y, 0, w * x, h * y, Math.max(w, h) * r);
+      g.addColorStop(0, color);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      c.fillStyle = g;
+      c.fillRect(0, 0, w, h);
+    }
     const t = now / 1000;
     for (const s of this.stars) {
       const x = ((s.x + t * s.speed * 0.05) % 1) * w;
       const y = s.y * h;
       const twinkle = 0.55 + 0.45 * Math.sin(t * (1 + s.speed * 200) + s.phase);
-      c.fillStyle = `hsla(${s.hue}, 60%, 85%, ${twinkle})`;
+      c.fillStyle = `hsla(${s.hue}, 70%, 88%, ${twinkle})`;
       c.beginPath();
       c.arc(x, y, s.r, 0, Math.PI * 2);
       c.fill();
