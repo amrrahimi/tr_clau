@@ -133,7 +133,7 @@ async def main() -> int:
                     else:
                         t.add(f"{tf} C POC side: removed", half, own)
                 # D / E: the Value Area's own setups
-                for i in range(LOOK + 1, len(c) - 2):
+                for i in range(LOOK + 2, len(c) - 2):
                     vp = vps[i]
                     k = c[i]
                     half = 0 if k["time"] < mid else 1
