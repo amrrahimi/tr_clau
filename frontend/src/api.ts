@@ -4,7 +4,7 @@
 import type {
   Analysis, Candle, CatalogSpec, ConnectionState, IndicatorInstance, MarketInfo, MarketType, Mode, Options, PaperState, ScanResult, StrategyCard,
   StrategyOverview,
- AiTestResult, ConsultAnswer, IndicatorResult, Trade } from "./types.ts";
+ AiTestResult, ConsultAnswer, IndicatorResult, Trade, AccountMode, AccountState } from "./types.ts";
 
 export interface AnalysisRequest {
   marketType: MarketType;
@@ -87,6 +87,10 @@ export interface Backend {
   /** One strategy on a chart: the lines it reads (drawn on the bot chart) and its trades. */
   runStrategy(symbol: string, timeframe: string, strategy: string): Promise<{ indicators: IndicatorResult[]; trades: Trade[] }>;
   getConnection(): Promise<ConnectionState>;
+  getAccount(): Promise<AccountState>;
+  setAccount(change: { key?: string; secret?: string; mode?: AccountMode; agree_real?: boolean; confirm?: boolean;
+    limits?: { maxMargin?: number; maxLeverage?: number; dailyLoss?: number } }): Promise<AccountState>;
+  accountAction(kind: "test" | "panic" | "resume"): Promise<AccountState>;
   setConnection(proxy: string): Promise<ConnectionState>;
   openLive(request: CandleRequest, handlers: LiveHandlers): LiveConnection;
 }
@@ -182,6 +186,19 @@ export class HttpBackend implements Backend {
 
   async getConnection(): Promise<ConnectionState> {
     return this.getJson<ConnectionState>("/api/connection", {});
+  }
+
+  async getAccount(): Promise<AccountState> {
+    return this.getJson<AccountState>("/api/account", {});
+  }
+
+  /** The owner's real-account settings; the key and secret are sent once and never come back. */
+  async setAccount(change: Parameters<Backend["setAccount"]>[0]): Promise<AccountState> {
+    return this.post<AccountState>("/api/account", change);
+  }
+
+  async accountAction(kind: "test" | "panic" | "resume"): Promise<AccountState> {
+    return this.post<AccountState>(`/api/account/${kind}`, {});
   }
 
   async setConnection(proxy: string): Promise<ConnectionState> {

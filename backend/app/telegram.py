@@ -139,6 +139,8 @@ async def answers(settings: dict, post: Post = default_post) -> list[dict]:
             action, _, rest = str(q.get("data") or "").partition(":")
             if chat == settings["chatId"] and action in ("close", "hold") and rest.isdigit():
                 out.append({"kind": "tap", "action": action, "id": int(rest), "query": str(q.get("id"))})
+            elif chat == settings["chatId"] and action in ("rok", "rno", "panic") and rest.isdigit():
+                out.append({"kind": "real", "action": action, "id": int(rest), "query": str(q.get("id"))})
             continue
         message = update.get("message") or {}
         if (message.get("chat") or {}).get("id") != settings["chatId"]:
@@ -149,6 +151,8 @@ async def answers(settings: dict, post: Post = default_post) -> list[dict]:
             out.append({"kind": "ask", "what": "status"})
         elif text == POSITIONS_BUTTON or command == "/positions":
             out.append({"kind": "ask", "what": "positions"})
+        elif command == "/closeall":
+            out.append({"kind": "ask", "what": "closeall"})
         elif text:
             out.append({"kind": "ask", "what": "start"})   # anything else: show the two buttons again
     return out

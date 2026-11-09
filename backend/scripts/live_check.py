@@ -226,8 +226,24 @@ async def check_paper_bot() -> None:
         await service.close()
 
 
+def report_account_support() -> None:
+    """What ccxt can do with a Toobit account (for the real-account stages); no keys needed to ask."""
+    from app.account import default_factory
+    ex = default_factory("", "")
+    names = ("fetchBalance", "fetchPositions", "fetchOpenOrders", "createOrder", "setLeverage",
+             "createOrderWithTakeProfitAndStopLoss", "createStopLossOrder", "createTakeProfitOrder",
+             "createTriggerOrder", "cancelOrder", "cancelAllOrders", "fetchMyTrades")
+    print("account support (ccxt " + getattr(sys.modules.get("ccxt"), "__version__", "?") + "): "
+          + ", ".join(f"{n}={bool(ex.has.get(n))}" for n in names))
+
+
 async def main() -> int:
     failed = False
+    try:
+        import ccxt  # noqa: F401
+        report_account_support()
+    except Exception as error:
+        print(f"account support: {error!r}")
     for market_type in ("spot", "futures"):
         try:
             await check(market_type)

@@ -439,7 +439,7 @@ button:hover { background: var(--border); }
 
 /* ---------- start screen: Automatic / Semi-automatic ---------- */
 
-.chooser { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 24px; }
+.chooser { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 28px; padding: 24px; overflow-y: auto; }
 .chooser h1 { margin: 0; font-size: 22px; }
 .chooser-cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
 .chooser-card {
@@ -672,3 +672,29 @@ html.see-through, html.see-through body, .scene[data-mode="clear"] { background:
 .leon-mark { display: block; color: var(--text, #fff); }
 .app-name { display: inline-flex; align-items: center; }
 .chooser-brand { display: flex; justify-content: center; margin-bottom: 18px; color: #fff; }
+
+/* the real exchange account (start screen + window from the top-bar chip) */
+.chooser-account { margin-top: 4px; padding: 8px 18px; border-radius: 12px; border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06); color: var(--text); font: inherit; cursor: pointer; }
+.chooser-account:hover { background: rgba(255, 255, 255, 0.12); }
+.chooser-account-box { width: min(560px, 92vw); }
+.account-panel { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 18px; border: 1px solid var(--border);
+  background: var(--bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); text-align: start; }
+.account-title { font-weight: 700; font-size: 16px; }
+.account-keys { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
+.account-keys input, .account-agree input { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--text); font: inherit; }
+.account-agree { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; border-radius: 10px;
+  border: 1px solid var(--down); }
+.account-agree .bot-hint { flex-basis: 100%; }
+.account-modes { flex-wrap: wrap; }
+.account-modes button.active.mode-real { background: var(--down); }
+.account-line { font-size: 13px; }
+.account-row { font-size: 12px; color: var(--muted); direction: ltr; text-align: left; }
+.account-halted { color: var(--down); font-size: 13px; }
+.account-panic { margin-top: 4px; }
+.account-chip.real { border-color: var(--down); color: #ffb3b9; }
+.account-veil { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
+.account-window { position: relative; width: min(560px, 94vw); max-height: 88vh; overflow-y: auto; }
+.account-close { position: absolute; top: 10px; inset-inline-end: 12px; z-index: 1; }
+input.invalid { border-color: var(--down) !important; }

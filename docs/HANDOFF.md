@@ -214,6 +214,19 @@ All 18 strategies, bot fee/reward rules, every signal (no trend/BTC filters), R 
   +0.35 R at market). No gain.
 - Crowd data on Toobit via ccxt: only funding-rate history; funding vs results: no stable effect.
 
+## Real Toobit account (owner approved 2026-11-09 13:50) — BUILT, default off
+backend/app/account.py (ExchangeAccount), settings.json "exchangeAccount" {apiKey, secret, mode, maxMargin,
+maxLeverage, dailyLoss, confirm} (never shown / committed / sent to the AI; the key must have withdrawals off).
+Modes: off / read (balance, positions, orders every 15 s) / shadow (for each paper open: the real order planned from
+1% of the real equity, inside the caps, only recorded in `plans`) / real (needs agree_real; market entry, then
+reduceOnly stopLossPrice + takeProfitPrice orders on the exchange; protection fails -> closed at once and halted;
+paper stop moves -> new exchange stop, old cancelled; paper close -> real reduceOnly close; daily loss cap -> halted
+until the next UTC day; optional Telegram confirm rok:/rno: buttons, 60 s; emergency: app button or Telegram
+/closeall -> panic: close all, cancel all, mode back to read). PaperBot.mirror(open/close/levels) feeds it.
+API: GET/POST /api/account, POST /api/account/test|panic|resume. UI: start screen "🔗 اتصال صرافی" (accountPanel.ts);
+bot / semi screens: top-bar chip only when connected (opens the same panel). Live check prints ccxt's Toobit
+support (has[]) for the private calls. NOT yet tried on a real account (no keys here): start with read, then shadow.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

@@ -2,6 +2,7 @@
 // everything) or Semi-automatic (the screen with charts, indicators,
 // strategies and scanner). The top bar can switch later.
 
+import { accountChip, accountPanel } from "./accountPanel.ts";
 import { leonWordmark } from "./brand.ts";
 import type { Backend } from "./api.ts";
 import { App } from "./app.ts";
@@ -40,8 +41,25 @@ export async function startShell(root: HTMLElement, backend: Backend): Promise<v
   } catch {
     // no session storage: show the chooser
   }
-  const view = next === "auto" || next === "semi" ? next : await choose(root);
+  const view = next === "auto" || next === "semi" ? next : await choose(root, backend);
   await open(root, backend, view);
+  placeAccountChip(backend);
+}
+
+/** The exchange chip in the top bar of whichever screen is open (shown only when an account is connected). */
+function placeAccountChip(backend: Backend): void {
+  const language = loadLanguage();
+  const t = (key: Parameters<typeof translate>[1], values?: Record<string, string>) => translate(language, key, values);
+  const place = () => {
+    const bar = document.querySelector(".topbar");
+    if (!bar || bar.querySelector(".account-chip")) return;
+    const chip = accountChip(backend, t);
+    const lang = bar.querySelector(".bg-menu") ?? bar.querySelector(".lang-button");
+    if (lang) lang.before(chip);
+    else bar.append(chip);
+  };
+  new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
+  place();
 }
 
 /** Switching rebuilds the page from scratch: simplest and nothing old keeps running. */
@@ -59,9 +77,9 @@ async function open(root: HTMLElement, backend: Backend, view: View): Promise<vo
   else await new App(root, backend, () => switchTo("auto")).start();
 }
 
-function choose(root: HTMLElement): Promise<View> {
+function choose(root: HTMLElement, backend: Backend): Promise<View> {
   const language = loadLanguage();
-  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
+  const t = (key: Parameters<typeof translate>[1], values?: Record<string, string>) => translate(language, key, values);
   document.documentElement.lang = language;
   document.documentElement.dir = direction(language);
   return new Promise((resolve) => {
@@ -83,5 +101,17 @@ function choose(root: HTMLElement): Promise<View> {
       card.addEventListener("click", () => resolve(view));
       cards.append(card);
     }
+    // The exchange account is connected here, so the bot screen stays clean (owner 2026-11-09).
+    const connect = document.createElement("button");
+    connect.type = "button";
+    connect.className = "chooser-account";
+    connect.textContent = "🔗 " + t("acc.button");
+    const holder = document.createElement("div");
+    holder.className = "chooser-account-box";
+    connect.addEventListener("click", () => {
+      if (holder.firstChild) holder.replaceChildren();
+      else holder.append(accountPanel(backend, t));
+    });
+    root.querySelector(".chooser")!.append(connect, holder);
   });
 }

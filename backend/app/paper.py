@@ -645,6 +645,8 @@ class PaperBot:
         self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
         self.ai_error: Optional[str] = None  # the last reason Gemini did not answer (for the screen)
         self.ask_timers = True               # open an unanswered question after ASK_AUTO_SECONDS (off in tests)
+        self.real = None                      # the owner's real account (account.ExchangeAccount), set by the server
+        self._real_tasks: set = set()
         self.tg_post = telegram.default_post  # Telegram messages (replaced in tests)
         self.tg_error: Optional[str] = None   # the last reason a Telegram message did not go
         self._tg_tasks: set = set()
@@ -902,6 +904,7 @@ class PaperBot:
         for what, old, new in changes:
             self._event("levels", symbol=p["base"], timeframe=p["timeframe"], what=what, old=old, new=new)
         self.save()
+        self.mirror("levels", p)
         return None
 
     async def close_all_and_stop(self) -> int:
@@ -1195,8 +1198,11 @@ class PaperBot:
 
     async def _watch_positions(self, now: float) -> None:
         for p in list(self.account["positions"]):
+            levels = (p["stop"], p["takeProfit"])
             try:
                 await self._watch_one(p, now)
+                if p in self.account["positions"] and (p["stop"], p["takeProfit"]) != levels:
+                    self.mirror("levels", p)   # lock / break-even moved the stop: on the exchange too
             except asyncio.CancelledError:
                 raise
             except Exception as error:   # e.g. a timeout for this coin: the other positions are still checked
@@ -1320,8 +1326,27 @@ class PaperBot:
             return
         changed = False
         for a in answers:
+            if a["kind"] == "real":
+                if a["action"] in ("rok", "rno") and self.real is not None:
+                    still = any(x["id"] == a["id"] for x in self.account["positions"])
+                    text = await self.real.answer(a["id"], a["action"] == "rok", still)
+                elif a["action"] == "panic" and self.real is not None:
+                    text = await self.real.panic()
+                else:
+                    text = "حساب واقعی وصل نیست."
+                await self._tg_reply(settings, a["query"], text[:180])
+                continue
+            if a["kind"] == "ask" and a["what"] == "closeall":
+                try:
+                    await telegram.send("🛑 همه‌ی پوزیشن‌های واقعی بسته شوند و ربات واقعی متوقف شود؟",
+                                        self.tg_post, settings, buttons=[("بله، همه را ببند", "panic:0")])
+                except telegram.TelegramError as error:
+                    self.tg_error = str(error)
+                continue
             if a["kind"] == "ask":
-                text = telegram.status_text(self._telegram_status()) if a["what"] == "status" else \
+                text = (telegram.status_text(self._telegram_status()) + (
+                    f"\n{self.real.summary_line()}" if self.real is not None and self.real.summary_line() else "")) \
+                    if a["what"] == "status" else \
                     telegram.positions_text(self._telegram_positions(), now) if a["what"] == "positions" else \
                     "با دو دکمه‌ی پایین، وضعیت ربات و پوزیشن‌های باز را بپرس."
                 try:
@@ -1512,6 +1537,29 @@ class PaperBot:
             self.memory.save_trade(trade, now)
         self._event("close", symbol=p["base"], reason=reason, pnl=result)
         self.notify(telegram.closed_text(trade, self.account["balance"]))
+        self.mirror("close", p, reason)
+
+    def mirror(self, what: str, p: dict, reason: str = "") -> None:
+        """The real account follows the paper bot (open / close / levels), in the background."""
+        real = self.real
+        if real is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        call = real.on_open(p, self.prices.get(p["id"])) if what == "open" else \
+            real.on_close(p, reason) if what == "close" else real.on_levels(dict(p))
+
+        async def go() -> None:
+            try:
+                await call
+            except Exception:
+                logging.getLogger("trading_bot").warning("real account %s failed", what, exc_info=True)
+
+        task = loop.create_task(go())
+        self._real_tasks.add(task)
+        task.add_done_callback(self._real_tasks.discard)
 
     def notify(self, text: str, buttons: Optional[list[tuple[str, str]]] = None) -> None:
         """A Telegram message, sent in the background (the bot does not wait for it)."""
@@ -1881,6 +1929,7 @@ class PaperBot:
         self._event("open", symbol=c["base"], side=s["side"], timeframe=tf, strategy=c["strategy"],
                     leverage=size.leverage, entryType=entry_type)
         self.notify(telegram.opened_text(position))
+        self.mirror("open", position)
         if self.memory is not None and c.get("memoryKey"):
             self.memory.mark(c["memoryKey"], taken=True)
         return position

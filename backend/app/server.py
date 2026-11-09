@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import advisor, config, telegram
+from . import account as real_account, advisor, config, telegram
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
@@ -105,10 +105,13 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     store_path = paper_path or default_path()
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
+    real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons))
+    bot.real = real
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        tasks = [asyncio.create_task(bot.run_forever()), asyncio.create_task(bot.telegram_forever())] if run_bot else []
+        tasks = [asyncio.create_task(bot.run_forever()), asyncio.create_task(bot.telegram_forever()),
+                 asyncio.create_task(real.forever())] if run_bot else []
         yield
         for task in tasks:
             task.cancel()
@@ -339,6 +342,42 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             return b.public()
 
     paper_routes("paper", bot)
+
+    # ---- the owner's real Toobit account (owner 2026-11-09): off / read / shadow / real
+    @app.get("/api/account")
+    async def account_state():
+        return real.public()
+
+    @app.post("/api/account")
+    async def account_set(key: Optional[str] = Body(None), secret: Optional[str] = Body(None),
+                          mode: Optional[str] = Body(None), limits: Optional[dict] = Body(None),
+                          confirm: Optional[bool] = Body(None), agree_real: bool = Body(False)):
+        """Key and secret are kept in settings.json on this computer and never sent back."""
+        try:
+            real.set(key, secret, mode, limits, confirm, agree_real)
+        except real_account.AccountError as error:
+            raise HTTPException(400, str(error))
+        return real.public()
+
+    @app.post("/api/account/test")
+    async def account_test():
+        try:
+            return await real.test()
+        except real_account.AccountError as error:
+            raise HTTPException(400, str(error))
+
+    @app.post("/api/account/panic")
+    async def account_panic():
+        try:
+            message = await real.panic()
+        except real_account.AccountError as error:
+            raise HTTPException(400, str(error))
+        return {**real.public(), "message": message}
+
+    @app.post("/api/account/resume")
+    async def account_resume():
+        real.resume()
+        return real.public()
 
     @app.get("/api/connection")
     async def connection_state():
