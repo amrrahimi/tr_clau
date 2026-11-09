@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_DEFAULTS, LINE_GROUPS, loadEye, loadLines, lockPrices, swingLevels, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_DEFAULTS, loadFolds, sectionOpen, LINE_GROUPS, loadEye, loadLines, lockPrices, swingLevels, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import { en } from "../src/locales/en.ts";
 import { fa } from "../src/locales/fa.ts";
@@ -346,4 +346,16 @@ test("line settings: defaults, the owner's saved choices, bad values ignored", (
     assert.notEqual(translate("fa", `lines.${g}` as Parameters<typeof translate>[1]), `lines.${g}`);
     assert.notEqual(translate("en", `lines.${g}` as Parameters<typeof translate>[1]), `lines.${g}`);
   }
+});
+
+test("panel sections: a switched section is open while on; timeframes open; the owner's choice wins", () => {
+  assert.equal(sectionOpen("lock", {}, true), true);
+  assert.equal(sectionOpen("lock", {}, false), false);
+  assert.equal(sectionOpen("timeframes", {}), true);
+  assert.equal(sectionOpen("diary", {}), false);
+  assert.equal(sectionOpen("strategies", {}), false);
+  assert.equal(sectionOpen("lock", { lock: false }, true), false);
+  assert.equal(sectionOpen("diary", { diary: true }), true);
+  assert.deepEqual(loadFolds(() => JSON.stringify({ diary: true, lock: "x" })), { diary: true });
+  assert.deepEqual(loadFolds(() => "{bad"), {});
 });

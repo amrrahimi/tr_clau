@@ -248,6 +248,11 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t(e.what === "target" ? "bot.evTargetMoved" : "bot.evStopMoved", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
         old: formatPrice(e.old ?? 0, digits), new: formatPrice(e.new ?? 0, digits) });
     }
+    case "reviewAsk":
+      return t("bot.event.reviewAsk", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "", pnl: formatMoney(e.pnl) });
+    case "reviewAnswer":
+      return t("bot.event.reviewAnswer", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "",
+        answer: (e as { answer?: string }).answer === "close" ? t("bot.review.answerClose") : t("bot.review.answerHold") });
     case "consult":
       return t("bot.evConsult", { coin: e.symbol ?? "", tf: e.timeframe ?? "",
         answer: e.suggest === "exit" ? t("consult.ai.exit") : e.suggest === "move_stop" ? t("bot.evConsultMove")
@@ -430,6 +435,36 @@ export function loadLines(read: () => string | null = () => localStorage.getItem
 export function saveLines(lines: Record<LineGroup, LineLook>): void {
   try {
     localStorage.setItem(LINES_KEY, JSON.stringify(lines));
+  } catch {
+    // not kept
+  }
+}
+
+/** Sections of the bot's settings panel that open and close. */
+export type PanelSection = "timeframes" | "limit" | "ai" | "tg" | "coins" | "strategies" | "lock" | "review" | "memory"
+  | "brain" | "connection" | "diary";
+const FOLDS_KEY = "bot.sections";
+/** Open at first (owner 2026-11-09): the timeframes; a section with a switch while it is on. */
+const OPEN_FIRST: PanelSection[] = ["timeframes"];
+
+export function sectionOpen(id: PanelSection, folds: Partial<Record<PanelSection, boolean>>, on?: boolean): boolean {
+  if (folds[id] !== undefined) return folds[id]!;
+  if (on !== undefined) return on;
+  return OPEN_FIRST.includes(id);
+}
+
+export function loadFolds(read: () => string | null = () => localStorage.getItem(FOLDS_KEY)): Partial<Record<PanelSection, boolean>> {
+  try {
+    const x = JSON.parse(read() ?? "{}") as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(x).filter(([, v]) => typeof v === "boolean")) as Partial<Record<PanelSection, boolean>>;
+  } catch {
+    return {};
+  }
+}
+
+export function saveFolds(folds: Partial<Record<PanelSection, boolean>>): void {
+  try {
+    localStorage.setItem(FOLDS_KEY, JSON.stringify(folds));
   } catch {
     // not kept
   }

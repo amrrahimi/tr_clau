@@ -85,6 +85,11 @@ BTC_LINK_SECONDS = 86400
 # Step "blocked money" (owner 2026-11-07): after TIME_BE_CANDLES candles a trade still open aims at break-even:
 # in profit, the stop goes to break-even; in loss, it closes when the price comes back to the entry (fees paid).
 # Tested on 5m / 15m: -0.18 -> -0.15 and -0.11 -> -0.09 R, better in both halves (no effect on 1h).
+# Owner 2026-11-09: long positions are looked at again every few minutes (per timeframe, settable). If the
+# trend turned against the position: in profit -> closed at once; in a loss -> the owner is asked on Telegram
+# (close / go on); no answer -> asked again at the next look.
+REVIEW_AFTER_CANDLES = 20
+REVIEW_EVERY = {"1m": 10, "3m": 10, "5m": 15, "15m": 15, "30m": 15, "1h": 15, "4h": 60}   # minutes
 TIME_BE_CANDLES = {"1m": 12, "3m": 12, "5m": 12, "15m": 12}
 
 # Owner's rule: trades on the slow charts take long and move a lot, so they must be much surer.
@@ -550,6 +555,9 @@ def new_account(capital: float, now: float) -> dict:
         "lockEnabled": False,              # owner's option: profit lock (stop moves to lockAt % of the way ...
         "lockTrigger": LOCK_TRIGGER * 100, # ... once the price has gone lockTrigger % of the way to the target)
         "lockAt": LOCK_AT * 100,
+        "reviewEnabled": True,             # owner's option: look again at long positions (REVIEW_*)
+        "reviewAfter": REVIEW_AFTER_CANDLES,
+        "reviewEvery": dict(REVIEW_EVERY),
         "orders": [],                      # limit orders waiting to fill (limitEntry)
         "limitStats": {"placed": 0, "filled": 0, "expired": 0, "cancelled": 0},
         "pausedUntil": None,
@@ -691,6 +699,8 @@ class PaperBot:
             "btc": self.btc_state,
             "telegram": {**telegram.public(), "lastError": self.tg_error},
             "limitEntry": a.get("limitEntry", False),
+            "review": {"enabled": a.get("reviewEnabled", True), "after": a.get("reviewAfter", REVIEW_AFTER_CANDLES),
+                       "every": {**REVIEW_EVERY, **(a.get("reviewEvery") or {})}},
             "orders": [{k: o[k] for k in ("id", "symbol", "base", "timeframe", "strategy", "side", "price",
                                           "placedPrice", "placedAt", "expires", "stopLoss", "takeProfit", "margin")}
                        for o in a.get("orders", [])],
@@ -765,7 +775,8 @@ class PaperBot:
         self._cancel_orders("limit_cancelled", "reset")
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
-                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt")
+                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt",
+                                              "reviewEnabled", "reviewAfter", "reviewEvery")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -1007,6 +1018,7 @@ class PaperBot:
             if now - self.btc_state.get("time", 0) >= 300:
                 await self._btc_view(now)
             await self._watch_orders(now)
+            await self._telegram_answers(now)
             await self._watch_positions(now)
             equity = self.equity()
             self._track_drawdown(equity)
@@ -1210,8 +1222,98 @@ class PaperBot:
             hit = (last, "cap")   # owner's profit cap: take the small profit now
         if hit:
             self._close(p, hit[0], hit[1], now)
+        elif self._review_due(p, now):
+            await self._review(p, last, now)
         elif self.profile.advice and p.get("advice") is None and self._half_way(p, last):
             await self._advise(p, now)
+
+    # ---- the timed look at long positions (owner 2026-11-09)
+
+    def _review_due(self, p: dict, now: float) -> bool:
+        a = self.account
+        if not a.get("reviewEnabled", True):
+            return False
+        tf = p["timeframe"]
+        after = (a.get("reviewAfter") or REVIEW_AFTER_CANDLES) * config.TIMEFRAME_SECONDS[tf]
+        every = ({**REVIEW_EVERY, **(a.get("reviewEvery") or {})}.get(tf) or 15) * 60
+        last = (p.get("review") or {}).get("time")
+        return now - p["entryTime"] >= after and (last is None or now - last >= every)
+
+    async def _review(self, p: dict, price: float, now: float) -> None:
+        """The trend turned against the position? First the bot's own rule (the higher timeframe's trend, or
+        this chart trending the other way); only then Gemini is asked (if there are keys) to confirm.
+        Then: in profit -> closed now; in a loss -> the owner decides on Telegram (close / go on)."""
+        long_ = p["side"] == LONG
+        higher = await self._trend(p["symbol"], p["timeframe"], now)
+        _, _, _, state = await self._bot_opinion(p, now)
+        against = (higher == "down" if long_ else higher == "up") or \
+                  (state == "trend_down" if long_ else state == "trend_up")
+        review = {"time": now, "price": price, "higher": higher, "state": state, "against": against,
+                  "ai": None, "decision": "hold"}
+        p["review"] = review
+        if not against:
+            return
+        if self.ai_keys():
+            answer = await self.consult(p["id"])
+            action = ((answer or {}).get("ai") or {}).get("action")
+            review["ai"] = action
+            if action is not None and action != "exit":
+                return   # the AI sees no reason to leave: the position goes on
+        if p not in self.account["positions"]:
+            return
+        result = pnl(p, price, self.fees.taker)[0]
+        why = self._review_words(higher, state)
+        if result > 0:
+            review["decision"] = "close"
+            self._close(p, price, "review", now)
+            return
+        review["decision"] = "ask"
+        p["reviewAsk"] = {"time": now, "price": price, "answer": None}
+        self._event("reviewAsk", symbol=p["base"], timeframe=p["timeframe"], pnl=result)
+        self.notify(telegram.closing_text(p, why, price) + f"\nدر ضرر است ({result:+.2f}$): ببندم یا ادامه بدهم؟",
+                    buttons=[("ببند", f"close:{p['id']}"), ("ادامه", f"hold:{p['id']}")])
+
+    @staticmethod
+    def _review_words(higher: Optional[str], state: Optional[str]) -> str:
+        if higher in ("up", "down"):
+            return f"روند تایم‌فریم بالاتر {'صعودی' if higher == 'up' else 'نزولی'} شد"
+        return f"حالت بازار: {state}"
+
+    async def _telegram_answers(self, now: float) -> None:
+        """The owner's buttons on Telegram: close / go on, for a position asked about in a loss."""
+        settings = telegram.load()
+        if not (settings["enabled"] and settings["token"] and settings["chatId"] is not None):
+            return
+        if now - getattr(self, "_tg_polled", 0) < 3:
+            return
+        self._tg_polled = now
+        try:
+            answers = await telegram.answers(settings, self.tg_post)
+        except telegram.TelegramError as error:
+            self.tg_error = str(error)
+            return
+        for action, position_id, query_id in answers:
+            p = next((x for x in self.account["positions"] if x["id"] == position_id), None)
+            if p is None:
+                await self._tg_reply(settings, query_id, "این پوزیشن دیگر باز نیست.")
+                continue
+            if action == "close":
+                price = self.prices.get(p["id"], p["entryPrice"])
+                self._close(p, price, "review", now)
+                await self._tg_reply(settings, query_id, "بسته شد.")
+            else:
+                if p.get("reviewAsk"):
+                    p["reviewAsk"]["answer"] = "hold"
+                await self._tg_reply(settings, query_id, "ادامه می‌دهد.")
+            self._event("reviewAnswer", symbol=p["base"], timeframe=p["timeframe"], answer=action)
+        if answers:
+            self.save()
+
+    async def _tg_reply(self, settings: dict, query_id: str, text: str) -> None:
+        try:
+            await telegram.reply(settings, query_id, text, self.tg_post)
+        except telegram.TelegramError:
+            pass
 
     async def _candles_since(self, item: dict, symbol: str, tf: str, since: int) -> tuple[list[dict], Optional[int]]:
         """The candles from `since` on. Normally the last 60 are enough; after the bot was not watching
@@ -1373,7 +1475,7 @@ class PaperBot:
         self._event("close", symbol=p["base"], reason=reason, pnl=result)
         self.notify(telegram.closed_text(trade, self.account["balance"]))
 
-    def notify(self, text: str) -> None:
+    def notify(self, text: str, buttons: Optional[list[tuple[str, str]]] = None) -> None:
         """A Telegram message, sent in the background (the bot does not wait for it)."""
         settings = telegram.load()
         if not (settings["enabled"] and settings["token"] and settings["chatId"] is not None):
@@ -1385,7 +1487,7 @@ class PaperBot:
 
         async def go() -> None:
             try:
-                await telegram.send(text, self.tg_post, settings)
+                await telegram.send(text, self.tg_post, settings, buttons)
                 self.tg_error = None
             except telegram.TelegramError as error:
                 self.tg_error = str(error)
@@ -1740,6 +1842,7 @@ class PaperBot:
         self._count("opened")
         self._event("open", symbol=c["base"], side=s["side"], timeframe=tf, strategy=c["strategy"],
                     leverage=size.leverage, entryType=entry_type)
+        self.notify(telegram.opened_text(position))
         if self.memory is not None and c.get("memoryKey"):
             self.memory.mark(c["memoryKey"], taken=True)
         return position
@@ -1751,6 +1854,22 @@ class PaperBot:
         self.account["lockEnabled"] = bool(enabled)
         self.account["lockTrigger"] = float(trigger)
         self.account["lockAt"] = float(at)
+        self.save()
+
+    def set_review(self, enabled: Optional[bool] = None, after: Optional[int] = None,
+                   every: Optional[dict] = None) -> None:
+        """Owner's look at long positions: on/off, after how many candles, every how many minutes per timeframe."""
+        a = self.account
+        if enabled is not None:
+            a["reviewEnabled"] = bool(enabled)
+        if after is not None:
+            a["reviewAfter"] = max(1, min(500, int(after)))
+        if every:
+            merged = {**REVIEW_EVERY, **(a.get("reviewEvery") or {})}
+            for tf, minutes in every.items():
+                if tf in REVIEW_EVERY and minutes is not None:
+                    merged[tf] = max(1, min(1440, int(minutes)))
+            a["reviewEvery"] = merged
         self.save()
 
     def set_limit_entry(self, enabled: bool) -> None:

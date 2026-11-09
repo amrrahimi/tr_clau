@@ -5,11 +5,33 @@
 import type { Backend } from "./api.ts";
 import { App } from "./app.ts";
 import { BotApp, type View } from "./botApp.ts";
+import { Background, backgroundButton } from "./background.ts";
 import { direction, loadLanguage, translate } from "./i18n.ts";
 
 const SWITCH_KEY = "trading-bot.switchTo"; // set just before a reload that switches the screen
 
+/** The moving background and its 🎨 button in whichever top bar is on screen (screens rebuild their bar). */
+function startBackground(): void {
+  const bg = new Background();
+  const place = () => {
+    const bar = document.querySelector(".topbar");
+    if (!bar || bar.querySelector(".bg-menu")) return;
+    const language = loadLanguage();
+    const button = backgroundButton(bg, (key) => translate(language, key));
+    const lang = bar.querySelector(".lang-button");
+    if (lang) lang.before(button);
+    else bar.append(button);
+  };
+  new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
+  place();
+}
+
 export async function startShell(root: HTMLElement, backend: Backend): Promise<void> {
+  try {
+    startBackground();
+  } catch {
+    // the plain dark background
+  }
   let next: string | null = null;
   try {
     next = sessionStorage.getItem(SWITCH_KEY);

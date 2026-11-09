@@ -114,7 +114,7 @@ export class ChartView {
     this.chart = createChart(container, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: THEME.background },
+        background: { type: ColorType.Solid, color: "rgba(19, 23, 34, 0.72)" },   // glass: the background shows a little
         textColor: THEME.text,
         fontFamily: "Vazirmatn, Tahoma, -apple-system, Segoe UI, sans-serif",
       },

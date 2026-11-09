@@ -587,6 +587,21 @@ export const en = {
   "bot.tg.testOk": "Test message sent.",
   "bot.tg.error": "Telegram: {error}",
   "bot.tg.what": "A message for every closed position (and later, when the bot wants to close because the trend turned).",
+  "bot.review.title": "Look again at long positions",
+  "bot.review.after": "Start after (candles)",
+  "bot.review.every": "Every (minutes) on {tf}",
+  "bot.review.hint": "If the trend turned against the position: in profit it closes at once; in a loss you are asked on Telegram (close / go on). No answer: asked again next time.",
+  "bot.tg.short.on": "connected",
+  "bot.tg.short.noChat": "no chat yet",
+  "bot.reason.review": "trend turned (timed look)",
+  "bot.event.reviewAsk": "{symbol} {timeframe}: trend turned, in a loss ({pnl}$) — asked on Telegram",
+  "bot.event.reviewAnswer": "{symbol} {timeframe}: your Telegram answer: {answer}",
+  "bg.title": "Background",
+  "bg.galaxy": "Galaxy",
+  "bg.aurora": "Aurora",
+  "bg.matte": "Matte colour",
+  "bot.review.answerClose": "close",
+  "bot.review.answerHold": "go on",
 } as const;
 
 export type MessageKey = keyof typeof en;

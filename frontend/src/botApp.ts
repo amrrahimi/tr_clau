@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME, type BoxDecor, type Level } from "./chart.ts";
-import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_GROUPS, loadEye, loadLines, saveLines, type LineGroup, type LineLook, type LineStyleName, lockPrices, saveEye, swingLevels, type EyeGroup, formatR, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_GROUPS, loadFolds, saveFolds, sectionOpen, type PanelSection, loadEye, loadLines, saveLines, type LineGroup, type LineLook, type LineStyleName, lockPrices, saveEye, swingLevels, type EyeGroup, formatR, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -536,7 +536,10 @@ export class BotApp {
   /** Companion-timeframe candles for support / resistance, and strategy lines, by key, with their time. */
   private companion = new Map<string, { time: number; candles: Candle[] }>();
   private strategyLines = new Map<string, { time: number; indicators: IndicatorResult[] }>();
-  private tgTest: string | null = null;   // the last Telegram test's words
+  private tgTest: string | null = null;
+  /** The owner's open / close choice of each panel section (this computer), and which switches were on. */
+  private folds: Partial<Record<PanelSection, boolean>> = loadFolds();
+  private wasOn: Partial<Record<PanelSection, boolean>> = {};   // the last Telegram test's words
   private consults = new Map<number, ConsultAnswer>();
   private consulting = new Set<number>();
   /** The consult window open (full answers) or folded to one line, so the chart gets its room back. */
@@ -821,6 +824,12 @@ export class BotApp {
       return e;
     };
 
+    const heading = (id: PanelSection, text: string) => {
+      const h = el("div", "list-heading", text);
+      h.dataset.section = id;
+      return h;
+    };
+
     parts.push(el("div", "section-title", t("bot.title")));
     // Start / Stop.
     const running = s.status === "running";
@@ -967,7 +976,7 @@ export class BotApp {
         line.append(box, name);
         list.append(line);
       }
-      parts.push(el("div", "list-heading", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
+      parts.push(heading("timeframes", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
     }
 
     // Limit entry (paper only): on/off, the waiting orders, market vs limit results.
@@ -980,7 +989,7 @@ export class BotApp {
         });
         onOff.append(b);
       }
-      parts.push(el("div", "list-heading", t("bot.limit.title")), onOff, el("div", "bot-hint", t("bot.limit.hint", {
+      parts.push(heading("limit", t("bot.limit.title")), onOff, el("div", "bot-hint", t("bot.limit.hint", {
         offset: String(s.rules.limitOffset ?? 10), maker: String(s.rules.fees.maker), taker: String(s.rules.fees.taker),
       })));
       const orders = s.orders ?? [];
@@ -1037,7 +1046,7 @@ export class BotApp {
         });
         onOff.append(b);
       }
-      parts.push(el("div", "list-heading", t("bot.ai.title")), onOff);
+      parts.push(heading("ai", t("bot.ai.title")), onOff);
       const tfs = el("div", "bot-timeframes");
       for (const tf of s.timeframes) {
         const line = el("label", "");
@@ -1117,7 +1126,7 @@ export class BotApp {
         b.addEventListener("click", () => void this.telegram(() => this.backend.setTelegram({ enabled: on })));
         onOff.append(b);
       }
-      parts.push(el("div", "list-heading", t("bot.tg.title")), el("div", "bot-hint", t("bot.tg.what")), onOff);
+      parts.push(heading("tg", t("bot.tg.title")), onOff, el("div", "bot-hint", t("bot.tg.what")));
       const tokenBox = el("div", "bot-capital");
       const input = document.createElement("input");
       input.type = "password";
@@ -1168,7 +1177,7 @@ export class BotApp {
         });
         modes.append(b);
       }
-      parts.push(el("div", "list-heading", t("bot.coins.title")), modes);
+      parts.push(heading("coins", t("bot.coins.title")), modes);
       if (coinMode === "manual" || this.coinManualOpen) {
         const chips = el("div", "bot-coin-chips");
         for (const symbol of mine) {
@@ -1232,7 +1241,7 @@ export class BotApp {
       });
       modes.append(b);
     }
-    parts.push(el("div", "list-heading", t("bot.strategies")), modes);
+    parts.push(heading("strategies", t("bot.strategies")), modes);
     if (s.mode === "manual") {
       const list = el("div", "bot-strategies");
       const stats = s.strategyStats ?? {};
@@ -1344,7 +1353,7 @@ export class BotApp {
         void this.act({ kind: "lock", enabled: lock.enabled, trigger, at });
       });
       box.append(el("label", "", t("bot.lock.trigger")), triggerInput, el("label", "", t("bot.lock.at")), atInput, save);
-      parts.push(el("div", "list-heading", t("bot.lock.title")), onOff, box,
+      parts.push(heading("lock", t("bot.lock.title")), onOff, box,
         el("div", "bot-hint", t("bot.lock.hint", { trigger: String(lock.trigger), at: String(lock.at) })));
     }
 
@@ -1429,7 +1438,7 @@ export class BotApp {
 
     // The bot's memory: experience kept forever (not cleared by "start again").
     if (s.memory) {
-      parts.push(el("div", "list-heading", t("bot.memory")));
+      parts.push(heading("memory", t("bot.memory")));
       parts.push(el("div", "bot-hint", t("bot.memoryLine", {
         signals: String(s.memory.signals), ended: String(s.memory.ended), wins: String(s.memory.wins),
         losses: String(s.memory.losses), trades: String(s.memory.trades),
@@ -1439,7 +1448,7 @@ export class BotApp {
 
     // The bot's brain: the learning filter.
     if (s.brain) {
-      parts.push(el("div", "list-heading", t("bot.brain")));
+      parts.push(heading("brain", t("bot.brain")));
       parts.push(el("div", "bot-hint", brainText(s.brain, t)));
       const pre = s.brain.pretrain;
       if (pre && pre.total && (pre.running || pre.done < pre.total)) {
@@ -1453,7 +1462,7 @@ export class BotApp {
     // Connection to the exchange: direct, the computer's proxy, or one typed here (VPN in proxy mode).
     if (this.connection) {
       const c = this.connection;
-      parts.push(el("div", "list-heading", t("bot.connection")));
+      parts.push(heading("connection", t("bot.connection")));
       parts.push(el("div", "bot-hint", c.source === "direct" ? t("bot.conn.direct")
         : t(c.source === "app" ? "bot.conn.app" : "bot.conn.system", { proxy: c.proxy ?? "" })));
       const box = el("div", "bot-capital");
@@ -1477,8 +1486,49 @@ export class BotApp {
       parts.push(box, el("div", "bot-hint", t("bot.conn.hint")));
     }
 
+    // The timed look at long positions (owner 2026-11-09): on/off, after how many candles, minutes per timeframe.
+    if (s.review) {
+      const review = s.review;
+      const onOff = el("div", "segmented small");
+      for (const on of [true, false]) {
+        const b = el("button", review.enabled === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+        b.addEventListener("click", () => {
+          if (review.enabled !== on) void this.act({ kind: "review", enabled: on });
+        });
+        onOff.append(b);
+      }
+      const box = el("div", "bot-review");
+      const field = (value: number, max: number, send: (n: number) => void) => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "1";
+        input.max = String(max);
+        input.value = String(value);
+        input.dir = "ltr";
+        input.addEventListener("change", () => {
+          const n = Math.round(Number(input.value));
+          if (!(n >= 1 && n <= max)) {
+            input.classList.add("invalid");
+            return;
+          }
+          input.classList.remove("invalid");
+          send(n);
+        });
+        return input;
+      };
+      const after = el("label", "bot-review-row", t("bot.review.after"));
+      after.append(field(review.after, 500, (n) => void this.act({ kind: "review", after: n })));
+      box.append(after);
+      for (const tf of Object.keys(review.every)) {
+        const row = el("label", "bot-review-row", t("bot.review.every", { tf }));
+        row.append(field(review.every[tf], 1440, (n) => void this.act({ kind: "review", every: { [tf]: n } })));
+        box.append(row);
+      }
+      parts.push(heading("review", t("bot.review.title")), onOff, el("div", "bot-hint", t("bot.review.hint")), box);
+    }
+
     // The bot's diary.
-    parts.push(el("div", "list-heading", t("bot.diary")));
+    parts.push(heading("diary", t("bot.diary")));
     const diary = el("ul", "bot-diary");
     for (const e of s.events.slice(0, 12)) {
       const li = el("li", e.kind);
@@ -1489,7 +1539,62 @@ export class BotApp {
     }
     if (!s.events.length) diary.append(el("li", "muted", t("bot.diaryEmpty")));
     parts.push(diary);
-    panel.replaceChildren(...parts);
+    const on: Partial<Record<PanelSection, boolean>> = {
+      limit: !!s.limitEntry, ai: !!s.ai?.enabled, tg: !!(s.telegram?.enabled && s.telegram.token),
+      lock: !!s.rules.lock?.enabled, review: !!s.review?.enabled,
+    };
+    const trouble: Partial<Record<PanelSection, boolean>> = { ai: !!s.ai?.lastError && !!s.ai.enabled,
+      tg: !!s.telegram?.lastError && !!s.telegram.enabled };
+    const summary: Partial<Record<PanelSection, string>> = {
+      timeframes: (s.chosenTimeframes ?? []).join(" · "),
+      lock: s.rules.lock?.enabled ? `${s.rules.lock.trigger}٪ / ${s.rules.lock.at}٪` : "",
+      tg: s.telegram?.token ? t(s.telegram.chat ? "bot.tg.short.on" : "bot.tg.short.noChat") : "",
+    };
+    panel.replaceChildren(...this.foldSections(parts, on, trouble, summary));
+  }
+
+  /** The panel's sections can be opened / closed (owner 2026-11-09). A section with an on/off switch is open
+   * while it is on; while off only its title and switch show, ▸ opens it to look. Turning it on opens it.
+   * The owner's own open / close choice is kept on this computer; an error opens its section. */
+  private foldSections(parts: HTMLElement[], on: Partial<Record<PanelSection, boolean>>,
+    trouble: Partial<Record<PanelSection, boolean>>, summary: Partial<Record<PanelSection, string>>): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    let n = 0;
+    while (n < parts.length) {
+      const h = parts[n];
+      const id = h.dataset.section as PanelSection | undefined;
+      if (!id) {
+        out.push(h);
+        n += 1;
+        continue;
+      }
+      const body: HTMLElement[] = [];
+      n += 1;
+      while (n < parts.length && !parts[n].dataset.section) body.push(parts[n++]);
+      const switched = id in on;
+      if (switched && this.wasOn[id] === false && on[id]) delete this.folds[id];   // just turned on: open
+      if (switched) this.wasOn[id] = !!on[id];
+      const open = trouble[id] || sectionOpen(id, this.folds, on[id]);
+      const section = document.createElement("section");
+      section.className = `panel-section${open ? " open" : ""}`;
+      const head = document.createElement("button");
+      head.className = "panel-section-head";
+      head.append(Object.assign(document.createElement("span"), { className: "fold", textContent: open ? "▾" : "▸" }),
+        Object.assign(document.createElement("span"), { textContent: h.textContent ?? "" }));
+      if (!open && summary[id]) head.append(Object.assign(document.createElement("span"), { className: "fold-summary", textContent: summary[id]! }));
+      head.addEventListener("click", () => {
+        this.folds[id] = !open;
+        saveFolds(this.folds);
+        this.renderPanel();
+      });
+      section.append(head);
+      // The on/off switch stays in view while the section is closed.
+      const toggle = switched ? body.find((e) => e.classList.contains("segmented")) : undefined;
+      if (open) section.append(...body);
+      else if (toggle) section.append(toggle);
+      out.push(section);
+    }
+    return out;
   }
 
   private renderTrades(): void {

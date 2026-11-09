@@ -20,7 +20,8 @@ TIMEOUT_SECONDS = 20.0
 Post = Callable[[str, dict], Awaitable[tuple[int, str]]]
 
 REASONS = {"target": "حد سود", "stop": "حد ضرر", "breakeven": "سربه‌سر", "lock": "قفل سود",
-           "timeBe": "سربه‌سر زمانی", "manual": "بستن دستی", "gap": "گپ قیمت", "trend": "تغییر روند"}
+           "timeBe": "سربه‌سر زمانی", "manual": "بستن دستی", "gap": "گپ قیمت", "trend": "تغییر روند",
+           "review": "تغییر روند (بررسی دوره‌ای)", "cap": "سقف سود"}
 
 
 class TelegramError(Exception):
@@ -99,11 +100,46 @@ async def find_chat(token: str, post: Post) -> Optional[int]:
     return None
 
 
-async def send(text: str, post: Post = default_post, settings: Optional[dict] = None) -> None:
+async def send(text: str, post: Post = default_post, settings: Optional[dict] = None,
+               buttons: Optional[list[tuple[str, str]]] = None) -> None:
+    """buttons: (label, data) shown under the message; the owner's tap comes back through answers()."""
     t = settings or load()
     if t["chatId"] is None:
         raise TelegramError("no chat")
-    await _call(t["token"], "sendMessage", {"chat_id": t["chatId"], "text": text}, post)
+    body: dict = {"chat_id": t["chatId"], "text": text}
+    if buttons:
+        body["reply_markup"] = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]}
+    await _call(t["token"], "sendMessage", body, post)
+
+
+# The last update read (so each tap is handled once); kept in memory, Telegram forgets read updates.
+_offset: dict[str, int] = {}
+
+
+async def answers(settings: dict, post: Post = default_post) -> list[tuple[str, int, str]]:
+    """The owner's taps since the last look: (action "close"|"hold", position id, query id).
+    Only taps from the owner's own chat count."""
+    body: dict = {"timeout": 0, "allowed_updates": ["callback_query", "message"]}
+    if settings["token"] in _offset:
+        body["offset"] = _offset[settings["token"]]
+    answer = await _call(settings["token"], "getUpdates", body, post)
+    out = []
+    for update in answer.get("result") or []:
+        _offset[settings["token"]] = int(update.get("update_id", 0)) + 1
+        q = update.get("callback_query")
+        if not q:
+            continue
+        chat = ((q.get("message") or {}).get("chat") or {}).get("id")
+        action, _, rest = str(q.get("data") or "").partition(":")
+        if chat != settings["chatId"] or action not in ("close", "hold") or not rest.isdigit():
+            continue
+        out.append((action, int(rest), str(q.get("id"))))
+    return out
+
+
+async def reply(settings: dict, query_id: str, text: str, post: Post = default_post) -> None:
+    """A short note on the owner's tap (shown at the top of Telegram)."""
+    await _call(settings["token"], "answerCallbackQuery", {"callback_query_id": query_id, "text": text}, post)
 
 
 async def test(post: Post = default_post) -> dict:
@@ -146,3 +182,12 @@ def closing_text(p: dict, why: str, price: Optional[float]) -> str:
     side = "لانگ" if p.get("side") == "long" else "شورت"
     at = f"\nقیمت فعلی: {price}" if price is not None else ""
     return f"⚠️ روند عوض شد، ربات می‌خواهد ببندد: {p.get('base')} {p.get('timeframe')} {side}\nدلیل: {why}{at}"
+
+
+def opened_text(p: dict) -> str:
+    """Short (owner 2026-11-09): position, state, price."""
+    side = "لانگ" if p.get("side") == "long" else "شورت"
+    kind = "لیمیت پر شد" if p.get("entryType") == "limit" else "ورود بازار"
+    return (f"🔵 پوزیشن باز شد: {p.get('base')} {p.get('timeframe')} {side}\n"
+            f"وضعیت: {kind} · اهرم {p.get('leverage')}x\n"
+            f"قیمت: {p.get('entryPrice')} · حد ضرر {p.get('stopLoss')} · حد سود {p.get('takeProfit')}")

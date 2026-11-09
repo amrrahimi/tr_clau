@@ -119,7 +119,7 @@ export interface Trade {
   takeProfit: number;
   exitTime: number | null; // null while open
   exitPrice: number | null;
-  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | "lock" | "timeBe" | null;
+  exitReason: "target" | "stop" | "breakeven" | "time" | "manual" | "cap" | "lock" | "timeBe" | "review" | null;
   breakevenTime: number | null; // when the stop moved to the entry price
   result: "win" | "loss" | "breakeven" | "open";
   pnlPercent: number | null; // after fees
@@ -245,7 +245,7 @@ export interface PaperPosition {
 export interface PaperTrade extends PaperPosition {
   exitPrice: number;
   exitTime: number;
-  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap" | "lock" | "timeBe";
+  exitReason: "target" | "stop" | "breakeven" | "manual" | "cap" | "lock" | "timeBe" | "review";
   pnl: number; // USDT after fees
   fees: number;
   pnlPercent: number; // of the margin
@@ -253,7 +253,7 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice"
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice" | "reviewAsk" | "reviewAnswer"
     | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult";
   start?: number; // blind: from when the bot did not see the prices (seconds)
   end?: number;   // blind: until when
@@ -402,6 +402,7 @@ export interface PaperState {
   /** What happened to the signals in the last minutes (skipped: reason -> count). */
   flow?: { minutes: number; seen: number; opened: number; placed?: number; skipped: Record<string, number> };
   limitEntry?: boolean;                 // the owner's switch: enter with limit orders (paper only)
+  review?: { enabled: boolean; after: number; every: Record<string, number> };
   telegram?: { token: boolean; tokenHint: string; chat: boolean; enabled: boolean; lastError: string | null };
   btc?: { time?: number; "1h"?: "up" | "down" | "range" | null; "4h"?: "up" | "down" | "range" | null };
   orders?: PaperOrder[];                // limit orders waiting to fill

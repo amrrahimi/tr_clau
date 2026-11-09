@@ -266,6 +266,13 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             advisor.save_keys(keys)
             return b.public()
 
+        @app.post(f"/api/{prefix}/review")
+        async def paper_review(enabled: Optional[bool] = Body(None), after: Optional[int] = Body(None),
+                               every: Optional[dict] = Body(None)):
+            """Owner's timed look at long positions: on/off, after how many candles, minutes per timeframe."""
+            b.set_review(enabled, after, every)
+            return b.public()
+
         @app.post(f"/api/{prefix}/telegram")
         async def paper_telegram(token: Optional[str] = Body(None), enabled: Optional[bool] = Body(None)):
             """The owner's Telegram bot: token (kept in settings.json on this computer, never sent back) and on/off.

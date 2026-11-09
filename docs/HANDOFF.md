@@ -180,6 +180,21 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
   botApp: positions of the coin drawn on any chart timeframe (times snapped to its candles), strategy lines via
   /api/strategies/run (cached 2 min), companion candles cached 2 min, «توضیحات» button in the consult bar.
 
+## Built 2026-11-09 (owner approved 09:51)
+- Timed look at long positions (paper.py REVIEW_AFTER_CANDLES 20, REVIEW_EVERY minutes per TF 1m/3m 10, 5m-1h 15,
+  4h 60; account reviewEnabled / reviewAfter / reviewEvery, POST /api/paper/review). `_review`: against = higher-TF
+  trend against the side, or this TF's market state trending against; then Gemini (consult) if keys — any action
+  but "exit" keeps it. In profit -> closed, reason "review". In a loss -> `reviewAsk` + Telegram message with
+  buttons close:<id> / hold:<id>; `_telegram_answers` (each step, every 3 s) reads taps (only the owner's chat),
+  answers them; no answer -> asked again at the next look.
+- Telegram open message (short: position, state, price), sent from `_new_position` (limit orders only when filled).
+- Panel sections fold (botView PanelSection / sectionOpen / loadFolds, localStorage "bot.sections"): switched
+  sections (limit, ai, tg, lock, review) open while on, closed shows title + switch; turning on opens; errors open;
+  timeframes open; others (incl. diary) closed. Advice / start / status always shown.
+- Glass look + background (src/background.ts): galaxy canvas (stars, ~25 fps, stops when hidden / reduced motion),
+  aurora (CSS bands), matte colour; 🎨 button before the language button in any top bar; localStorage "ui.background".
+  Chart background rgba 0.72.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.
 2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.

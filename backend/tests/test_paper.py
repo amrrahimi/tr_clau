@@ -1587,3 +1587,103 @@ class TelegramTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("−1.50$", text)
         self.assertIn("-1.50R", text)
         self.assertIn("شورت", text)
+
+
+class ReviewTest(TelegramTest):
+    """Owner 2026-11-09: long positions looked at again (per timeframe); trend turned -> in profit closed,
+    in a loss the owner decides on Telegram (close / go on); the open message is short."""
+    # only the set-up of TelegramTest, not its tests
+    test_test_finds_chat_and_close_sends_message = test_nothing_sent_without_chat_or_when_off = None
+    test_test_without_start_says_so = test_closed_text_loss = None
+
+    async def asyncSetUp(self):
+        tg.save(token="123:ABC", chatId=42, enabled=True)
+        self.trend = "down"
+        self.state = None
+
+        async def trend(symbol, tf, now):
+            return self.trend
+
+        async def opinion(p, now):
+            return "hold", "fine", "", self.state
+        self.bot._trend = trend
+        self.bot._bot_opinion = opinion
+        self.bot.ai_keys = lambda: []
+        await self.bot._open(cand("A", 2.0, 20), "15m", 1_000_000, {"fee_ratio": 0.33})
+        await asyncio.gather(*list(self.bot._tg_tasks))
+        self.p = self.bot.account["positions"][0]
+
+    async def flush(self):
+        await asyncio.gather(*list(self.bot._tg_tasks))
+
+    async def test_open_message_is_short(self):
+        text = self.sent[-1][1]["text"]
+        self.assertIn("باز شد", text)
+        self.assertIn(str(self.p["entryPrice"]), text)
+        self.assertNotIn("سود:", text)
+
+    def test_due_after_20_candles_then_every_15_minutes(self):
+        start = self.p["entryTime"]
+        self.assertFalse(self.bot._review_due(self.p, start + 19 * 900))
+        self.assertTrue(self.bot._review_due(self.p, start + 20 * 900))
+        self.p["review"] = {"time": start + 20 * 900}
+        self.assertFalse(self.bot._review_due(self.p, start + 20 * 900 + 14 * 60))
+        self.assertTrue(self.bot._review_due(self.p, start + 20 * 900 + 15 * 60))
+        self.bot.set_review(enabled=False)
+        self.assertFalse(self.bot._review_due(self.p, start + 99 * 900))
+        self.bot.set_review(enabled=True, after=5, every={"15m": 30, "1d": 9, "4h": 0})
+        self.assertEqual(self.bot.public()["review"]["every"]["15m"], 30)
+        self.assertEqual(self.bot.public()["review"]["every"]["4h"], 1)     # at least one minute
+        self.assertNotIn("1d", self.bot.public()["review"]["every"])
+        self.assertEqual(self.bot.public()["review"]["after"], 5)
+
+    async def test_trend_turned_in_profit_closes(self):
+        await self.bot._review(self.p, self.p["entryPrice"] * 1.01, 2_000_000)
+        await self.flush()
+        self.assertFalse(self.bot.account["positions"])
+        self.assertEqual(self.bot.account["closed"][-1]["exitReason"], "review")
+        self.assertIn("بررسی دوره‌ای", self.sent[-1][1]["text"])
+
+    async def test_trend_same_way_goes_on(self):
+        self.trend = "up"
+        await self.bot._review(self.p, self.p["entryPrice"] * 1.01, 2_000_000)
+        self.assertEqual(len(self.bot.account["positions"]), 1)
+        self.assertFalse(self.p["review"]["against"])
+
+    async def test_ai_says_hold_goes_on(self):
+        self.bot.ai_keys = lambda: ["k"]
+
+        async def consult(position_id):
+            return {"ai": {"action": "hold"}}
+        self.bot.consult = consult
+        await self.bot._review(self.p, self.p["entryPrice"] * 1.01, 2_000_000)
+        self.assertEqual(len(self.bot.account["positions"]), 1)
+        self.assertEqual(self.p["review"]["ai"], "hold")
+
+    async def test_loss_asks_on_telegram_then_buttons(self):
+        await self.bot._review(self.p, self.p["entryPrice"] * 0.995, 2_000_000)
+        await self.flush()
+        self.assertEqual(len(self.bot.account["positions"]), 1)
+        body = self.sent[-1][1]
+        self.assertIn("ببندم یا ادامه", body["text"])
+        datas = [b["callback_data"] for b in body["reply_markup"]["inline_keyboard"][0]]
+        self.assertEqual(datas, [f"close:{self.p['id']}", f"hold:{self.p['id']}"])
+
+        taps = [{"update_id": 7, "callback_query": {"id": "q1", "data": f"hold:{self.p['id']}", "message": {"chat": {"id": 42}}}},
+                {"update_id": 8, "callback_query": {"id": "q2", "data": f"close:{self.p['id']}", "message": {"chat": {"id": 99}}}}]
+
+        async def post(url, body):
+            self.sent.append((url, body))
+            if url.endswith("/getUpdates"):
+                return 200, json.dumps({"ok": True, "result": taps if "offset" not in body else []})
+            return 200, json.dumps({"ok": True, "result": True})
+        self.bot.tg_post = post
+        tg._offset.clear()
+        await self.bot._telegram_answers(3_000_000)
+        self.assertEqual(len(self.bot.account["positions"]), 1)        # hold; the other chat's tap is ignored
+        self.assertEqual(self.p["reviewAsk"]["answer"], "hold")
+        taps[:] = [{"update_id": 9, "callback_query": {"id": "q3", "data": f"close:{self.p['id']}", "message": {"chat": {"id": 42}}}}]
+        tg._offset.clear()
+        await self.bot._telegram_answers(3_000_010)
+        self.assertFalse(self.bot.account["positions"])
+        self.assertEqual(self.bot.account["closed"][-1]["exitReason"], "review")
