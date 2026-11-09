@@ -89,6 +89,7 @@ BTC_LINK_SECONDS = 86400
 # trend turned against the position: in profit -> closed at once; in a loss -> the owner is asked on Telegram
 # (close / go on); no answer -> asked again at the next look.
 REVIEW_AFTER_CANDLES = 20
+TELEGRAM_POLL_SECONDS = 3.0
 REVIEW_EVERY = {"1m": 10, "3m": 10, "5m": 15, "15m": 15, "30m": 15, "1h": 15, "4h": 60}   # minutes
 TIME_BE_CANDLES = {"1m": 12, "3m": 12, "5m": 12, "15m": 12}
 
@@ -1018,7 +1019,6 @@ class PaperBot:
             if now - self.btc_state.get("time", 0) >= 300:
                 await self._btc_view(now)
             await self._watch_orders(now)
-            await self._telegram_answers(now)
             await self._watch_positions(now)
             equity = self.equity()
             self._track_drawdown(equity)
@@ -1279,20 +1279,58 @@ class PaperBot:
             return f"روند تایم‌فریم بالاتر {'صعودی' if higher == 'up' else 'نزولی'} شد"
         return f"حالت بازار: {state}"
 
+    async def telegram_forever(self) -> None:
+        """Reads the owner's Telegram messages every few seconds while the app is open, also while the bot
+        is stopped: the fixed buttons (status, open positions) and the close / go-on taps."""
+        while True:
+            try:
+                await self._telegram_answers(self.now())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.getLogger("trading_bot").warning("telegram round failed", exc_info=True)
+            await asyncio.sleep(TELEGRAM_POLL_SECONDS)
+
+    def _telegram_status(self) -> dict:
+        a = self.account
+        equity = self.equity()
+        return {"status": a["status"], "pauseReason": a.get("pauseReason"), "equity": equity, "capital": a["capital"],
+                "today": equity - (a.get("dayStartEquity") or equity), "open": len(a["positions"]),
+                "orders": len(a.get("orders") or []), "btc": self.btc_state, "lock": a.get("lockEnabled", False),
+                "review": a.get("reviewEnabled", True)}
+
+    def _telegram_positions(self) -> list[dict]:
+        rows = []
+        for p in self.account["positions"]:
+            price = self.prices.get(p["id"])
+            rows.append({**p, "price": price, "pnl": pnl(p, price, self.fees.taker)[0] if price is not None else None,
+                         "risk": p.get("openRisk") or p["risk"]})
+        return rows
+
     async def _telegram_answers(self, now: float) -> None:
-        """The owner's buttons on Telegram: close / go on, for a position asked about in a loss."""
+        """The owner's messages on Telegram: the two fixed buttons, and close / go on for a position asked
+        about in a loss."""
         settings = telegram.load()
         if not (settings["enabled"] and settings["token"] and settings["chatId"] is not None):
             return
-        if now - getattr(self, "_tg_polled", 0) < 3:
-            return
-        self._tg_polled = now
         try:
             answers = await telegram.answers(settings, self.tg_post)
         except telegram.TelegramError as error:
             self.tg_error = str(error)
             return
-        for action, position_id, query_id in answers:
+        changed = False
+        for a in answers:
+            if a["kind"] == "ask":
+                text = telegram.status_text(self._telegram_status()) if a["what"] == "status" else \
+                    telegram.positions_text(self._telegram_positions(), now) if a["what"] == "positions" else \
+                    "با دو دکمه‌ی پایین، وضعیت ربات و پوزیشن‌های باز را بپرس."
+                try:
+                    await telegram.send_menu(text, settings, self.tg_post)
+                except telegram.TelegramError as error:
+                    self.tg_error = str(error)
+                continue
+            action, position_id, query_id = a["action"], a["id"], a["query"]
+            changed = True
             p = next((x for x in self.account["positions"] if x["id"] == position_id), None)
             if p is None:
                 await self._tg_reply(settings, query_id, "این پوزیشن دیگر باز نیست.")
@@ -1306,7 +1344,7 @@ class PaperBot:
                     p["reviewAsk"]["answer"] = "hold"
                 await self._tg_reply(settings, query_id, "ادامه می‌دهد.")
             self._event("reviewAnswer", symbol=p["base"], timeframe=p["timeframe"], answer=action)
-        if answers:
+        if changed:
             self.save()
 
     async def _tg_reply(self, settings: dict, query_id: str, text: str) -> None:

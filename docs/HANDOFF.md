@@ -187,6 +187,9 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
   but "exit" keeps it. In profit -> closed, reason "review". In a loss -> `reviewAsk` + Telegram message with
   buttons close:<id> / hold:<id>; `_telegram_answers` (each step, every 3 s) reads taps (only the owner's chat),
   answers them; no answer -> asked again at the next look.
+- Telegram fixed keyboard (2026-11-09 11:28): «📊 وضعیت ربات» / «📈 پوزیشن‌های باز» or /status /positions; read by
+  PaperBot.telegram_forever (server lifespan task, every 3 s, also while the bot is stopped); taps close/hold too.
+- Chart opens zoomed on the position (botApp.zoomToPosition: 30 candles before entry, 8 after exit or the last).
 - Telegram open message (short: position, state, price), sent from `_new_position` (limit orders only when filled).
 - Panel sections fold (botView PanelSection / sectionOpen / loadFolds, localStorage "bot.sections"): switched
   sections (limit, ai, tg, lock, review) open while on, closed shows title + switch; turning on opens; errors open;

@@ -147,6 +147,32 @@ export class Background {
 
   /** A natural aurora: a night sky with stars, curtains of light whose rays rise from a bright green
    * lower edge into purple / red, waving slowly, and a dark line of hills at the bottom. */
+  private strips = new Map<string, HTMLCanvasElement>();
+
+  /** One ray's colours from its lower edge (left of the list) up (right), made once. */
+  private strip(kind: "green" | "magenta" | "violet"): HTMLCanvasElement {
+    const ready = this.strips.get(kind);
+    if (ready) return ready;
+    const stops: Record<typeof kind, [number, string][]> = {
+      green: [[0, "rgba(200,255,220,0.95)"], [0.06, "rgba(70,255,150,0.85)"], [0.4, "rgba(30,210,130,0.45)"],
+        [0.7, "rgba(150,70,220,0.35)"], [0.9, "rgba(230,60,160,0.2)"], [1, "rgba(230,60,160,0)"]],
+      magenta: [[0, "rgba(255,190,240,0.9)"], [0.08, "rgba(255,80,190,0.8)"], [0.45, "rgba(200,60,220,0.5)"],
+        [0.8, "rgba(120,60,230,0.25)"], [1, "rgba(90,40,200,0)"]],
+      violet: [[0, "rgba(220,190,255,0.85)"], [0.1, "rgba(160,90,255,0.75)"], [0.5, "rgba(110,70,240,0.4)"],
+        [0.85, "rgba(230,70,170,0.2)"], [1, "rgba(230,70,170,0)"]],
+    };
+    const strip = document.createElement("canvas");
+    strip.width = 1;
+    strip.height = 256;
+    const s = strip.getContext("2d")!;
+    const grad = s.createLinearGradient(0, 256, 0, 0);   // bottom -> top
+    for (const [at, color] of stops[kind]) grad.addColorStop(at, color);
+    s.fillStyle = grad;
+    s.fillRect(0, 0, 1, 256);
+    this.strips.set(kind, strip);
+    return strip;
+  }
+
   private drawAurora(c: CanvasRenderingContext2D, now: number): void {
     const w = this.canvas.width;
     const h = this.canvas.height;
@@ -163,10 +189,10 @@ export class Background {
       c.fillStyle = `rgba(220, 235, 255, ${twinkle * 0.8})`;
       c.fillRect(s.x * w, s.y * h * 0.85, s.r, s.r);
     }
-    // the curtains, drawn on a small canvas and stretched (soft, cheap)
+    // the curtains: drawn at half size from ready-made colour strips (cheap), then stretched and softened
     const g = this.glow;
-    const gw = Math.max(80, Math.round(w / 4));
-    const gh = Math.max(60, Math.round(h / 4));
+    const gw = Math.max(160, Math.round(w / 2));
+    const gh = Math.max(100, Math.round(h / 2));
     if (g.width !== gw || g.height !== gh) {
       g.width = gw;
       g.height = gh;
@@ -176,9 +202,10 @@ export class Background {
     a.clearRect(0, 0, gw, gh);
     a.globalCompositeOperation = "lighter";
     const curtains = [
-      { base: 0.58, amp: 0.10, len: 0.42, speed: 0.05, freq: 1.6, phase: 0, power: 0.9 },
-      { base: 0.46, amp: 0.08, len: 0.32, speed: -0.035, freq: 2.3, phase: 2.1, power: 0.6 },
-      { base: 0.66, amp: 0.06, len: 0.26, speed: 0.07, freq: 3.1, phase: 4.2, power: 0.45 },
+      { base: 0.60, amp: 0.10, len: 0.46, speed: 0.05, freq: 1.6, phase: 0, power: 0.85, strip: this.strip("green") },
+      { base: 0.47, amp: 0.08, len: 0.36, speed: -0.035, freq: 2.3, phase: 2.1, power: 0.75, strip: this.strip("magenta") },
+      { base: 0.36, amp: 0.07, len: 0.30, speed: 0.03, freq: 1.2, phase: 3.3, power: 0.7, strip: this.strip("violet") },
+      { base: 0.68, amp: 0.06, len: 0.28, speed: 0.07, freq: 3.1, phase: 4.2, power: 0.45, strip: this.strip("green") },
     ];
     for (const k of curtains) {
       for (let x = 0; x < gw; x += 1) {
@@ -187,29 +214,25 @@ export class Background {
         const y0 = gh * (k.base + k.amp * Math.sin(u * Math.PI * k.freq + t * k.speed * 6 + k.phase)
           + 0.03 * Math.sin(u * 17 + t * 0.4 + k.phase));
         // rays: bright and dim vertical streaks that drift sideways and flicker
-        const ray = 0.55 + 0.45 * Math.sin(u * 90 + t * 0.9 + k.phase) * Math.sin(u * 37 - t * 0.6)
+        const ray = 0.55 + 0.45 * Math.sin(u * 140 + t * 0.9 + k.phase) * Math.sin(u * 53 - t * 0.6)
           * (0.7 + 0.3 * Math.sin(t * 1.7 + u * 11));
-        const fade = Math.sin(Math.PI * Math.min(1, Math.max(0, (u - 0.02) / 0.96)));   // the curtain thins at its ends
+        const fade = Math.sin(Math.PI * Math.min(1, Math.max(0, (u - 0.02) / 0.96)));   // thinner at its ends
         const strength = Math.max(0, ray) * fade * k.power;
         if (strength < 0.03) continue;
         const len = gh * k.len * (0.7 + 0.5 * ray);
-        const col = a.createLinearGradient(0, y0, 0, y0 - len);
-        col.addColorStop(0, `rgba(170, 255, 200, ${0.9 * strength})`);
-        col.addColorStop(0.08, `rgba(60, 255, 140, ${0.75 * strength})`);
-        col.addColorStop(0.55, `rgba(30, 200, 120, ${0.35 * strength})`);
-        col.addColorStop(0.8, `rgba(140, 60, 200, ${0.18 * strength})`);
-        col.addColorStop(1, "rgba(200, 40, 90, 0)");
-        a.fillStyle = col;
-        a.fillRect(x, y0 - len, 1.2, len + 1.5);
+        a.globalAlpha = Math.min(1, strength);
+        a.drawImage(k.strip, x, y0 - len, 1.3, len + 2);
       }
     }
+    a.globalAlpha = 1;
     a.globalCompositeOperation = "source-over";
     c.save();
     c.globalCompositeOperation = "lighter";
-    c.filter = "blur(6px)";
+    c.imageSmoothingQuality = "high";
+    c.filter = `blur(${Math.round(w / 300)}px)`;
     c.drawImage(g, 0, 0, w, h);
     c.filter = "none";
-    c.globalAlpha = 0.55;
+    c.globalAlpha = 0.5;
     c.drawImage(g, 0, 0, w, h);   // a sharper copy on top: the rays stay visible
     c.restore();
     // dark hills at the bottom

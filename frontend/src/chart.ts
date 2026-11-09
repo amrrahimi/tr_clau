@@ -239,6 +239,11 @@ export class ChartView {
     this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, count - INITIAL_VISIBLE), to: count + 5 });
   }
 
+  /** Show candles from..to (by their place in the list); past the last one is empty space on the right. */
+  showRange(from: number, to: number): void {
+    this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, from), to });
+  }
+
   /** Older candles were put in front: redraw without moving what the user is looking at. */
   prependCandles(candles: Candle[], added: number): void {
     const range = this.chart.timeScale().getVisibleLogicalRange();

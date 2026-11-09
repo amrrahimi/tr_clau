@@ -108,7 +108,7 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        tasks = [asyncio.create_task(bot.run_forever())] if run_bot else []
+        tasks = [asyncio.create_task(bot.run_forever()), asyncio.create_task(bot.telegram_forever())] if run_bot else []
         yield
         for task in tasks:
             task.cancel()

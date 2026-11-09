@@ -1687,3 +1687,44 @@ class ReviewTest(TelegramTest):
         await self.bot._telegram_answers(3_000_010)
         self.assertFalse(self.bot.account["positions"])
         self.assertEqual(self.bot.account["closed"][-1]["exitReason"], "review")
+
+
+
+class TelegramAskTest(TelegramTest):
+    """Owner 2026-11-09: the fixed buttons «وضعیت ربات» / «پوزیشن‌های باز» (or /status, /positions) answer,
+    also while the bot is stopped; only the owner's chat."""
+    test_test_finds_chat_and_close_sends_message = test_nothing_sent_without_chat_or_when_off = None
+    test_test_without_start_says_so = test_closed_text_loss = None
+
+    async def ask(self, text, chat=42):
+        updates = [{"update_id": 50, "message": {"chat": {"id": chat}, "text": text}}]
+
+        async def post(url, body):
+            self.sent.append((url, body))
+            if url.endswith("/getUpdates"):
+                return 200, json.dumps({"ok": True, "result": updates if "offset" not in body else []})
+            return 200, json.dumps({"ok": True, "result": True})
+        self.bot.tg_post = post
+        tg._offset.clear()
+        self.sent.clear()
+        await self.bot._telegram_answers(1_000_600)
+        return [b for u, b in self.sent if u.endswith("/sendMessage")]
+
+    async def test_status_and_positions(self):
+        tg.save(token="123:ABC", chatId=42, enabled=True)
+        await self.bot._open(cand("A", 2.0, 20), "15m", 1_000_000, {"fee_ratio": 0.33})
+        self.bot.prices[self.bot.account["positions"][0]["id"]] = 101
+        sent = await self.ask(tg.STATUS_BUTTON)
+        self.assertIn("موجودی", sent[0]["text"])
+        self.assertIn("پوزیشن باز: 1", sent[0]["text"])
+        self.assertEqual(sent[0]["reply_markup"], tg.KEYBOARD)
+        sent = await self.ask("/positions")
+        self.assertIn("A 15m لانگ", sent[0]["text"])
+        self.assertIn("R)", sent[0]["text"])
+        self.assertIn("باز از 10 دقیقه", sent[0]["text"])
+        self.assertEqual(await self.ask("/status", chat=99), [])   # someone else's chat: no answer
+        sent = await self.ask("سلام")
+        self.assertIn("دو دکمه", sent[0]["text"])
+
+    def test_no_positions(self):
+        self.assertEqual(tg.positions_text([], 0), "هیچ پوزیشن بازی نیست.")

@@ -19,6 +19,10 @@ const POLL_MS = 5000;
 
 export type View = "auto" | "semi";
 
+/** The chart opens on the position: this many candles before its entry, this much room after. */
+const ZOOM_BEFORE = 30;
+const ZOOM_AFTER = 8;
+
 export class BotApp {
   private language: Language = loadLanguage();
   private zone = loadZone();
@@ -256,6 +260,7 @@ export class BotApp {
       this.chart.setCandles(candles);
       this.els.chartMessage.hidden = true;
       this.drawTrades();
+      this.zoomToPosition();
       this.live = this.backend.openLive(request, {
         onCandle: (candle) => {
           if (id !== this.chartId) return;
@@ -269,6 +274,24 @@ export class BotApp {
   }
 
   /** Arrows and boxes of the bot's trades on the coin and timeframe shown. */
+  /** Owner 2026-11-09: the chart opens zoomed in on the position (its entry and what came after, with about
+   * 30 candles before it and some room on the right), not on hundreds of older candles. */
+  private zoomToPosition(): void {
+    if (!this.target || !this.state || !this.candles.length) return;
+    const open = this.state.positions.filter((p) => p.symbol === this.target!.symbol);
+    const p = open.find((x) => x.id === this.target!.id) ?? open[open.length - 1]
+      ?? this.state.closed.find((x) => x.id === this.target!.id && x.symbol === this.target!.symbol);
+    if (!p) return;
+    const at = candleStart(p.entryTime, this.target.timeframe);
+    const last = this.candles.length - 1;
+    let idx = this.candles.findIndex((c) => c.time >= at);
+    if (idx < 0) idx = last;
+    const exitTime = "exitTime" in p ? (p.exitTime as number | null) : null;
+    const exit = exitTime ? this.candles.findIndex((c) => c.time >= candleStart(exitTime, this.target!.timeframe)) : -1;
+    const end = exit >= 0 ? exit : last;
+    this.chart.showRange(idx - ZOOM_BEFORE, end + ZOOM_AFTER);
+  }
+
   private drawTrades(): void {
     if (!this.state || !this.target || !this.candles.length) return;
     const symbol = this.target.symbol;

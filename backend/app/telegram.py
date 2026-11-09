@@ -116,25 +116,48 @@ async def send(text: str, post: Post = default_post, settings: Optional[dict] = 
 _offset: dict[str, int] = {}
 
 
-async def answers(settings: dict, post: Post = default_post) -> list[tuple[str, int, str]]:
-    """The owner's taps since the last look: (action "close"|"hold", position id, query id).
-    Only taps from the owner's own chat count."""
+STATUS_BUTTON = "📊 وضعیت ربات"
+POSITIONS_BUTTON = "📈 پوزیشن‌های باز"
+KEYBOARD = {"keyboard": [[{"text": STATUS_BUTTON}, {"text": POSITIONS_BUTTON}]], "resize_keyboard": True,
+            "is_persistent": True}
+
+
+async def answers(settings: dict, post: Post = default_post) -> list[dict]:
+    """What the owner sent since the last look, from his own chat only:
+    {"kind": "tap", "action": "close"|"hold", "id": position id, "query": query id} for a button under a message,
+    {"kind": "ask", "what": "status"|"positions"|"start"} for the two fixed buttons or /status, /positions, /start."""
     body: dict = {"timeout": 0, "allowed_updates": ["callback_query", "message"]}
     if settings["token"] in _offset:
         body["offset"] = _offset[settings["token"]]
     answer = await _call(settings["token"], "getUpdates", body, post)
-    out = []
+    out: list[dict] = []
     for update in answer.get("result") or []:
         _offset[settings["token"]] = int(update.get("update_id", 0)) + 1
         q = update.get("callback_query")
-        if not q:
+        if q:
+            chat = ((q.get("message") or {}).get("chat") or {}).get("id")
+            action, _, rest = str(q.get("data") or "").partition(":")
+            if chat == settings["chatId"] and action in ("close", "hold") and rest.isdigit():
+                out.append({"kind": "tap", "action": action, "id": int(rest), "query": str(q.get("id"))})
             continue
-        chat = ((q.get("message") or {}).get("chat") or {}).get("id")
-        action, _, rest = str(q.get("data") or "").partition(":")
-        if chat != settings["chatId"] or action not in ("close", "hold") or not rest.isdigit():
+        message = update.get("message") or {}
+        if (message.get("chat") or {}).get("id") != settings["chatId"]:
             continue
-        out.append((action, int(rest), str(q.get("id"))))
+        text = str(message.get("text") or "").strip()
+        command = text.split()[0].split("@")[0].lower() if text else ""
+        if text == STATUS_BUTTON or command == "/status":
+            out.append({"kind": "ask", "what": "status"})
+        elif text == POSITIONS_BUTTON or command == "/positions":
+            out.append({"kind": "ask", "what": "positions"})
+        elif text:
+            out.append({"kind": "ask", "what": "start"})   # anything else: show the two buttons again
     return out
+
+
+async def send_menu(text: str, settings: dict, post: Post = default_post) -> None:
+    """A message with the two fixed buttons under the chat."""
+    await _call(settings["token"], "sendMessage", {"chat_id": settings["chatId"], "text": text,
+                                                   "reply_markup": KEYBOARD}, post)
 
 
 async def reply(settings: dict, query_id: str, text: str, post: Post = default_post) -> None:
@@ -191,3 +214,47 @@ def opened_text(p: dict) -> str:
     return (f"🔵 پوزیشن باز شد: {p.get('base')} {p.get('timeframe')} {side}\n"
             f"وضعیت: {kind} · اهرم {p.get('leverage')}x\n"
             f"قیمت: {p.get('entryPrice')} · حد ضرر {p.get('stopLoss')} · حد سود {p.get('takeProfit')}")
+
+
+STATES = {"running": "🟢 روشن", "stopped": "⚪️ خاموش", "paused": "⏸ متوقف", "halted": "🛑 متوقف (حد ضرر کل)"}
+TRENDS = {"up": "صعودی", "down": "نزولی", "range": "رنج", None: "نامعلوم"}
+
+
+def status_text(s: dict) -> str:
+    """The owner asked "how is the bot?" (s: what the bot shows on its panel)."""
+    state = STATES.get(s.get("status"), str(s.get("status")))
+    if s.get("status") == "paused" and s.get("pauseReason"):
+        state += f" ({s['pauseReason']})"
+    total = s["equity"] - s["capital"]
+    btc = s.get("btc") or {}
+    lines = [f"وضعیت: {state}",
+             f"موجودی: {s['equity']:.2f}$ · نتیجه‌ی کل: {_money(total)}",
+             f"امروز: {_money(s.get('today') or 0.0)}",
+             f"پوزیشن باز: {s['open']} · سفارش لیمیت منتظر: {s['orders']}",
+             f"بیت‌کوین: ۱ ساعته {TRENDS.get(btc.get('1h'), '؟')} · ۴ ساعته {TRENDS.get(btc.get('4h'), '؟')}",
+             f"قفل سود: {'روشن' if s.get('lock') else 'خاموش'} · بررسی دوره‌ای: {'روشن' if s.get('review') else 'خاموش'}"]
+    return "\n".join(lines)
+
+
+def positions_text(rows: list[dict], now: float) -> str:
+    """Each open position: coin, timeframe, side, strategy; entry and price now; result now in $ and R;
+    stop and target; lock / break-even; how long it has been open."""
+    if not rows:
+        return "هیچ پوزیشن بازی نیست."
+    out = []
+    for p in rows:
+        side = "لانگ" if p["side"] == "long" else "شورت"
+        price = p.get("price")
+        result = p.get("pnl")
+        risk = p.get("risk") or 0
+        r = f" ({result / risk:+.2f}R)" if result is not None and risk else ""
+        mark = "🟢" if (result or 0) > 0 else "🔴" if (result or 0) < 0 else "⚪️"
+        extra = " · 🔒 قفل سود" if p.get("lockedAt") else " · سربه‌سر" if p.get("breakevenAt") else ""
+        hours = max(0.0, now - p["entryTime"]) / 3600
+        age = f"{hours * 60:.0f} دقیقه" if hours < 1 else f"{hours:.1f} ساعت" if hours < 48 else f"{hours / 24:.1f} روز"
+        out.append(f"{mark} {p['base']} {p['timeframe']} {side} · {p['strategy']}\n"
+                   f"ورود {p['entryPrice']} ← الان {price if price is not None else '؟'}: "
+                   f"{_money(result) if result is not None else '؟'}{r}\n"
+                   f"حد ضرر {p['stop']} · حد سود {p['takeProfit']}{extra}\n"
+                   f"باز از {age} پیش")
+    return "\n\n".join(out)
