@@ -180,6 +180,12 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
   botApp: positions of the coin drawn on any chart timeframe (times snapped to its candles), strategy lines via
   /api/strategies/run (cached 2 min), companion candles cached 2 min, «توضیحات» button in the consult bar.
 
+## Owner's ideas to remember (2026-11-09, not built; owner will say when)
+1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.
+2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.
+3. Telegram messages: each closed position, and each position the bot wants to close because the trend changed
+   (token and chat id entered in the app, kept only in ~/.trading-bot/settings.json).
+
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
    (short) / support (long) against it between signal and entry.
