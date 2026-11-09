@@ -602,6 +602,8 @@ export const en = {
   "bg.matte": "Matte colour",
   "bot.review.answerClose": "close",
   "bot.review.answerHold": "go on",
+  "bg.clear": "See-through (desktop)",
+  "bg.glass": "Panels",
 } as const;
 
 export type MessageKey = keyof typeof en;

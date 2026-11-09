@@ -193,7 +193,10 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
   timeframes open; others (incl. diary) closed. Advice / start / status always shown.
 - Glass look + background (src/background.ts): galaxy canvas (stars, ~25 fps, stops when hidden / reduced motion),
   aurora (CSS bands), matte colour; 🎨 button before the language button in any top bar; localStorage "ui.background".
-  Chart background rgba 0.72.
+  Chart background transparent. 2026-11-09 10:31: natural aurora drawn on the canvas (curtains of rays, stars,
+  hills); 4th mode "clear" (desktop app only): window transparent (tauri.conf transparent + macOSPrivateApi,
+  Cargo feature macos-private-api, window-vibrancy 0.6, command set_glass: macOS vibrancy HudWindow, Windows
+  Mica -> acrylic -> blur, only while chosen); slider 0-90% = panels' opacity (--glass-alpha).
 
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.

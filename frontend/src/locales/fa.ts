@@ -604,4 +604,6 @@ export const fa: Record<MessageKey, string> = {
   "bg.matte": "رنگ مات",
   "bot.review.answerClose": "ببند",
   "bot.review.answerHold": "ادامه",
+  "bg.clear": "شفاف (صفحه‌ی کامپیوتر)",
+  "bg.glass": "پنل‌ها",
 };
