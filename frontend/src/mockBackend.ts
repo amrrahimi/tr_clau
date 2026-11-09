@@ -8,7 +8,7 @@ import { MOCK_CATALOG } from "./mockCatalog.ts";
 import { MOCK_STRATEGIES } from "./mockStrategies.ts";
 import type {
   Analysis, CatalogSpec, Candle, ConnectionState, IndicatorInstance, IndicatorResult, MarketInfo, MarketState, MarketType, Options,
-  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade, AiTestResult, ConsultAnswer } from "./types.ts";
+  PaperPosition, PaperState, PaperTrade, ScanEntry, ScanResult, ScanSignal, StrategyCard, StrategyOverview, StrategyRow, Trade, AiTestResult, ConsultAnswer, AccountState } from "./types.ts";
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -212,6 +212,33 @@ export class MockBackend implements Backend {
     const state = await this.getPaper();
     if (state.telegram?.token) state.telegram.chat = true;
     return state;
+  }
+
+  private account: AccountState = { mode: "off", key: false, keyHint: "", maxMargin: 10, maxLeverage: 5, dailyLoss: 5,
+    confirm: true, error: null, refreshed: null, halted: null, waiting: 0, capabilities: {}, plans: [], dayStart: null,
+    snapshot: {} };
+
+  async getAccount(): Promise<AccountState> {
+    return this.account;
+  }
+
+  async setAccount(change: Parameters<Backend["setAccount"]>[0]): Promise<AccountState> {
+    if (change.key !== undefined) this.account = { ...this.account, key: !!change.key, keyHint: change.key ? "…" + change.key.slice(-4) : "" };
+    if (change.mode) {
+      if (change.mode === "real" && !change.agree_real) throw new Error("agree_real");
+      this.account = { ...this.account, mode: change.mode };
+    }
+    if (change.confirm !== undefined) this.account = { ...this.account, confirm: change.confirm };
+    if (change.limits) this.account = { ...this.account, ...Object.fromEntries(Object.entries(change.limits).filter(([, v]) => v !== undefined)) };
+    return this.account;
+  }
+
+  async accountAction(kind: "test" | "panic" | "resume"): Promise<AccountState> {
+    if (kind === "test") this.account = { ...this.account, refreshed: Date.now() / 1000,
+      snapshot: { total: 120.5, free: 100, used: 20.5, positions: [], orders: [] } };
+    if (kind === "panic") this.account = { ...this.account, mode: "read", halted: "emergency", message: "0" };
+    if (kind === "resume") this.account = { ...this.account, halted: null };
+    return this.account;
   }
 
   private connection: ConnectionState = { proxy: null, source: "direct", typed: "" };

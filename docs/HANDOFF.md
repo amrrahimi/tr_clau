@@ -201,7 +201,64 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
   Cargo feature macos-private-api, window-vibrancy 0.6, command set_glass: macOS vibrancy HudWindow, Windows
   Mica -> acrylic -> blur, only while chosen); slider 0-90% = panels' opacity (--glass-alpha).
 
+## Study of 2026-11-09 (branch study-2026-11-09, workflow "Study", backend/scripts/study.py; 40 top coins)
+All 18 strategies, bot fee/reward rules, every signal (no trend/BTC filters), R after fees, two halves.
+- Two-step lock (BE at 20-50% + 80/40): no gain on any timeframe (differences ~0.01 R, not in both halves);
+  80/40 alone also neutral here (4h a little worse: +0.029 none vs +0.023). Not built.
+- S/R skip (1m close beyond the nearest swing level against the trade between signal close and the live-like
+  late entry; 6 days of 1m): 5m crossed -0.29 R (115, both halves) vs kept +0.03; 1h crossed -0.13 (59, both
+  halves); 15m crossed +0.04 (no). Promising on 5m / 1h but small samples: to be confirmed on more days.
+- Turtle 55 + EMA200 4h: best exits 10/20-channel +0.13..+0.14 R but first half negative (-0.05..-0.10),
+  second +0.28..+0.35: not stable. Not built.
+- Limit entry: per signal about the same as market (adverse selection: the missed ones are the winners,
+  +0.35 R at market). No gain.
+- Crowd data on Toobit via ccxt: only funding-rate history; funding vs results: no stable effect.
+
+## Real Toobit account (owner approved 2026-11-09 13:50) — BUILT, default off
+backend/app/account.py (ExchangeAccount), settings.json "exchangeAccount" {apiKey, secret, mode, maxMargin,
+maxLeverage, dailyLoss, confirm} (never shown / committed / sent to the AI; the key must have withdrawals off).
+Modes: off / read (balance, positions, orders every 15 s) / shadow (for each paper open: the real order planned from
+1% of the real equity, inside the caps, only recorded in `plans`) / real (needs agree_real; market entry, then
+reduceOnly stopLossPrice + takeProfitPrice orders on the exchange; protection fails -> closed at once and halted;
+paper stop moves -> new exchange stop, old cancelled; paper close -> real reduceOnly close; daily loss cap -> halted
+until the next UTC day; optional Telegram confirm rok:/rno: buttons, 60 s; emergency: app button or Telegram
+/closeall -> panic: close all, cancel all, mode back to read). PaperBot.mirror(open/close/levels) feeds it.
+API: GET/POST /api/account, POST /api/account/test|panic|resume. UI: start screen "🔗 اتصال صرافی" (accountPanel.ts);
+bot / semi screens: top-bar chip only when connected (opens the same panel). Live check prints ccxt's Toobit
+support (has[]) for the private calls. NOT yet tried on a real account (no keys here): start with read, then shadow.
+
+## Update 2026-11-09 15:08 (owner approved)
+- Real mode uses Toobit's own API (ccxt cannot place stops on Toobit): entry POST api/v1/futures/order
+  {symbol BTC-SWAP-USDT, side BUY_OPEN/SELL_OPEN, type LIMIT, priceType MARKET, quantity contracts};
+  stops POST api/v1/futures/position/trading-stop {symbol, side LONG/SHORT, stopLoss, takeProfit} (also to move
+  them); close POST api/v1/futures/flashClose {symbol, side}. Contracts = base amount / contractSize. Live check
+  prints whether ccxt has these implicit methods and the market id / contract size. Still untried on a real key.
+- Box texts on the chart: drawn by a top-z pane view on dark rounded labels (green box above its top edge, red
+  below its bottom edge), numbers wrapped in LRE..PDF (U+202A/U+202C) — Chrome canvas ignores isolates.
+- Liquid Glass panel style (🎨 menu "سبک پنل‌ها"; html.liquid; Chromium adds an SVG displacement lens html.lens).
+- Semi-automatic screen switched off (chooser card and top-bar switch removed; app.ts kept). The strategies'
+  history test moved into the bot panel: section "history" (botApp.loadHistory -> /api/strategies/overview for the
+  chart's coin/timeframe, cached 5 min, only while the section is open).
+
+## Audit + fixes (owner 2026-11-09 15:38-17:13)
+- Audit of all 19 positions since 11-07 16:25 against Toobit 1m candles (local engine via the built-in browser):
+  arithmetic all right; stop / lock exits seen on the live price inside the forming candle were booked at that
+  price, not at the stop (EVAA #20, UAI #42, ICNT #4, IDOL #2, ON #25, JCT #30: +0.99 $ understated in total);
+  late detections while the computer slept / app closed were booked at the right prices.
+- Fix: paper.check_minutes reads the forming candle minute by minute (closed and forming 1m candles after the
+  entry minute; stop fills at the stop, at the 1m open on a gap; target at the target; lock from 1m extremes;
+  p["checkedMinute"]); the live price is used only if 1m candles cannot be had or after a hole.
+- p["edits"]: time / what / old / new of every stop / target change by the owner.
+- Break-even (breakeven, timeBe, ~0 result) is neither won nor lost: winRate = wins / (wins + losses);
+  stats.losses / stats.evens; panel shows "x% (w won · l lost · e even)".
+- Telegram management: /positions (or the fixed button) lists positions with a button each (pos:<id>); the
+  position message has ✏️ stop (est:), ✏️ target (etp:) — the new price is the next message (5 min, /cancel),
+  checked by set_levels — ⚖️ break-even (pbe:, only in profit), 🔄, ❌ close (pcl: then pcy: to confirm).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
+0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
+   RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
+0b. S/R skip rule (study 2026-11-09): kept for later, promising on 5m / 1h.
 1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.
 2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.
 3. Telegram messages — BUILT 2026-11-09 for closed positions (backend/app/telegram.py; settings.json "telegram"

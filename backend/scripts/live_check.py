@@ -226,8 +226,34 @@ async def check_paper_bot() -> None:
         await service.close()
 
 
+async def report_account_support() -> None:
+    """What ccxt can do with a Toobit account (for the real-account stages); no keys needed to ask."""
+    from app.account import default_factory
+    ex = default_factory("", "")
+    try:
+        names = ("fetchBalance", "fetchPositions", "fetchOpenOrders", "createOrder", "setLeverage",
+                 "createOrderWithTakeProfitAndStopLoss", "createStopLossOrder", "cancelOrder", "cancelAllOrders")
+        print("account support (ccxt " + getattr(sys.modules.get("ccxt"), "__version__", "?") + "): "
+              + ", ".join(f"{n}={bool(ex.has.get(n))}" for n in names))
+        native = ("privatePostApiV1FuturesOrder", "privatePostApiV1FuturesPositionTradingStop",
+                  "privatePostApiV1FuturesFlashClose")
+        print("toobit native calls: " + ", ".join(f"{n}={callable(getattr(ex, n, None))}" for n in native))
+        await ex.load_markets()
+        for symbol in ("BTC/USDT:USDT", "SOL/USDT:USDT"):
+            m = ex.market(symbol)
+            print(f"  {symbol}: id {m['id']}, contractSize {m.get('contractSize')}, "
+                  f"amount step {m.get('precision', {}).get('amount')}, min {m.get('limits', {}).get('amount', {}).get('min')}")
+    finally:
+        await ex.close()
+
+
 async def main() -> int:
     failed = False
+    try:
+        import ccxt  # noqa: F401
+        await report_account_support()
+    except Exception as error:
+        print(f"account support: {error!r}")
     for market_type in ("spot", "futures"):
         try:
             await check(market_type)

@@ -439,6 +439,8 @@ export interface PaperState {
   stats: {
     trades: number;
     wins: number;
+    losses?: number;
+    evens?: number;
     winRate: number | null;
     netPnl: number;
     netPercent: number;
@@ -456,4 +458,23 @@ export interface PaperState {
     lock?: { enabled: boolean; trigger: number; at: number };
     timeBeCandles?: Record<string, number>; staleTolerance?: number;   // profit lock: % of the way to the target
     fees: { maker: number; taker: number } };
+}
+
+/** The owner's real Toobit account (backend/app/account.py): key and secret are never sent to the screen. */
+export type AccountMode = "off" | "read" | "shadow" | "real";
+export interface AccountPlan {
+  time: number; paperId: number; symbol: string; base?: string; side: "long" | "short"; price: number;
+  stop: number; target: number; status: string; amount?: number; leverage?: number; margin?: number; risk?: number;
+}
+export interface AccountState {
+  mode: AccountMode; key: boolean; keyHint: string; maxMargin: number; maxLeverage: number; dailyLoss: number;
+  confirm: boolean; error: string | null; refreshed: number | null; halted: string | null; waiting: number;
+  capabilities: Record<string, boolean>; plans: AccountPlan[]; dayStart: number | null;
+  snapshot: {
+    total?: number | null; free?: number | null; used?: number | null;
+    positions?: { symbol: string; side: string; contracts: number | null; entryPrice: number | null; markPrice: number | null;
+      pnl: number | null; leverage: number | null; liquidation: number | null }[];
+    orders?: { symbol: string; side: string; type: string; amount: number | null; price: number | null; trigger: number | null }[];
+  };
+  message?: string;
 }

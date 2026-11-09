@@ -3,10 +3,12 @@
 
 export type BackgroundMode = "galaxy" | "aurora" | "matte" | "clear";
 /** clear: the desktop shows through the window (desktop app only); glass: how opaque the panels are then. */
-export interface BackgroundChoice { mode: BackgroundMode; color: string; glass: number }
+export type PanelStyle = "frost" | "liquid";
+/** clear: the desktop shows through; glass: how opaque the panels are then; panels: frosted or Apple-style liquid glass. */
+export interface BackgroundChoice { mode: BackgroundMode; color: string; glass: number; panels: PanelStyle }
 
 const KEY = "ui.background";
-export const DEFAULT_BACKGROUND: BackgroundChoice = { mode: "galaxy", color: "#101624", glass: 0.45 };
+export const DEFAULT_BACKGROUND: BackgroundChoice = { mode: "galaxy", color: "#101624", glass: 0.45, panels: "frost" };
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 /** The desktop app's bridge (Tauri); missing in the browser and on Android. */
@@ -23,7 +25,8 @@ export function loadBackground(read: () => string | null = () => localStorage.ge
       ? x.mode : DEFAULT_BACKGROUND.mode;
     const color = typeof x.color === "string" && /^#[0-9a-f]{6}$/i.test(x.color) ? x.color : DEFAULT_BACKGROUND.color;
     const glass = typeof x.glass === "number" && x.glass >= 0 && x.glass <= 0.9 ? x.glass : DEFAULT_BACKGROUND.glass;
-    return { mode, color, glass };
+    const panels: PanelStyle = x.panels === "liquid" ? "liquid" : "frost";
+    return { mode, color, glass, panels };
   } catch {
     return { ...DEFAULT_BACKGROUND };
   }
@@ -87,6 +90,11 @@ export class Background {
     this.layer.style.background = mode === "matte" ? color : "";
     const root = document.documentElement;
     root.classList.toggle("see-through", mode === "clear");
+    root.classList.toggle("liquid", this.choice.panels === "liquid");
+    // The bending of the light at the glass edges needs an SVG filter behind the panels: Chromium only
+    // (Windows). WebKit (macOS) gets the same glass without the bending.
+    root.classList.toggle("lens", this.choice.panels === "liquid" && /Chrome\/|Edg\//.test(navigator.userAgent));
+    if (this.choice.panels === "liquid") ensureLens();
     if (mode === "clear") root.style.setProperty("--glass-alpha", String(glass));
     else root.style.removeProperty("--glass-alpha");
     const invoke = tauriInvoke();
@@ -249,9 +257,25 @@ export class Background {
   }
 }
 
+/** The SVG lens used by Liquid Glass panels on Chromium: a soft displacement that bends the edges. */
+function ensureLens(): void {
+  if (document.getElementById("liquid-lens")) return;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "0");
+  svg.setAttribute("height", "0");
+  svg.style.position = "absolute";
+  svg.innerHTML = `<filter id="liquid-lens" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="2" result="soft"/>
+    <feDisplacementMap in="SourceGraphic" in2="soft" scale="38" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>`;
+  document.body.append(svg);
+}
+
 /** The 🎨 button and its small menu, for a top bar. */
 export function backgroundButton(bg: Background,
-  t: (key: "bg.title" | "bg.galaxy" | "bg.aurora" | "bg.matte" | "bg.clear" | "bg.glass") => string): HTMLElement {
+  t: (key: "bg.title" | "bg.galaxy" | "bg.aurora" | "bg.matte" | "bg.clear" | "bg.glass" | "bg.panels" | "bg.frost"
+    | "bg.liquid") => string): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "bg-menu";
   const button = document.createElement("button");
@@ -299,6 +323,18 @@ export function backgroundButton(bg: Background,
       render();
     });
     menu.append(color);
+    // the panels: frosted glass or Apple's liquid glass
+    menu.append(Object.assign(document.createElement("div"), { className: "bg-heading", textContent: t("bg.panels") }));
+    for (const style of ["frost", "liquid"] as const) {
+      const row = document.createElement("button");
+      row.className = `eye-row${bg.choice.panels === style ? " active" : ""}`;
+      row.textContent = `${bg.choice.panels === style ? "●" : "○"}  ${t(style === "frost" ? "bg.frost" : "bg.liquid")}`;
+      row.addEventListener("click", () => {
+        bg.set({ panels: style });
+        render();
+      });
+      menu.append(row);
+    }
   };
   button.addEventListener("click", (e) => {
     e.stopPropagation();

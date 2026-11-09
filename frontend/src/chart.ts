@@ -412,6 +412,7 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
   private signals: number[] = [];
   private param: SeriesAttachedParameter<Time> | null = null;
   private readonly view: IPrimitivePaneView;
+  private readonly labelView: IPrimitivePaneView;
 
   /** Pixel rectangle of a box on screen, or null when it is not on the loaded candles. */
   private rect(box: Box): { left: number; right: number; top: number; bottom: number } | null {
@@ -452,11 +453,6 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
               context.stroke();
             }
             context.setLineDash([]);
-            context.font = "11px sans-serif";
-            context.fillStyle = "rgba(255,255,255,0.85)";
-            context.textBaseline = "top";
-            const near = d.kind === "profit" ? r.top + 3 : r.bottom - 3 - 13 * d.texts.length;
-            d.texts.forEach((text, n) => context.fillText(text, r.left + 4, near + 13 * n));
           }
         });
       },
@@ -493,7 +489,49 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
         });
       },
     };
+    // The box texts on dark rounded labels drawn ABOVE the candles (owner 2026-11-09: they fell under the
+    // candles and were unreadable): the green box's just above its top edge, the red box's just below its
+    // bottom edge, one under another; numbers kept in their own direction inside the Persian text.
+    const labels: IPrimitivePaneRenderer = {
+      draw: (target) => {
+        if (!this.param || !this.decor.length) return;
+        target.useMediaCoordinateSpace(({ context, mediaSize }) => {
+          const rtl = document.documentElement.dir === "rtl";
+          context.font = "11px -apple-system, 'Segoe UI', Tahoma, sans-serif";
+          context.textBaseline = "middle";
+          context.direction = rtl ? "rtl" : "ltr";
+          context.textAlign = "left";
+          const h = 17;
+          const gap = 2;
+          for (const d of this.decor) {
+            const box = this.boxes.find((b) => b.from === d.from && b.kind === d.kind);
+            if (!box || !d.texts.length) continue;
+            const r = this.rect(box);
+            if (!r || r.right < 0 || r.left > mediaSize.width) continue;
+            const above = d.kind === "profit";
+            const count = d.texts.length;
+            let y = above ? r.top - gap - h * count - gap * (count - 1) : r.bottom + gap;
+            y = Math.max(2, Math.min(y, mediaSize.height - 2 - (h + gap) * count));   // stay inside the pane
+            for (const text of d.texts) {
+              const w = context.measureText(text).width + 12;
+              const x = Math.max(2, Math.min(r.left, mediaSize.width - w - 2));
+              context.fillStyle = "rgba(12, 15, 24, 0.88)";
+              context.strokeStyle = d.kind === "profit" ? "rgba(8, 153, 129, 0.9)" : "rgba(242, 54, 69, 0.9)";
+              context.lineWidth = 1;
+              context.beginPath();
+              context.roundRect(x, y, w, h, 6);
+              context.fill();
+              context.stroke();
+              context.fillStyle = "#f0f3fa";
+              context.fillText(text, x + 6, y + h / 2 + 0.5);
+              y += h + gap;
+            }
+          }
+        });
+      },
+    };
     this.view = { zOrder: () => "bottom", renderer: () => renderer };
+    this.labelView = { zOrder: () => "top", renderer: () => labels };
   }
 
   attached(param: SeriesAttachedParameter<Time>): void {
@@ -505,7 +543,7 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
   }
 
   paneViews(): readonly IPrimitivePaneView[] {
-    return [this.view];
+    return [this.view, this.labelView];
   }
 
   setBoxes(boxes: Box[]): void {
