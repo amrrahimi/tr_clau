@@ -44,7 +44,7 @@ from typing import Awaitable, Callable, Optional
 from . import config
 from .analysis import closed_only, strategy_overview
 from .brain import Brain
-from . import advisor, pretrain
+from . import advisor, pretrain, telegram
 from .memory import Memory, features
 from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params, reward_ok
@@ -636,6 +636,9 @@ class PaperBot:
         self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
         self.ai_error: Optional[str] = None  # the last reason Gemini did not answer (for the screen)
         self.ask_timers = True               # open an unanswered question after ASK_AUTO_SECONDS (off in tests)
+        self.tg_post = telegram.default_post  # Telegram messages (replaced in tests)
+        self.tg_error: Optional[str] = None   # the last reason a Telegram message did not go
+        self._tg_tasks: set = set()
 
     # ---- what the screen sees
 
@@ -686,6 +689,7 @@ class PaperBot:
                              "takeProfit": q["c"]["signal"]["takeProfit"], "expires": q["expires"],
                              "error": q.get("error")} for q in a.get("pendingAsks", [])],
             "btc": self.btc_state,
+            "telegram": {**telegram.public(), "lastError": self.tg_error},
             "limitEntry": a.get("limitEntry", False),
             "orders": [{k: o[k] for k in ("id", "symbol", "base", "timeframe", "strategy", "side", "price",
                                           "placedPrice", "placedAt", "expires", "stopLoss", "takeProfit", "margin")}
@@ -1367,6 +1371,29 @@ class PaperBot:
         if self.memory is not None:
             self.memory.save_trade(trade, now)
         self._event("close", symbol=p["base"], reason=reason, pnl=result)
+        self.notify(telegram.closed_text(trade, self.account["balance"]))
+
+    def notify(self, text: str) -> None:
+        """A Telegram message, sent in the background (the bot does not wait for it)."""
+        settings = telegram.load()
+        if not (settings["enabled"] and settings["token"] and settings["chatId"] is not None):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def go() -> None:
+            try:
+                await telegram.send(text, self.tg_post, settings)
+                self.tg_error = None
+            except telegram.TelegramError as error:
+                self.tg_error = str(error)
+                logging.getLogger("trading_bot").warning("telegram: %s", error)
+
+        task = loop.create_task(go())
+        self._tg_tasks.add(task)
+        task.add_done_callback(self._tg_tasks.discard)
 
     async def _scan_and_open(self, tf: str, now: float, trade: bool = True) -> None:
         mode = MODE_OF[tf]

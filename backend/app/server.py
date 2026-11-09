@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import advisor, config
+from . import advisor, config, telegram
 from .analysis import ANALYSIS_CANDLES, analyze, run_strategy, strategy_overview
 from .catalog import parse_instances, public_catalog
 from .history import HistoryCache
@@ -264,6 +264,33 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             if len(keys) > advisor.MAX_KEYS or any(len(k) > 300 for k in keys):
                 raise HTTPException(400, f"at most {advisor.MAX_KEYS} keys")
             advisor.save_keys(keys)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/telegram")
+        async def paper_telegram(token: Optional[str] = Body(None), enabled: Optional[bool] = Body(None)):
+            """The owner's Telegram bot: token (kept in settings.json on this computer, never sent back) and on/off.
+            A new token forgets the old chat (found again by "test" after /start)."""
+            changes: dict = {}
+            if token is not None:
+                token = token.strip()
+                if len(token) > 200 or (token and ":" not in token):
+                    raise HTTPException(400, "bad token")
+                changes.update(token=token, chatId=None)
+            if enabled is not None:
+                changes["enabled"] = enabled
+            if changes:
+                telegram.save(**changes)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/telegram/test")
+        async def paper_telegram_test():
+            """Finds the owner's chat (after /start) and sends a test message."""
+            try:
+                await telegram.test(b.tg_post)
+                b.tg_error = None
+            except telegram.TelegramError as error:
+                b.tg_error = str(error)
+                raise HTTPException(400, str(error))
             return b.public()
 
         @app.post(f"/api/{prefix}/ai/test")

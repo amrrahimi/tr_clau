@@ -78,6 +78,8 @@ export interface Backend {
   /** Bot buttons: start, stop, reset (with capital), mode (auto/manual with strategies). */
   paperAction(action: PaperAction): Promise<PaperState>;
   setAiKeys(keys: string[]): Promise<PaperState>;
+  setTelegram(change: { token?: string; enabled?: boolean }): Promise<PaperState>;
+  testTelegram(): Promise<PaperState>;
   /** One tiny request to Gemini with each saved key. */
   testAi(): Promise<{ results: AiTestResult[] }>;
   consult(positionId: number): Promise<ConsultAnswer>;
@@ -210,6 +212,15 @@ export class HttpBackend implements Backend {
 
   async setAiKeys(keys: string[]): Promise<PaperState> {
     return this.post<PaperState>(`${PAPER_PATH}/ai/keys`, { keys });
+  }
+
+  /** The owner's Telegram bot token (kept on this computer, never shown again) and on/off. */
+  async setTelegram(change: { token?: string; enabled?: boolean }): Promise<PaperState> {
+    return this.post<PaperState>(`${PAPER_PATH}/telegram`, change);
+  }
+
+  async testTelegram(): Promise<PaperState> {
+    return this.post<PaperState>(`${PAPER_PATH}/telegram/test`, {});
   }
 
   private async post<T>(path: string, body: object): Promise<T> {

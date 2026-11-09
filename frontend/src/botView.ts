@@ -384,3 +384,53 @@ export function saveEye(eye: Record<EyeGroup, boolean>): void {
     // not kept
   }
 }
+
+/** Lines of the bot's chart whose colour, style and width the owner sets (gear next to the eye). */
+export const LINE_GROUPS = ["entry", "stop", "target", "liquidation", "lockPoint", "lockStop", "breakeven", "orders",
+  "strategy", "resChart", "supChart", "resHigher", "supHigher"] as const;
+export type LineGroup = (typeof LINE_GROUPS)[number];
+export type LineStyleName = "solid" | "dashed" | "dotted";
+export interface LineLook { color: string; style: LineStyleName; width: number }
+export const LINE_DEFAULTS: Record<LineGroup, LineLook> = {
+  entry: { color: "#2962ff", style: "dotted", width: 1 },
+  stop: { color: "#f23645", style: "dotted", width: 1 },
+  target: { color: "#089981", style: "dotted", width: 1 },
+  liquidation: { color: "#ff9800", style: "dashed", width: 1 },
+  lockPoint: { color: "#b388ff", style: "solid", width: 2 },
+  lockStop: { color: "#b388ff", style: "dashed", width: 2 },
+  breakeven: { color: "#787b86", style: "dashed", width: 2 },
+  orders: { color: "#2962ff", style: "dashed", width: 1 },
+  strategy: { color: "", style: "solid", width: 2 },   // colours come from the strategy
+  resChart: { color: "#f23645", style: "dashed", width: 1 },
+  supChart: { color: "#089981", style: "dashed", width: 1 },
+  resHigher: { color: "#f23645", style: "dashed", width: 2 },
+  supHigher: { color: "#089981", style: "dashed", width: 2 },
+};
+const LINES_KEY = "bot.lines";
+
+/** The owner's line settings on this computer; anything missing or broken -> the default. */
+export function loadLines(read: () => string | null = () => localStorage.getItem(LINES_KEY)): Record<LineGroup, LineLook> {
+  const out = Object.fromEntries(LINE_GROUPS.map((g) => [g, { ...LINE_DEFAULTS[g] }])) as Record<LineGroup, LineLook>;
+  let saved: Record<string, Partial<LineLook>> = {};
+  try {
+    saved = JSON.parse(read() ?? "{}") ?? {};
+  } catch {
+    return out;
+  }
+  for (const g of LINE_GROUPS) {
+    const x = saved[g];
+    if (!x || typeof x !== "object") continue;
+    if (typeof x.color === "string" && /^#[0-9a-f]{6}$/i.test(x.color)) out[g].color = x.color;
+    if (x.style === "solid" || x.style === "dashed" || x.style === "dotted") out[g].style = x.style;
+    if (typeof x.width === "number" && x.width >= 1 && x.width <= 4) out[g].width = Math.round(x.width);
+  }
+  return out;
+}
+
+export function saveLines(lines: Record<LineGroup, LineLook>): void {
+  try {
+    localStorage.setItem(LINES_KEY, JSON.stringify(lines));
+  } catch {
+    // not kept
+  }
+}

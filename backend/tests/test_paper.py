@@ -1,9 +1,11 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from app import paper as pp
+from app import telegram as tg
 from app.strategies import LONG, SHORT, Fees
 
 FEES = Fees(maker=0.02, taker=0.06)
@@ -1517,3 +1519,71 @@ class LockPointAndWhyTest(unittest.IsolatedAsyncioTestCase):
         p["lockedAt"] = 1
         self.assertEqual(bot.set_lock_point(p["id"], 101.4), "lock_done")
         self.assertEqual(bot.set_lock_point(999, 101), "missing")
+
+
+class TelegramTest(unittest.IsolatedAsyncioTestCase):
+    """Owner 2026-11-09: a Telegram message for every closed position; the token never goes to the screen."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.sent: list[tuple[str, dict]] = []
+
+        async def post(url, body):
+            self.sent.append((url, body))
+            if url.endswith("/getUpdates"):
+                return 200, json.dumps({"ok": True, "result": [{"message": {"chat": {"id": 42}, "text": "/start"}}]})
+            return 200, json.dumps({"ok": True, "result": {}})
+        self.post = post
+
+        async def recent(symbol, tf):
+            return [bar(999_960, 100, 100, 100, 100)]
+
+        async def empty(*a):
+            return []
+        self.bot = pp.PaperBot(pp.Store(Path(self.dir.name) / "p.json"), empty, empty, recent,
+                               now=lambda: 1_000_000, fees=FEES)
+        self.bot.tg_post = post
+        self.bot.reset(100)
+        tg.save(token="", chatId=None, enabled=True)
+
+    async def test_test_finds_chat_and_close_sends_message(self):
+        tg.save(token="123:ABC-secret", chatId=None)
+        shown = tg.public()
+        self.assertEqual((shown["token"], shown["chat"]), (True, False))
+        self.assertNotIn("ABC-secret", json.dumps(self.bot.public()))      # the token is never shown
+        await tg.test(self.post)
+        self.assertEqual(tg.load()["chatId"], 42)
+        self.assertEqual(self.sent[-1][1]["chat_id"], 42)
+        await self.bot._open(cand("A", 2.0, 20), "15m", 1_000_000, {"fee_ratio": 0.33})
+        p = self.bot.account["positions"][0]
+        self.bot._close(p, 102, "target", 1_000_100)
+        await asyncio.gather(*list(self.bot._tg_tasks))
+        text = self.sent[-1][1]["text"]
+        self.assertIn("حد سود", text)
+        self.assertIn("🟢", text)
+        self.assertIn("R)", text)
+
+    async def test_nothing_sent_without_chat_or_when_off(self):
+        tg.save(token="123:ABC", chatId=None)
+        self.bot.notify("x")
+        tg.save(chatId=42, enabled=False)
+        self.bot.notify("x")
+        self.assertFalse(self.bot._tg_tasks)
+        self.assertEqual(self.sent, [])
+
+    async def test_test_without_start_says_so(self):
+        tg.save(token="123:ABC", chatId=None)
+
+        async def no_updates(url, body):
+            return 200, json.dumps({"ok": True, "result": []})
+        with self.assertRaises(tg.TelegramError):
+            await tg.test(no_updates)
+
+    def test_closed_text_loss(self):
+        text = tg.closed_text({"pnl": -1.5, "risk": 1.0, "side": "short", "exitReason": "stop", "base": "SOL",
+                               "timeframe": "1h", "strategy": "x", "entryPrice": 10, "exitPrice": 10.2}, 98.5)
+        self.assertIn("🔴", text)
+        self.assertIn("−1.50$", text)
+        self.assertIn("-1.50R", text)
+        self.assertIn("شورت", text)

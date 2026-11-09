@@ -6,7 +6,7 @@
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
 import { ChartView, THEME, type BoxDecor, type Level } from "./chart.ts";
-import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, loadEye, lockPrices, saveEye, swingLevels, type EyeGroup, formatR, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_GROUPS, loadEye, loadLines, saveLines, type LineGroup, type LineLook, type LineStyleName, lockPrices, saveEye, swingLevels, type EyeGroup, formatR, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
 import { direction, loadLanguage, saveLanguage, translate, type Language } from "./i18n.ts";
 import type { MessageKey } from "./locales/en.ts";
@@ -294,9 +294,9 @@ export class BotApp {
     const levels: Level[] = open.flatMap((p) => this.positionLevels(p));
     if (this.eye.orders) {
       levels.push(...orders.flatMap((o): Level[] => [
-        { key: `o${o.id}`, price: o.price, color: "#2962ff", title: this.t("bot.level.order"), style: "dashed" },
-        { key: `os${o.id}`, price: o.stopLoss, color: THEME.down, title: this.t("bot.level.orderStop"), style: "dashed" },
-        { key: `ot${o.id}`, price: o.takeProfit, color: THEME.up, title: this.t("bot.level.orderTarget"), style: "dashed" },
+        { key: `o${o.id}`, price: o.price, ...this.look("orders"), title: this.t("bot.level.order") },
+        { key: `os${o.id}`, price: o.stopLoss, ...this.look("orders"), color: THEME.down, title: this.t("bot.level.orderStop") },
+        { key: `ot${o.id}`, price: o.takeProfit, ...this.look("orders"), color: THEME.up, title: this.t("bot.level.orderTarget") },
       ]));
     }
     levels.push(...this.supportResistance());
@@ -325,11 +325,11 @@ export class BotApp {
       const lines: BoxDecor["lines"] = [];
       if (this.eye.lock && trigger != null && at != null) {
         texts.push(this.t("box.lock", { trigger: String(Math.round(trigger * 100)), at: String(Math.round(at * 100)) }));
-        lines.push({ price: p.entryPrice + way * trigger, color: "#b388ff" },
-          { price: p.entryPrice + way * at, color: "#b388ff", dash: true });
+        lines.push({ price: p.entryPrice + way * trigger, ...this.look("lockPoint") },
+          { price: p.entryPrice + way * at, ...this.look("lockStop") });
       }
       const even = breakevenTrigger(p);
-      if (this.eye.lock && even !== null) lines.push({ price: even, color: "#787b86", dash: true });
+      if (this.eye.lock && even !== null) lines.push({ price: even, ...this.look("breakeven") });
       const from = candleStart(p.entryCandle, this.target.timeframe);
       decor.push({ from, kind: "profit", texts, lines },
         { from, kind: "loss", texts: [this.t("box.loss", { pnl: formatMoney(loss) })], lines: [] });
@@ -344,10 +344,10 @@ export class BotApp {
     const price = this.candles[this.candles.length - 1].close;
     const add = (candles: Candle[], tf: string, bold: boolean) => {
       const sr = swingLevels(candles, price);
-      sr.above.forEach((x, n) => out.push({ key: `r${tf}${n}`, price: x, color: "rgba(242,54,69,0.7)", title: this.t("chart.resistance", { tf }),
-        style: "dashed", width: bold ? 2 : 1, axisLabel: false }));
-      sr.below.forEach((x, n) => out.push({ key: `u${tf}${n}`, price: x, color: "rgba(8,153,129,0.8)", title: this.t("chart.support", { tf }),
-        style: "dashed", width: bold ? 2 : 1, axisLabel: false }));
+      sr.above.forEach((x, n) => out.push({ key: `r${tf}${n}`, price: x, ...this.look(bold ? "resHigher" : "resChart"),
+        title: this.t("chart.resistance", { tf }), axisLabel: false }));
+      sr.below.forEach((x, n) => out.push({ key: `u${tf}${n}`, price: x, ...this.look(bold ? "supHigher" : "supChart"),
+        title: this.t("chart.support", { tf }), axisLabel: false }));
     };
     if (this.eye.srChart) add(this.candles, this.target.timeframe, false);
     const higher = COMPANION_TF[this.target.timeframe];
@@ -384,14 +384,14 @@ export class BotApp {
     }
     const key = `${p.symbol}|${this.target.timeframe}|${p.strategy}`;
     const got = this.strategyLines.get(key);
-    if (got) this.chart.setIndicators(got.indicators.filter((r) => r.pane === "price"));
+    if (got) this.chart.setIndicators(got.indicators.filter((r) => r.pane === "price"), this.lines.strategy);
     if (got && Date.now() - got.time < 120_000) return;
     this.strategyLines.set(key, { time: Date.now(), indicators: got?.indicators ?? [] });
     try {
       const run = await this.backend.runStrategy(p.symbol, this.target.timeframe, p.strategy);
       this.strategyLines.set(key, { time: Date.now(), indicators: run.indicators });
       if (this.target && `${this.target.symbol}|${this.target.timeframe}|${p.strategy}` === key && this.eye.strategy) {
-        this.chart.setIndicators(run.indicators.filter((r) => r.pane === "price"));
+        this.chart.setIndicators(run.indicators.filter((r) => r.pane === "price"), this.lines.strategy);
       }
     } catch {
       // drawn without them
@@ -427,15 +427,15 @@ export class BotApp {
     const levels: Level[] = [];
     if (this.eye.levels) {
       levels.push(
-        { key: `e${p.id}`, price: p.entryPrice, color: "#2962ff", title: this.t("bot.level.entrySized", {
+        { key: `e${p.id}`, price: p.entryPrice, ...this.look("entry"), title: this.t("bot.level.entrySized", {
           kind: this.t(p.entryType === "limit" ? "bot.entry.limit" : "bot.entry.market"),
           margin: p.margin.toFixed(2), lev: String(p.leverage) }) },
-        { key: `s${p.id}`, price: p.stop, color: THEME.down, title: short("stop"), drag: drag("stop") },
-        { key: `t${p.id}`, price: p.takeProfit, color: THEME.up, title: short("target"), drag: drag("target") },
+        { key: `s${p.id}`, price: p.stop, ...this.look("stop"), title: short("stop"), drag: drag("stop") },
+        { key: `t${p.id}`, price: p.takeProfit, ...this.look("target"), title: short("target"), drag: drag("target") },
       );
     }
     if (this.eye.liquidation) {
-      levels.push({ key: `l${p.id}`, price: p.liquidation, color: "#ff9800", title: this.t("bot.level.liquidation"), style: "dashed" });
+      levels.push({ key: `l${p.id}`, price: p.liquidation, ...this.look("liquidation"), title: this.t("bot.level.liquidation") });
     }
     // The profit-lock point: drawn inside the green box; this hidden line only makes it draggable.
     const lock = lockPrices(p, this.state!.rules.lock);
@@ -452,6 +452,17 @@ export class BotApp {
     void lockTitle;
     void evenTitle;
     return levels;
+  }
+
+  /** A Telegram change or test; its answer (or error) is shown under the buttons. */
+  private async telegram(call: () => Promise<PaperState>, ok?: string): Promise<void> {
+    try {
+      this.state = await call();
+      this.tgTest = ok ?? null;
+    } catch (error) {
+      this.tgTest = this.t("bot.tg.error", { error: error instanceof Error ? error.message : String(error) });
+    }
+    this.renderPanel();
   }
 
   /** The owner let go of the profit-lock point of one position: sent to the bot at once. */
@@ -515,6 +526,9 @@ export class BotApp {
   /** What is drawn on the chart (the eye buttons, top-left), kept in the browser. */
   private eye: Record<EyeGroup, boolean> = loadEye();
   private eyeOpen = false;
+  /** Colour, style and width of the chart's lines (the gear next to the eye), kept in this browser. */
+  private lines: Record<LineGroup, LineLook> = loadLines();
+  private linesOpen = false;
   /** A profit-lock point being dragged (position id, price), drawn in the box until let go. */
   private lockPoint: { id: number; price: number } | null = null;
   /** Explanations open in the bar under the chart, by position id. */
@@ -522,6 +536,7 @@ export class BotApp {
   /** Companion-timeframe candles for support / resistance, and strategy lines, by key, with their time. */
   private companion = new Map<string, { time: number; candles: Candle[] }>();
   private strategyLines = new Map<string, { time: number; indicators: IndicatorResult[] }>();
+  private tgTest: string | null = null;   // the last Telegram test's words
   private consults = new Map<number, ConsultAnswer>();
   private consulting = new Set<number>();
   /** The consult window open (full answers) or folded to one line, so the chart gets its room back. */
@@ -672,6 +687,72 @@ export class BotApp {
     this.renderEye();
   }
 
+  /** The owner's look of one group of lines. */
+  private look(g: LineGroup): { color: string; style: LineStyleName; width: number } {
+    return this.lines[g];
+  }
+
+  /** The gear next to the eye: colour, style and width of each group of lines. */
+  private renderLines(box: HTMLElement): void {
+    const t = this.t.bind(this);
+    const tf = this.target?.timeframe ?? "";
+    const higher = COMPANION_TF[tf] ?? "";
+    const list = document.createElement("div");
+    list.className = "eye-list line-list";
+    for (const g of LINE_GROUPS) {
+      const row = document.createElement("div");
+      row.className = "line-row";
+      const name = document.createElement("span");
+      name.textContent = t(`lines.${g}` as MessageKey, { tf: g.endsWith("Higher") ? higher : tf });
+      row.append(name);
+      const look = this.lines[g];
+      const changed = () => {
+        saveLines(this.lines);
+        this.strategyLines.forEach((v) => (v.time = 0));
+        this.drawTrades();
+      };
+      if (g !== "strategy") {
+        const color = document.createElement("input");
+        color.type = "color";
+        color.value = look.color;
+        color.addEventListener("input", () => {
+          look.color = color.value;
+          changed();
+        });
+        row.append(color);
+      } else {
+        row.append(Object.assign(document.createElement("span"), { className: "line-auto", textContent: t("lines.auto") }));
+      }
+      const style = document.createElement("select");
+      for (const v of ["solid", "dashed", "dotted"] as LineStyleName[]) {
+        style.append(new Option(t(`lines.style.${v}` as MessageKey), v, false, look.style === v));
+      }
+      style.addEventListener("change", () => {
+        look.style = style.value as LineStyleName;
+        changed();
+      });
+      const width = document.createElement("select");
+      for (const w of [1, 2, 3, 4]) width.append(new Option(String(w), String(w), false, look.width === w));
+      width.addEventListener("change", () => {
+        look.width = Number(width.value);
+        changed();
+      });
+      row.append(style, width);
+      list.append(row);
+    }
+    const reset = document.createElement("button");
+    reset.className = "eye-row";
+    reset.textContent = t("lines.reset");
+    reset.addEventListener("click", () => {
+      this.lines = loadLines(() => null);
+      saveLines(this.lines);
+      this.renderEye();
+      this.drawTrades();
+    });
+    list.append(reset);
+    box.append(list);
+  }
+
   /** Top-left of the chart: an eye button that opens the list of things drawn, each with its own eye. */
   private renderEye(): void {
     const box = this.els.eye;
@@ -683,9 +764,26 @@ export class BotApp {
     toggle.title = t("eye.title");
     toggle.addEventListener("click", () => {
       this.eyeOpen = !this.eyeOpen;
+      if (this.eyeOpen) this.linesOpen = false;
       this.renderEye();
     });
-    box.append(toggle);
+    const gear = document.createElement("button");
+    gear.className = "eye-toggle";
+    gear.textContent = "⚙";
+    gear.title = t("lines.title");
+    gear.addEventListener("click", () => {
+      this.linesOpen = !this.linesOpen;
+      if (this.linesOpen) this.eyeOpen = false;
+      this.renderEye();
+    });
+    const buttons = document.createElement("div");
+    buttons.className = "eye-buttons";
+    buttons.append(toggle, gear);
+    box.append(buttons);
+    if (this.linesOpen) {
+      this.renderLines(box);
+      return;
+    }
     if (!this.eyeOpen) return;
     const tf = this.target?.timeframe ?? "";
     const list = document.createElement("div");
@@ -1007,6 +1105,47 @@ export class BotApp {
       if (ai.results && Object.keys(ai.results).length) {
         parts.push(el("div", "bot-hint", t("bot.ai.results", { yes: res("approve"), no: res("reject") })));
       }
+    }
+
+    // Telegram: a message for every closed position (owner 2026-11-09). The token is typed here once,
+    // kept on this computer and never shown again; the chat is found after the owner's /start.
+    if (s.telegram) {
+      const tg = s.telegram;
+      const onOff = el("div", "segmented small");
+      for (const on of [true, false]) {
+        const b = el("button", tg.enabled === on ? "active" : "", t(on ? "bot.tg.on" : "bot.tg.off"));
+        b.addEventListener("click", () => void this.telegram(() => this.backend.setTelegram({ enabled: on })));
+        onOff.append(b);
+      }
+      parts.push(el("div", "list-heading", t("bot.tg.title")), el("div", "bot-hint", t("bot.tg.what")), onOff);
+      const tokenBox = el("div", "bot-capital");
+      const input = document.createElement("input");
+      input.type = "password";
+      input.dir = "ltr";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.placeholder = "123456:ABC…";
+      const save = el("button", "bot-reset", t("bot.save"));
+      save.addEventListener("click", () => {
+        const token = input.value.trim();
+        input.value = "";
+        if (token) void this.telegram(() => this.backend.setTelegram({ token }));
+      });
+      tokenBox.append(el("label", "", t("bot.tg.token")), input, save);
+      parts.push(tokenBox, el("div", "bot-hint", tg.token ? t("bot.tg.saved", { hint: tg.tokenHint }) : t("bot.tg.noToken")));
+      if (tg.token) parts.push(el("div", "bot-hint", t(tg.chat ? "bot.tg.chatOk" : "bot.tg.noChat")));
+      const testRow = el("div", "bot-ask-buttons");
+      const testButton = el("button", "bot-reset", t("bot.tg.test"));
+      (testButton as HTMLButtonElement).disabled = !tg.token;
+      testButton.addEventListener("click", () => {
+        this.tgTest = t("bot.tg.testing");
+        this.renderPanel();
+        void this.telegram(() => this.backend.testTelegram(), t("bot.tg.testOk"));
+      });
+      testRow.append(testButton);
+      parts.push(testRow);
+      if (this.tgTest) parts.push(el("div", "bot-hint", this.tgTest));
+      else if (tg.lastError) parts.push(el("div", "bot-hint", t("bot.tg.error", { error: tg.lastError })));
     }
 
     // Which coins the bot scans: top 100 by volume, the most volatile of the last 24h, or the owner's list.

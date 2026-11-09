@@ -599,3 +599,9 @@ button:hover { background: var(--border); }
 .why-button.active { background: #2962ff; }
 .why-title { font-weight: 600; margin-bottom: 4px; }
 .why-line { font-size: 13px; line-height: 1.6; }
+.chart-eye .eye-buttons { display: flex; gap: 4px; }
+.chart-eye .line-list { gap: 4px; max-height: 70vh; overflow-y: auto; }
+.chart-eye .line-row { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 6px; color: #d1d4dc; font-size: 12px; padding: 2px 6px; white-space: nowrap; }
+.chart-eye .line-row input[type="color"] { width: 28px; height: 20px; padding: 0; border: 1px solid #363a45; background: none; cursor: pointer; }
+.chart-eye .line-row select { background: #1e222d; color: #d1d4dc; border: 1px solid #363a45; border-radius: 4px; font-size: 12px; padding: 1px 2px; }
+.chart-eye .line-auto { color: #6a6d78; font-size: 11px; }

@@ -50,7 +50,7 @@ export interface BoxDecor {
   from: number;
   kind: "profit" | "loss";
   texts: string[];
-  lines: { price: number; color: string; dash?: boolean }[];
+  lines: { price: number; color: string; dash?: boolean; style?: "dotted" | "dashed" | "solid"; width?: number }[];
 }
 
 /** A price level line of an open position. With drag, the owner can move it with the mouse. */
@@ -252,10 +252,18 @@ export class ChartView {
    * Draw the indicators of an analysis. An empty list removes them all
    * (used while the bot is stopped or a new chart loads).
    */
-  setIndicators(results: IndicatorResult[]): void {
+  setIndicators(results: IndicatorResult[], look?: { width: number; style: "dotted" | "dashed" | "solid" }): void {
     const signature = layoutSignature(results);
     if (signature !== this.signature) this.rebuild(results);
     this.signature = signature;
+    if (look) {   // the owner's line settings for strategy lines (bot chart)
+      const lineStyle = look.style === "dashed" ? LineStyle.Dashed : look.style === "dotted" ? LineStyle.Dotted : LineStyle.Solid;
+      for (const r of results) {
+        for (const o of r.outputs) {
+          if (o.style !== "histogram") this.indicatorSeries.get(`${r.id}:${o.key}`)?.applyOptions({ lineWidth: look.width as 1, lineStyle });
+        }
+      }
+    }
     for (const r of results) {
       for (const o of r.outputs) {
         const series = this.indicatorSeries.get(`${r.id}:${o.key}`);
@@ -430,8 +438,9 @@ class PositionBoxes implements ISeriesPrimitive<Time> {
               const y = param.series.priceToCoordinate(line.price);
               if (y === null) continue;
               context.strokeStyle = line.color;
-              context.lineWidth = 2;
-              context.setLineDash(line.dash ? [5, 4] : []);
+              const style = line.style ?? (line.dash ? "dashed" : "solid");
+              context.lineWidth = line.width ?? 2;
+              context.setLineDash(style === "dashed" ? [5, 4] : style === "dotted" ? [1, 3] : []);
               context.beginPath();
               context.moveTo(r.left, y);
               context.lineTo(r.right, y);

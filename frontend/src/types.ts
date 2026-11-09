@@ -402,6 +402,7 @@ export interface PaperState {
   /** What happened to the signals in the last minutes (skipped: reason -> count). */
   flow?: { minutes: number; seen: number; opened: number; placed?: number; skipped: Record<string, number> };
   limitEntry?: boolean;                 // the owner's switch: enter with limit orders (paper only)
+  telegram?: { token: boolean; tokenHint: string; chat: boolean; enabled: boolean; lastError: string | null };
   btc?: { time?: number; "1h"?: "up" | "down" | "range" | null; "4h"?: "up" | "down" | "range" | null };
   orders?: PaperOrder[];                // limit orders waiting to fill
   entryStats?: { market: EntryStats; limit: EntryStats & { fillRate: number | null;

@@ -183,9 +183,13 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.
 2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.
-3. Telegram messages: each closed position, and each position the bot wants to close because the trend changed
-   (token and chat id entered in the app, kept only in ~/.trading-bot/settings.json).
-4. Chart line settings: colour, dashed/solid and width for support/resistance and the other chart lines.
+3. Telegram messages — BUILT 2026-11-09 for closed positions (backend/app/telegram.py; settings.json "telegram"
+   {token, chatId, enabled}; POST /api/paper/telegram {token?, enabled?}, /telegram/test finds the chat from
+   getUpdates after the owner's /start; PaperBot.notify() sends in the background; public shows only
+   token yes/no + last 4 chars). `telegram.closing_text` is ready for idea 2 (trend changed, bot wants to close).
+4. Chart line settings — BUILT 2026-11-09: gear ⚙ next to the eye; 13 groups (entry, stop, target, liquidation,
+   lock point, stop after lock, break-even, orders, strategy [width/style only], resistance/support of chart TF
+   and of companion TF) each with colour / solid-dashed-dotted / width 1-4; localStorage "bot.lines" (this computer).
 
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance

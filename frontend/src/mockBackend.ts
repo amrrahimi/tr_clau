@@ -196,6 +196,21 @@ export class MockBackend implements Backend {
     return state;
   }
 
+  async setTelegram(change: { token?: string; enabled?: boolean }): Promise<PaperState> {
+    const state = await this.getPaper();
+    const t = state.telegram ?? { token: false, tokenHint: "", chat: false, enabled: true, lastError: null };
+    if (change.token !== undefined) Object.assign(t, { token: !!change.token, tokenHint: change.token ? "…" + change.token.slice(-4) : "", chat: false });
+    if (change.enabled !== undefined) t.enabled = change.enabled;
+    state.telegram = t;
+    return state;
+  }
+
+  async testTelegram(): Promise<PaperState> {
+    const state = await this.getPaper();
+    if (state.telegram?.token) state.telegram.chat = true;
+    return state;
+  }
+
   private connection: ConnectionState = { proxy: null, source: "direct", typed: "" };
 
   async getConnection(): Promise<ConnectionState> {

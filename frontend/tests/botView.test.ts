@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, loadEye, lockPrices, swingLevels, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
+import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_DEFAULTS, LINE_GROUPS, loadEye, loadLines, lockPrices, swingLevels, formatR, lockTrigger, lockValid, timeLeft, toggled, typingField, defaultTarget, levelProblem, resultAt, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "../src/botView.ts";
 import { translate } from "../src/i18n.ts";
 import { en } from "../src/locales/en.ts";
 import { fa } from "../src/locales/fa.ts";
@@ -330,5 +330,20 @@ test("explanation: why the bot entered, in Persian and English", () => {
   assert.ok(names.length >= 18);
   for (const s of names) {   // every strategy has its rule in words, in both languages
     assert.ok(`why.rule.${s}` in en && `why.rule.${s}` in fa, s);
+  }
+});
+
+test("line settings: defaults, the owner's saved choices, bad values ignored", () => {
+  const first = loadLines(() => null);
+  assert.deepEqual(first.entry, LINE_DEFAULTS.entry);
+  assert.equal(LINE_GROUPS.length, 13);
+  const saved = loadLines(() => JSON.stringify({ resChart: { color: "#ffffff", style: "solid", width: 3 },
+    supHigher: { color: "red", style: "wavy", width: 9 } }));
+  assert.deepEqual(saved.resChart, { color: "#ffffff", style: "solid", width: 3 });
+  assert.deepEqual(saved.supHigher, LINE_DEFAULTS.supHigher);   // not a #rrggbb colour, unknown style, too wide
+  assert.deepEqual(loadLines(() => "{bad").stop, LINE_DEFAULTS.stop);
+  for (const g of LINE_GROUPS) {   // every group has its name in both languages
+    assert.notEqual(translate("fa", `lines.${g}` as Parameters<typeof translate>[1]), `lines.${g}`);
+    assert.notEqual(translate("en", `lines.${g}` as Parameters<typeof translate>[1]), `lines.${g}`);
   }
 });
