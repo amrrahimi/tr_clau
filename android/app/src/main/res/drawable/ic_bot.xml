@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A simple candle-chart icon (also used in the notification). -->
+<!-- Notification icon: the app's shield with candles as a white silhouette (Android shows only its shape). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp" android:height="48dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#26A69A" android:pathData="M5,6h2v2h1v7H7v3H5v-3H4V8h1z" />
-    <path android:fillColor="#F23645" android:pathData="M11,3h2v3h1v8h-1v3h-2v-3h-1V6h1z" />
-    <path android:fillColor="#26A69A" android:pathData="M17,8h2v2h1v6h-1v4h-2v-4h-1v-6h1z" />
+    android:width="24dp" android:height="24dp" android:viewportWidth="240" android:viewportHeight="240">
+    <path android:pathData="M120,28 L194,57 V118 C194,166 162,198 120,216 C78,198 46,166 46,118 V57 Z"
+        android:strokeColor="#FFFFFF" android:strokeWidth="18" android:strokeLineJoin="round" />
+    <path android:fillColor="#FFFFFF" android:pathData="M90,118h20v44h-20z M110,100h20v46h-20z M130,74h20v62h-20z" />
 </vector>
