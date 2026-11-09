@@ -185,6 +185,7 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
 2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.
 3. Telegram messages: each closed position, and each position the bot wants to close because the trend changed
    (token and chat id entered in the app, kept only in ~/.trading-bot/settings.json).
+4. Chart line settings: colour, dashed/solid and width for support/resistance and the other chart lines.
 
 ## Next steps proposed to the owner
 1. Owner's idea, designed, not built: skip a signal when a 1m candle closes beyond the resistance
