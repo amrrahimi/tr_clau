@@ -1728,3 +1728,108 @@ class TelegramAskTest(TelegramTest):
 
     def test_no_positions(self):
         self.assertEqual(tg.positions_text([], 0), "هیچ پوزیشن بازی نیست.")
+
+
+
+class MinuteExitTest(unittest.TestCase):
+    """Audit 2026-11-09: inside the forming candle the stop fills at the stop (minute by minute), like an
+    exchange stop order, not at the price the bot happened to see later."""
+
+    def pos(self, **kw):
+        p = {"side": "short", "entryPrice": 1.1434, "entryTime": 1000.0, "entryCandle": 900, "checkedFrom": 1800,
+             "stop": 1.1, "takeProfit": 0.948, "lockedAt": 900}
+        p.update(kw)
+        return p
+
+    def m(self, t, o, h, low, c):
+        return {"time": t, "open": o, "high": h, "low": low, "close": c}
+
+    def test_stop_inside_a_minute_fills_at_the_stop(self):
+        minutes = [self.m(1800, 1.09, 1.095, 1.08, 1.09), self.m(1860, 1.0915, 1.125, 1.09, 1.121)]
+        self.assertEqual(pp.check_minutes(self.pos(), minutes, 1925), (1.1, "lock"))   # not 1.121
+
+    def test_gap_fills_at_the_minute_open(self):
+        minutes = [self.m(1800, 1.12, 1.13, 1.11, 1.12)]
+        self.assertEqual(pp.check_minutes(self.pos(), minutes, 1830), (1.12, "lock"))
+
+    def test_entry_minute_and_checked_minutes_left_out(self):
+        p = self.pos(entryTime=1810.0, checkedFrom=1800)
+        minutes = [self.m(1800, 1.09, 1.2, 1.08, 1.09), self.m(1860, 1.09, 1.095, 1.08, 1.09)]
+        self.assertIsNone(pp.check_minutes(p, minutes, 1930))     # 1800 holds the entry: not counted
+        self.assertEqual(p["checkedMinute"], 1920)
+        minutes.append(self.m(1920, 1.09, 1.0, 1.0, 1.0))
+        self.assertIsNone(pp.check_minutes(p, [self.m(1860, 1.2, 1.3, 1.2, 1.2)], 1990))   # already checked
+
+    def test_target_and_lock_from_minutes(self):
+        p = self.pos(stop=1.2, lockedAt=None, lock={"trigger": 0.8, "at": 0.4})
+        way = p["takeProfit"] - p["entryPrice"]
+        low = p["entryPrice"] + way * 0.85
+        self.assertIsNone(pp.check_minutes(p, [self.m(1800, 1.1, 1.1, low, 1.1)], 1900))
+        self.assertAlmostEqual(p["stop"], p["entryPrice"] + way * 0.4)
+        self.assertEqual(pp.check_minutes(p, [self.m(1860, 1.0, 1.0, 0.94, 0.95)], 1950), (0.948, "target"))
+
+
+class EvenTradesTest(unittest.TestCase):
+    """Owner 2026-11-09: break-even trades are neither won nor lost."""
+
+    def test_outcome(self):
+        base = {"notional": 10.0, "pnl": 8e-16, "exitReason": "breakeven"}
+        self.assertEqual(pp.trade_outcome(base), "even")
+        self.assertEqual(pp.trade_outcome({**base, "exitReason": "timeBe", "pnl": -1e-15}), "even")
+        self.assertEqual(pp.trade_outcome({**base, "exitReason": "stop", "pnl": -1.0}), "loss")
+
+
+class TelegramManageTest(TelegramAskTest):
+    """Owner 2026-11-09: each open position managed from Telegram."""
+    test_status_and_positions = test_no_positions = None
+
+    async def tap(self, data, chat=42):
+        return await self.ask_update({"update_id": 60, "callback_query": {"id": "q", "data": data, "message": {"chat": {"id": chat}}}})
+
+    async def ask_update(self, update):
+        async def post(url, body):
+            self.sent.append((url, body))
+            if url.endswith("/getUpdates"):
+                return 200, json.dumps({"ok": True, "result": [update] if "offset" not in body else []})
+            return 200, json.dumps({"ok": True, "result": True})
+        self.bot.tg_post = post
+        tg._offset.clear()
+        self.sent.clear()
+        await self.bot._telegram_answers(1_000_600)
+        return [b for u, b in self.sent if u.endswith("/sendMessage")]
+
+    async def test_list_edit_breakeven_close(self):
+        tg.save(token="123:ABC", chatId=42, enabled=True)
+        await self.bot._open(cand("A", 2.0, 20), "15m", 1_000_000, {"fee_ratio": 0.33})
+        p = self.bot.account["positions"][0]
+        self.bot.prices[p["id"]] = p["entryPrice"] * 1.005
+        sent = await self.ask("/positions")
+        self.assertEqual(sent[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"pos:{p['id']}")
+        sent = await self.tap(f"pos:{p['id']}")
+        datas = [b["callback_data"] for row in sent[0]["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertIn(f"est:{p['id']}", datas)
+        # new stop: the price comes as the next message (wrong side first)
+        await self.tap(f"est:{p['id']}")
+        sent = await self.ask_update({"update_id": 61, "message": {"chat": {"id": 42}, "text": str(p["entryPrice"] * 1.01)}})
+        self.assertIn("سمت ضرر", sent[0]["text"])
+        new = round(p["entryPrice"] * 0.995, 6)
+        sent = await self.ask_update({"update_id": 62, "message": {"chat": {"id": 42}, "text": str(new)}})
+        self.assertIn("✅", sent[0]["text"])
+        self.assertAlmostEqual(p["stop"], new)
+        self.assertEqual(p["edits"][-1]["what"], "stop")
+        # break-even (in profit)
+        await self.tap(f"pbe:{p['id']}")
+        self.assertAlmostEqual(p["stop"], p["breakevenPrice"])
+        # close: asked again first
+        sent = await self.tap(f"pcl:{p['id']}")
+        self.assertEqual(len(self.bot.account["positions"]), 1)
+        self.assertEqual(sent[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"pcy:{p['id']}")
+
+        async def recent(symbol, tf):
+            return [bar(1_000_500, 100.5, 100.5, 100.5, 100.5)]
+        self.bot.recent = recent
+        await self.tap(f"pcy:{p['id']}")
+        self.assertFalse(self.bot.account["positions"])
+        self.assertEqual(self.bot.account["closed"][-1]["exitReason"], "manual")
+        # someone else's chat cannot touch anything
+        self.assertEqual(await self.tap("pos:1", chat=99), [])

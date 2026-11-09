@@ -240,6 +240,21 @@ support (has[]) for the private calls. NOT yet tried on a real account (no keys 
   history test moved into the bot panel: section "history" (botApp.loadHistory -> /api/strategies/overview for the
   chart's coin/timeframe, cached 5 min, only while the section is open).
 
+## Audit + fixes (owner 2026-11-09 15:38-17:13)
+- Audit of all 19 positions since 11-07 16:25 against Toobit 1m candles (local engine via the built-in browser):
+  arithmetic all right; stop / lock exits seen on the live price inside the forming candle were booked at that
+  price, not at the stop (EVAA #20, UAI #42, ICNT #4, IDOL #2, ON #25, JCT #30: +0.99 $ understated in total);
+  late detections while the computer slept / app closed were booked at the right prices.
+- Fix: paper.check_minutes reads the forming candle minute by minute (closed and forming 1m candles after the
+  entry minute; stop fills at the stop, at the 1m open on a gap; target at the target; lock from 1m extremes;
+  p["checkedMinute"]); the live price is used only if 1m candles cannot be had or after a hole.
+- p["edits"]: time / what / old / new of every stop / target change by the owner.
+- Break-even (breakeven, timeBe, ~0 result) is neither won nor lost: winRate = wins / (wins + losses);
+  stats.losses / stats.evens; panel shows "x% (w won · l lost · e even)".
+- Telegram management: /positions (or the fixed button) lists positions with a button each (pos:<id>); the
+  position message has ✏️ stop (est:), ✏️ target (etp:) — the new price is the next message (5 min, /cancel),
+  checked by set_levels — ⚖️ break-even (pbe:, only in profit), 🔄, ❌ close (pcl: then pcy: to confirm).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

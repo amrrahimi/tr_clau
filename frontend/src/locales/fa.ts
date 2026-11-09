@@ -655,4 +655,5 @@ export const fa: Record<MessageKey, string> = {
   "bg.panels": "سبک پنل‌ها",
   "bg.frost": "شیشه‌ی مات",
   "bg.liquid": "Liquid Glass (شیشه‌ی مایع)",
+  "bot.winSplit": "{w} برد · {l} باخت · {e} سربه‌سر",
 };

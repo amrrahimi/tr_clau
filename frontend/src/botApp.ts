@@ -953,7 +953,9 @@ export class BotApp {
     row("bot.equity", `${s.equity.toFixed(2)} USDT`);
     row("bot.total", `${formatMoney(s.stats.netPnl)} (${formatPercent(s.stats.netPercent)})`, sign(s.stats.netPnl));
     row("bot.today", formatMoney(s.stats.todayPnl), sign(s.stats.todayPnl));
-    row("bot.winRate", s.stats.winRate === null ? "—" : `${s.stats.winRate.toFixed(0)}% (${s.stats.wins}/${s.stats.trades})`);
+    // Break-even trades are neither won nor lost (owner 2026-11-09): shown on their own.
+    row("bot.winRate", s.stats.winRate === null ? "—" : `${s.stats.winRate.toFixed(0)}% (${t("bot.winSplit", {
+      w: String(s.stats.wins), l: String(s.stats.losses ?? s.stats.trades - s.stats.wins), e: String(s.stats.evens ?? 0) })})`);
     row("bot.drawdown", `${s.stats.maxDrawdown.toFixed(1)}%`);
     row("bot.feesPaid", `${s.stats.fees.toFixed(2)} USDT`);
     parts.push(money);

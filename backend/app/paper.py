@@ -90,6 +90,7 @@ BTC_LINK_SECONDS = 86400
 # (close / go on); no answer -> asked again at the next look.
 REVIEW_AFTER_CANDLES = 20
 TELEGRAM_POLL_SECONDS = 3.0
+TELEGRAM_EDIT_SECONDS = 300   # a new stop / target price is taken within 5 minutes of the button
 REVIEW_EVERY = {"1m": 10, "3m": 10, "5m": 15, "15m": 15, "30m": 15, "1h": 15, "4h": 60}   # minutes
 TIME_BE_CANDLES = {"1m": 12, "3m": 12, "5m": 12, "15m": 12}
 
@@ -287,6 +288,33 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
         if be_exit is not None and ((last_price >= be_exit) if long_ else (last_price <= be_exit)):
             return be_exit, "timeBe"
         _maybe_lock(position, last_price, int(now))   # the price seen now can lock the profit too
+    return None
+
+
+def check_minutes(position: dict, minutes: list[dict], now: float) -> Optional[tuple[float, str]]:
+    """The part of the chart's candle that is still forming, minute by minute (owner 2026-11-09, audit):
+    like a stop order on the exchange, a stop crossed inside a minute fills at the stop, and at that
+    minute's open only when the minute opened past it (a gap); the target fills at the target. The
+    minute of the entry is left out (part of it was before the entry). The minute still forming counts
+    too: what it has done so far is after the entry. Returns (price, reason) or None."""
+    long_ = position["side"] == LONG
+    start = max(position["checkedFrom"], (int(position.get("entryTime") or position["entryCandle"]) // 60) * 60 + 60,
+                position.get("checkedMinute") or 0)
+    for m in minutes:
+        if m["time"] < start or m["time"] > now:
+            continue
+        stop, target = position["stop"], position["takeProfit"]
+        if (m["low"] <= stop) if long_ else (m["high"] >= stop):
+            gapped = (m["open"] < stop) if long_ else (m["open"] > stop)
+            return (m["open"] if gapped else stop), _stop_reason(position)
+        if (m["high"] >= target) if long_ else (m["low"] <= target):
+            return target, "target"
+        be_exit = position.get("beExit")
+        if be_exit is not None and ((m["high"] >= be_exit) if long_ else (m["low"] <= be_exit)):
+            return be_exit, "timeBe"
+        _maybe_lock(position, m["high"] if long_ else m["low"], int(m["time"]))
+        if m["time"] + 60 <= now:
+            position["checkedMinute"] = m["time"] + 60   # closed minutes are not looked at again
     return None
 
 
@@ -673,7 +701,8 @@ class PaperBot:
     def public(self) -> dict:
         a = self.account
         closed = a["closed"]
-        wins = [t for t in closed if t["pnl"] > 0]
+        wins = [t for t in closed if trade_outcome(t) == "win"]
+        losses = [t for t in closed if trade_outcome(t) == "loss"]
         equity = self.equity()
         summary = self.memory.summary() if self.memory else None
         positions = []
@@ -716,7 +745,10 @@ class PaperBot:
             "stats": {
                 "trades": len(closed),
                 "wins": len(wins),
-                "winRate": len(wins) / len(closed) * 100 if closed else None,
+                "losses": len(losses),
+                "evens": len(closed) - len(wins) - len(losses),
+                # break-even trades are neither won nor lost (owner 2026-11-09)
+                "winRate": len(wins) / (len(wins) + len(losses)) * 100 if wins or losses else None,
                 "netPnl": equity - a["capital"],
                 "netPercent": (equity - a["capital"]) / a["capital"] * 100 if a["capital"] else 0,
                 "todayPnl": equity - a["dayStartEquity"],
@@ -903,6 +935,7 @@ class PaperBot:
         p["edited"] = True
         for what, old, new in changes:
             self._event("levels", symbol=p["base"], timeframe=p["timeframe"], what=what, old=old, new=new)
+            p.setdefault("edits", []).append({"time": self.now(), "what": what, "old": old, "new": new})
         self.save()
         self.mirror("levels", p)
         return None
@@ -1222,7 +1255,17 @@ class PaperBot:
             return
         last = candles[-1]["close"]
         self.prices[p["id"]] = last
-        hit = check_exit(p, candles, last, tf_seconds, now, hole_before)
+        # The forming candle is read minute by minute (stop fills at the stop, as on the exchange); only
+        # if the minutes cannot be had, the price seen now is used as before.
+        minutes = None
+        if hole_before is None:
+            try:
+                minutes = await self.recent(p["symbol"], "1m")
+            except Exception:
+                minutes = None
+        hit = check_exit(p, candles, None if minutes else last, tf_seconds, now, hole_before)
+        if hit is None and minutes:
+            hit = check_minutes(p, minutes, now)
         cap = self.account.get("profitCap") or 0
         if hit is None and cap > 0 and pnl(p, last, self.fees.taker)[0] >= cap:
             hit = (last, "cap")   # owner's profit cap: take the small profit now
@@ -1336,6 +1379,20 @@ class PaperBot:
                     text = "حساب واقعی وصل نیست."
                 await self._tg_reply(settings, a["query"], text[:180])
                 continue
+            if a["kind"] == "manage":
+                await self._tg_manage(settings, a, now)
+                continue
+            if a["kind"] == "number" or (a["kind"] == "ask" and a["what"] == "cancel"):
+                await self._tg_price(settings, a, now)
+                continue
+            if a["kind"] == "ask" and a["what"] == "positions":
+                rows = self._telegram_positions()
+                try:
+                    await telegram.send(telegram.positions_text(rows, now), self.tg_post, settings,
+                                        buttons=telegram.position_buttons(rows) or None)
+                except telegram.TelegramError as error:
+                    self.tg_error = str(error)
+                continue
             if a["kind"] == "ask" and a["what"] == "closeall":
                 try:
                     await telegram.send("🛑 همه‌ی پوزیشن‌های واقعی بسته شوند و ربات واقعی متوقف شود؟",
@@ -1371,6 +1428,77 @@ class PaperBot:
             self._event("reviewAnswer", symbol=p["base"], timeframe=p["timeframe"], answer=action)
         if changed:
             self.save()
+
+    async def _tg_say(self, settings: dict, text: str, buttons: Optional[list] = None) -> None:
+        try:
+            await telegram.send(text, self.tg_post, settings, buttons=buttons)
+        except telegram.TelegramError as error:
+            self.tg_error = str(error)
+
+    LEVEL_WORDS = {"missing": "این پوزیشن دیگر باز نیست.",
+                   "stop_side": "حد ضرر باید سمت ضرر قیمت فعلی باشد (لانگ: پایین‌تر، شورت: بالاتر).",
+                   "stop_liquidation": "حد ضرر باید قبل از قیمت لیکوئید باشد.",
+                   "target_side": "حد سود باید سمت سود قیمت فعلی باشد (لانگ: بالاتر، شورت: پایین‌تر)."}
+
+    async def _tg_manage(self, settings: dict, a: dict, now: float) -> None:
+        """One open position from Telegram: show it, new stop / target (the price comes as the next
+        message), break-even, close (asked again first)."""
+        action, pid = a["action"], a["id"]
+        p = next((x for x in self.account["positions"] if x["id"] == pid), None)
+        await self._tg_reply(settings, a["query"], "")
+        if p is None:
+            await self._tg_say(settings, "این پوزیشن دیگر باز نیست.")
+            return
+        rows = {x["id"]: x for x in self._telegram_positions()}
+        if action == "pos":
+            await self._tg_say(settings, telegram.positions_text([rows[pid]], now), telegram.manage_buttons(p))
+        elif action in ("est", "etp"):
+            what = "stop" if action == "est" else "target"
+            self._tg_wait = {"what": what, "id": pid, "time": now}
+            current = p["stop"] if what == "stop" else p["takeProfit"]
+            await self._tg_say(settings, f"قیمت جدید {'حد ضرر' if what == 'stop' else 'حد سود'} {p['base']} "
+                                         f"{p['timeframe']} را بفرستید (الان {current:.6g}، قیمت {rows[pid].get('price')}).\n"
+                                         "برای لغو: /cancel")
+        elif action == "pbe":
+            price = rows[pid].get("price")
+            be = p["breakevenPrice"]
+            long_ = p["side"] == LONG
+            if price is None or ((price <= be) if long_ else (price >= be)):
+                await self._tg_say(settings, "پوزیشن در سود نیست؛ حد ضرر به سربه‌سر نمی‌رود.")
+                return
+            error = self.set_levels(pid, stop=be)
+            await self._tg_say(settings, self.LEVEL_WORDS.get(error, error) if error else
+                               f"✅ حد ضرر {p['base']} به سربه‌سر ({be:.6g}) رفت.")
+        elif action == "pcl":
+            await self._tg_say(settings, f"پوزیشن {p['base']} {p['timeframe']} {telegram.side_word(p)} همین الان بسته شود؟",
+                               [("بله، ببند", f"pcy:{pid}")])
+        elif action == "pcy":
+            done = await self.close_position(pid)
+            closed = next((t for t in reversed(self.account["closed"]) if t["id"] == pid), None)
+            await self._tg_say(settings, "این پوزیشن دیگر باز نیست." if not done else
+                               f"❌ بسته شد: {p['base']} {p['timeframe']} · "
+                               f"{telegram._money(closed['pnl']) if closed else ''}")
+
+    async def _tg_price(self, settings: dict, a: dict, now: float) -> None:
+        """The price the owner sent after «✏️ حد ضرر / حد سود» (or /cancel)."""
+        wait = getattr(self, "_tg_wait", None)
+        self._tg_wait = None
+        if a["kind"] == "ask":
+            await self._tg_say(settings, "لغو شد." if wait else "چیزی در انتظار نبود.")
+            return
+        if not wait or now - wait["time"] > TELEGRAM_EDIT_SECONDS:
+            await self._tg_say(settings, "اول در پیام پوزیشن «✏️ حد ضرر» یا «✏️ حد سود» را بزنید.")
+            return
+        value = a["value"]
+        error = self.set_levels(wait["id"], stop=value) if wait["what"] == "stop" else \
+            self.set_levels(wait["id"], target=value)
+        if error:
+            self._tg_wait = {**wait, "time": now}   # try another price
+            await self._tg_say(settings, f"⚠️ {self.LEVEL_WORDS.get(error, error)} عدد دیگری بفرستید یا /cancel.")
+            return
+        p = next((x for x in self.account["positions"] if x["id"] == wait["id"]), None)
+        await self._tg_say(settings, f"✅ {'حد ضرر' if wait['what'] == 'stop' else 'حد سود'} "
+                                     f"{p['base'] if p else ''} شد {value:.6g}.", telegram.manage_buttons(p) if p else None)
 
     async def _tg_reply(self, settings: dict, query_id: str, text: str) -> None:
         try:
@@ -1561,7 +1689,7 @@ class PaperBot:
         self._real_tasks.add(task)
         task.add_done_callback(self._real_tasks.discard)
 
-    def notify(self, text: str, buttons: Optional[list[tuple[str, str]]] = None) -> None:
+    def notify(self, text: str, buttons: Optional[list] = None) -> None:
         """A Telegram message, sent in the background (the bot does not wait for it)."""
         settings = telegram.load()
         if not (settings["enabled"] and settings["token"] and settings["chatId"] is not None):

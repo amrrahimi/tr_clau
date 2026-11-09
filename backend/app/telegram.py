@@ -9,6 +9,7 @@ then "test" reads the bot's updates and keeps that chat's id.
 from __future__ import annotations
 
 import json
+import math
 from typing import Awaitable, Callable, Optional
 
 from . import connection
@@ -101,19 +102,52 @@ async def find_chat(token: str, post: Post) -> Optional[int]:
 
 
 async def send(text: str, post: Post = default_post, settings: Optional[dict] = None,
-               buttons: Optional[list[tuple[str, str]]] = None) -> None:
+               buttons: Optional[list] = None) -> None:
     """buttons: (label, data) shown under the message; the owner's tap comes back through answers()."""
     t = settings or load()
     if t["chatId"] is None:
         raise TelegramError("no chat")
     body: dict = {"chat_id": t["chatId"], "text": text}
     if buttons:
-        body["reply_markup"] = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]}
+        rows = buttons if isinstance(buttons[0], list) else [buttons]   # one row, or rows of buttons
+        body["reply_markup"] = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in row]
+                                                    for row in rows]}
     await _call(t["token"], "sendMessage", body, post)
 
 
 # The last update read (so each tap is handled once); kept in memory, Telegram forgets read updates.
 _offset: dict[str, int] = {}
+
+
+# Managing one open position from Telegram (owner 2026-11-09): show it, new stop / target, break-even,
+# close (asked twice).
+MANAGE = ("pos", "est", "etp", "pbe", "pcl", "pcy")
+
+
+def _number(text: str) -> Optional[float]:
+    digits = text.strip().translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٫", "0123456789."))
+    try:
+        value = float(digits)
+    except ValueError:
+        return None
+    return value if value > 0 and math.isfinite(value) else None
+
+
+def side_word(p: dict) -> str:
+    return "لانگ" if p.get("side") == "long" else "شورت"
+
+
+def position_buttons(rows: list[dict]) -> list[list[tuple[str, str]]]:
+    """One button per open position, two in a row."""
+    keys = [(f"{p['base']} {p['timeframe']} {side_word(p)}", f"pos:{p['id']}") for p in rows]
+    return [keys[n:n + 2] for n in range(0, len(keys), 2)]
+
+
+def manage_buttons(p: dict) -> list[list[tuple[str, str]]]:
+    i = p["id"]
+    return [[("✏️ حد ضرر", f"est:{i}"), ("✏️ حد سود", f"etp:{i}")],
+            [("⚖️ سربه‌سر", f"pbe:{i}"), ("🔄 تازه کردن", f"pos:{i}")],
+            [("❌ بستن", f"pcl:{i}")]]
 
 
 STATUS_BUTTON = "📊 وضعیت ربات"
@@ -141,6 +175,8 @@ async def answers(settings: dict, post: Post = default_post) -> list[dict]:
                 out.append({"kind": "tap", "action": action, "id": int(rest), "query": str(q.get("id"))})
             elif chat == settings["chatId"] and action in ("rok", "rno", "panic") and rest.isdigit():
                 out.append({"kind": "real", "action": action, "id": int(rest), "query": str(q.get("id"))})
+            elif chat == settings["chatId"] and action in MANAGE and rest.isdigit():
+                out.append({"kind": "manage", "action": action, "id": int(rest), "query": str(q.get("id"))})
             continue
         message = update.get("message") or {}
         if (message.get("chat") or {}).get("id") != settings["chatId"]:
@@ -153,6 +189,10 @@ async def answers(settings: dict, post: Post = default_post) -> list[dict]:
             out.append({"kind": "ask", "what": "positions"})
         elif command == "/closeall":
             out.append({"kind": "ask", "what": "closeall"})
+        elif command == "/cancel":
+            out.append({"kind": "ask", "what": "cancel"})
+        elif _number(text) is not None:
+            out.append({"kind": "number", "value": _number(text)})   # a new stop / target price
         elif text:
             out.append({"kind": "ask", "what": "start"})   # anything else: show the two buttons again
     return out

@@ -653,6 +653,7 @@ export const en = {
   "bg.panels": "Panels",
   "bg.frost": "Frosted glass",
   "bg.liquid": "Liquid Glass",
+  "bot.winSplit": "{w} won · {l} lost · {e} even",
 } as const;
 
 export type MessageKey = keyof typeof en;

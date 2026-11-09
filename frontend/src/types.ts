@@ -439,6 +439,8 @@ export interface PaperState {
   stats: {
     trades: number;
     wins: number;
+    losses?: number;
+    evens?: number;
     winRate: number | null;
     netPnl: number;
     netPercent: number;

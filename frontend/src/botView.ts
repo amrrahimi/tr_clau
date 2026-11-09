@@ -180,7 +180,7 @@ export function paperAsTrade(p: PaperPosition | PaperTrade): Trade {
 /** Result of a closed bot trade: break-even when it closed at the break-even stop or the result is
  * practically zero (a tiny fraction of the position), else win or loss. Same rule as the backend. */
 export function tradeOutcome(t: PaperTrade): "win" | "loss" | "even" {
-  if (t.exitReason === "breakeven" || Math.abs(t.pnl) < t.notional * 1e-4) return "even";
+  if (t.exitReason === "breakeven" || t.exitReason === "timeBe" || Math.abs(t.pnl) < t.notional * 1e-4) return "even";
   return t.pnl > 0 ? "win" : "loss";
 }
 
