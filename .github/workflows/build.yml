@@ -83,7 +83,13 @@ jobs:
         run: |
           npm install
           npx tauri icon src-tauri/app-icon.png
-          npx tauri build
+          # The installer tools (WiX / NSIS) are downloaded from GitHub while packaging; that download
+          # sometimes fails (HTTP 504). Try again: the second build only re-packages.
+          for n in 1 2 3; do
+            npx tauri build && break
+            if [ "$n" = 3 ]; then exit 1; fi
+            echo "packaging failed, trying again in 60 s"; sleep 60
+          done
 
       - uses: actions/upload-artifact@v5
         with:
