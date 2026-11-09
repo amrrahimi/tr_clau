@@ -7,7 +7,7 @@ download links. The repository is public: never commit keys, passwords or accoun
 ## Where things are
 - Branch `main` holds everything (desktop build runs only on `main`; Android on every branch).
 - Desktop: GitHub Actions "Build desktop apps" (Artifacts). Android: release `android-latest`
-  (`TradingBot.apk`, installs over the old one). Data: `~/.trading-bot/` (paper.json,
+  (`Leon.apk`, also published as `TradingBot.apk`; installs over the old one). The app is called **Leon** (owner, 2026-11-09). Data: `~/.trading-bot/` (paper.json,
   memory.db, settings.json, backend.log); Android keeps the same files in the app's data folder.
 - Backend: `backend/app/` (paper.py bot, strategies.py 18 strategies, brain.py ML filter,
   pretrain.py, memory.py, connection.py proxy, research.py experiments).

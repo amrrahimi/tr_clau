@@ -5,6 +5,7 @@
 
 import { BackendError, type Backend, type LiveConnection, type PaperAction } from "./api.ts";
 import { applyLiveCandle, pricePrecision } from "./candles.ts";
+import { leonWordmark } from "./brand.ts";
 import { ChartView, THEME, type BoxDecor, type Level } from "./chart.ts";
 import { adviceText, allStrategies, brainKnobHint, brainText, breakevenTrigger, candleStart, CHART_TFS, COMPANION_TF, EYE_GROUPS, explainLines, LINE_GROUPS, loadFolds, saveFolds, sectionOpen, type PanelSection, loadEye, loadLines, saveLines, type LineGroup, type LineLook, type LineStyleName, lockPrices, saveEye, swingLevels, type EyeGroup, formatR, lockValid, timeLeft, toggled, typingField, levelProblem, resultAt, defaultTarget, eventText, formatMoney, paperAsTrade, pauseRuleText, statusKey, strategyOrder, timeframesOf, tradeOutcome } from "./botView.ts";
 import { formatClock, formatPrice } from "./format.ts";
@@ -138,7 +139,7 @@ export class BotApp {
     document.documentElement.lang = this.language;
     document.documentElement.dir = direction(this.language);
     document.title = this.t("app.title");
-    this.els.title.textContent = this.t("app.title");
+    this.els.title.innerHTML = leonWordmark(20);
     this.els.language.textContent = this.t("language.switch");
     this.els.language.title = this.t("language.switchLabel");
     this.els.view.replaceChildren(...(["auto", "semi"] as View[]).map((v) => {

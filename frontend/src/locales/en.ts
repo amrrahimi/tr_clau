@@ -1,6 +1,6 @@
 // English texts. Every key here must also exist in fa.ts (a test checks this).
 export const en = {
-  "app.title": "Trading Bot",
+  "app.title": "Leon",
   "market.spot": "Spot",
   "market.futures": "Futures",
   "mode.scalping": "Scalping",

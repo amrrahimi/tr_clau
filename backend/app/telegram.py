@@ -152,7 +152,7 @@ async def test(post: Post = default_post) -> dict:
         if chat is None:
             raise TelegramError("no chat: send /start to your bot first")
         t = save(chatId=chat)
-    await send("✅ ربات معامله‌گر به تلگرام وصل شد.", post, t)
+    await send("✅ Leon به تلگرام وصل شد.", post, t)
     return public()
 
 

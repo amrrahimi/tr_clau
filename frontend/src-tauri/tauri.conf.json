@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Trading Bot",
+  "productName": "Leon",
   "version": "0.1.0",
   "identifier": "com.amrrahimi.tradingbot",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Trading Bot",
+        "title": "Leon",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

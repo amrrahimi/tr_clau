@@ -2,7 +2,7 @@
 import type { MessageKey } from "./en.ts";
 
 export const fa: Record<MessageKey, string> = {
-  "app.title": "ربات معامله‌گر",
+  "app.title": "Leon",
   "market.spot": "اسپات",
   "market.futures": "فیوچرز",
   "mode.scalping": "نوسان‌گیری",

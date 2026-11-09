@@ -2,6 +2,7 @@
 // chart in the middle, indicator controls in the chart's corner. It only asks the backend and shows
 // answers; all calculations happen in the backend.
 
+import { leonWordmark } from "./brand.ts";
 import { BackendError, type Backend, type LiveConnection } from "./api.ts";
 import { applyLiveCandle, prependOlder } from "./candles.ts";
 import { ChartView } from "./chart.ts";
@@ -394,6 +395,7 @@ export class App {
     this.root.innerHTML = `
       <div class="app">
         <header class="topbar">
+          <span class="app-name">${leonWordmark(20)}</span>
           <div class="segmented" data-el="view"></div>
           <div class="segmented" data-el="marketTypes"></div>
           <div class="symbol-info">

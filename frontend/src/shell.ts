@@ -2,6 +2,7 @@
 // everything) or Semi-automatic (the screen with charts, indicators,
 // strategies and scanner). The top bar can switch later.
 
+import { leonWordmark } from "./brand.ts";
 import type { Backend } from "./api.ts";
 import { App } from "./app.ts";
 import { BotApp, type View } from "./botApp.ts";
@@ -64,7 +65,7 @@ function choose(root: HTMLElement): Promise<View> {
   document.documentElement.lang = language;
   document.documentElement.dir = direction(language);
   return new Promise((resolve) => {
-    root.innerHTML = `<div class="chooser"><h1></h1><div class="chooser-cards"></div></div>`;
+    root.innerHTML = `<div class="chooser"><div class="chooser-brand">${leonWordmark(56)}</div><h1></h1><div class="chooser-cards"></div></div>`;
     root.querySelector("h1")!.textContent = t("view.chooseTitle");
     const cards = root.querySelector(".chooser-cards")!;
     for (const [view, title, text] of [

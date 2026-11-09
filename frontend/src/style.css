@@ -667,3 +667,8 @@ html, body { background: #05070d; }
 html.see-through, html.see-through body, .scene[data-mode="clear"] { background: transparent !important; }
 .bg-glass { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 8px; font-size: 12px; color: var(--muted); }
 .bg-glass input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* "Leon" wordmark (brand.ts) */
+.leon-mark { display: block; color: var(--text, #fff); }
+.app-name { display: inline-flex; align-items: center; }
+.chooser-brand { display: flex; justify-content: center; margin-bottom: 18px; color: #fff; }

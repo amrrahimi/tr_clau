@@ -1,4 +1,4 @@
-# Trading Bot
+# Leon
 
 A personal desktop app (Windows, macOS and Android) for the Toobit exchange: live crypto charts, indicators, strategy history tests, a scanner and a paper-trading bot (virtual money).
 
