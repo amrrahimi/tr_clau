@@ -255,6 +255,14 @@ support (has[]) for the private calls. NOT yet tried on a real account (no keys 
   position message has ✏️ stop (est:), ✏️ target (etp:) — the new price is the next message (5 min, /cancel),
   checked by set_levels — ⚖️ break-even (pbe:, only in profit), 🔄, ❌ close (pcl: then pcy: to confirm).
 
+## Volume Profile study (2026-11-09 21:46, branch study-2026-11-09, scripts/study_vp.py, 40 coins)
+Profile = 100 candles before the signal, 24 rows, VA 70%. R after fees, halves:
+- B (bot signals with VP stop / target, rr>=1): 1h -0.113 and 4h -0.050 (both halves negative); 5m / 15m mixed. No.
+- C (POC side filter: longs below POC, shorts above, own levels): 4h kept +0.049 (+0.064/+0.033) vs removed
+  +0.011; 1h kept +0.002 (-0.037/+0.039) vs removed -0.035 (-0.106/+0.023) -> better in both halves on 1h/4h.
+  5m / 15m: kept worse than removed in both halves. => candidate rule for 1h / 4h only (not built).
+- D (VA edge back to POC) / E (80% rule): small samples, unstable; only 1h D long +0.117 (254, both halves +).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
