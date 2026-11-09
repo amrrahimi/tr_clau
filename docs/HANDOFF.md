@@ -201,6 +201,19 @@ Range trading (owner asked): bb_reversion / vwap_reversion / sd_zone do it; -0.1
   Cargo feature macos-private-api, window-vibrancy 0.6, command set_glass: macOS vibrancy HudWindow, Windows
   Mica -> acrylic -> blur, only while chosen); slider 0-90% = panels' opacity (--glass-alpha).
 
+## Study of 2026-11-09 (branch study-2026-11-09, workflow "Study", backend/scripts/study.py; 40 top coins)
+All 18 strategies, bot fee/reward rules, every signal (no trend/BTC filters), R after fees, two halves.
+- Two-step lock (BE at 20-50% + 80/40): no gain on any timeframe (differences ~0.01 R, not in both halves);
+  80/40 alone also neutral here (4h a little worse: +0.029 none vs +0.023). Not built.
+- S/R skip (1m close beyond the nearest swing level against the trade between signal close and the live-like
+  late entry; 6 days of 1m): 5m crossed -0.29 R (115, both halves) vs kept +0.03; 1h crossed -0.13 (59, both
+  halves); 15m crossed +0.04 (no). Promising on 5m / 1h but small samples: to be confirmed on more days.
+- Turtle 55 + EMA200 4h: best exits 10/20-channel +0.13..+0.14 R but first half negative (-0.05..-0.10),
+  second +0.28..+0.35: not stable. Not built.
+- Limit entry: per signal about the same as market (adverse selection: the missed ones are the winners,
+  +0.35 R at market). No gain.
+- Crowd data on Toobit via ccxt: only funding-rate history; funding vs results: no stable effect.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.
 2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.
