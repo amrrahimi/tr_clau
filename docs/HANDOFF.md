@@ -215,6 +215,9 @@ All 18 strategies, bot fee/reward rules, every signal (no trend/BTC filters), R 
 - Crowd data on Toobit via ccxt: only funding-rate history; funding vs results: no stable effect.
 
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
+0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
+   RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
+0b. S/R skip rule (study 2026-11-09): kept for later, promising on 5m / 1h.
 1. Two-step profit lock: step 1 stop to the fee break-even, step 2 to 70-80% of the way.
 2. Long positions: after a set time, bot + AI review every ~15 min; close as soon as possible without a loss if the trend turned.
 3. Telegram messages — BUILT 2026-11-09 for closed positions (backend/app/telegram.py; settings.json "telegram"
