@@ -327,6 +327,30 @@ class ExchangeAccount:
         await self._open(plan)
         return "باز شد." if plan["status"] == "open" else f"باز نشد: {plan['status']}"
 
+    # Toobit's own futures API (ccxt's unified calls cannot place a stop-loss on Toobit, CI 2026-11-09):
+    #   POST api/v1/futures/order                  {symbol: BTC-SWAP-USDT, side: BUY_OPEN|SELL_OPEN,
+    #                                               type: LIMIT, priceType: MARKET, quantity (contracts)}
+    #   POST api/v1/futures/position/trading-stop  {symbol, side: LONG|SHORT, stopLoss, takeProfit}
+    #   POST api/v1/futures/flashClose             {symbol, side: LONG|SHORT}  (market close of the position)
+
+    @staticmethod
+    def _contracts(ex, symbol: str, base_amount: float) -> float:
+        size = _num((ex.market(symbol) or {}).get("contractSize")) or 1.0
+        return float(ex.amount_to_precision(symbol, base_amount / size))
+
+    @staticmethod
+    async def _set_stops(ex, symbol: str, long_: bool, stop: float, target: float) -> None:
+        answer = await ex.privatePostApiV1FuturesPositionTradingStop({
+            "symbol": ex.market(symbol)["id"], "side": "LONG" if long_ else "SHORT",
+            "stopLoss": ex.price_to_precision(symbol, stop), "takeProfit": ex.price_to_precision(symbol, target)})
+        if isinstance(answer, dict) and answer.get("code") not in (None, 0, 200, "0", "200"):
+            raise AccountError(f"trading-stop: {answer.get('msg') or answer.get('code')}")
+
+    @staticmethod
+    async def _flash_close(ex, symbol: str, long_: bool) -> None:
+        await ex.privatePostApiV1FuturesFlashClose({"symbol": ex.market(symbol)["id"],
+                                                    "side": "LONG" if long_ else "SHORT"})
+
     async def _open(self, plan: dict) -> None:
         """Market entry, then the stop-loss and take-profit on the exchange. No protection -> closed at once."""
         async with self.lock:
@@ -334,26 +358,27 @@ class ExchangeAccount:
             symbol, long_ = plan["symbol"], plan["side"] == "long"
             try:
                 await ex.load_markets()
-                amount = float(ex.amount_to_precision(symbol, plan["amount"]))
-                if amount <= 0:
+                contracts = self._contracts(ex, symbol, plan["amount"])
+                if contracts <= 0:
                     raise AccountError("amount below the exchange minimum")
                 if ex.has.get("setLeverage"):
                     try:
                         await ex.set_leverage(plan["leverage"], symbol)
                     except Exception as error:
                         log.warning("set leverage: %r", error)
-                order = await ex.create_order(symbol, "market", "buy" if long_ else "sell", amount)
-                plan.update(amount=amount, orderId=order.get("id"))
+                order = await ex.privatePostApiV1FuturesOrder({
+                    "symbol": ex.market(symbol)["id"], "side": "BUY_OPEN" if long_ else "SELL_OPEN",
+                    "type": "LIMIT", "priceType": "MARKET", "quantity": str(contracts),
+                    "newClientOrderId": f"leon{plan['paperId']}t{int(self.now())}"})
+                plan.update(contracts=contracts, orderId=(order or {}).get("orderId"))
             except Exception as error:
                 plan["status"] = f"error: {type(error).__name__}: {str(error)[:150]}"
                 self.notify(f"⚠️ معامله‌ی واقعی {plan.get('base')} باز نشد: {plan['status']}")
                 return
-            record = {"symbol": symbol, "side": plan["side"], "amount": amount, "status": "open",
-                      "stopOrder": None, "targetOrder": None}
+            record = {"symbol": symbol, "side": plan["side"], "amount": contracts, "status": "open"}
             self.links[plan["paperId"]] = record
             try:
-                record["stopOrder"] = await self._protect(ex, symbol, long_, amount, plan["stop"], "stop")
-                record["targetOrder"] = await self._protect(ex, symbol, long_, amount, plan["target"], "target")
+                await self._set_stops(ex, symbol, long_, plan["stop"], plan["target"])
             except Exception as error:
                 # never leave a real position without its stop
                 plan["status"] = f"error: protection failed ({type(error).__name__}); closed"
@@ -364,28 +389,15 @@ class ExchangeAccount:
                 return
             plan["status"] = "open"
             self.notify(f"✅ معامله‌ی واقعی باز شد: {plan.get('base')} {'لانگ' if long_ else 'شورت'} "
-                        f"مقدار {amount} · مارجین {plan['margin']:.2f}$ · حد ضرر روی صرافی {plan['stop']}")
-
-    @staticmethod
-    async def _protect(ex, symbol: str, long_: bool, amount: float, price: float, kind: str) -> Optional[str]:
-        price = float(ex.price_to_precision(symbol, price))
-        params = {"reduceOnly": True, ("stopLossPrice" if kind == "stop" else "takeProfitPrice"): price}
-        order = await ex.create_order(symbol, "market", "sell" if long_ else "buy", amount, None, params)
-        return order.get("id")
+                        f"{contracts} قرارداد · مارجین {plan['margin']:.2f}$ · حد ضرر روی صرافی {plan['stop']}")
 
     async def _close_market(self, ex, record: dict) -> None:
-        long_ = record["side"] == "long"
         try:
-            await ex.create_order(record["symbol"], "market", "sell" if long_ else "buy", record["amount"], None,
-                                  {"reduceOnly": True})
+            await self._flash_close(ex, record["symbol"], record["side"] == "long")
         except Exception as error:
             log.warning("real close %s: %r", record["symbol"], error)
-        for key in ("stopOrder", "targetOrder"):
-            if record.get(key):
-                try:
-                    await ex.cancel_order(record[key], record["symbol"])
-                except Exception:
-                    pass
+            self.notify(f"⚠️ بستن پوزیشن واقعی {record['symbol']} انجام نشد: {str(error)[:120]} — در Toobit بررسی کنید.")
+            return
         record["status"] = "closed"
 
     async def on_close(self, p: dict, reason: str) -> None:
@@ -405,13 +417,7 @@ class ExchangeAccount:
             if still:
                 await self._close_market(ex, record)
             else:
-                record["status"] = "closed"
-                for key in ("stopOrder", "targetOrder"):   # the other protective order is left over
-                    if record.get(key):
-                        try:
-                            await ex.cancel_order(record[key], record["symbol"])
-                        except Exception:
-                            pass
+                record["status"] = "closed"   # its own stop / target on the exchange closed it
 
     async def on_levels(self, p: dict) -> None:
         """The paper stop / target moved (lock, break-even, the owner's drag): move them on the exchange."""
@@ -420,21 +426,11 @@ class ExchangeAccount:
             return
         async with self.lock:
             ex = self._client()
-            long_ = record["side"] == "long"
-            for key, price, kind in (("stopOrder", p["stop"], "stop"), ("targetOrder", p["takeProfit"], "target")):
-                try:
-                    new = await self._protect(ex, record["symbol"], long_, record["amount"], price, kind)
-                except Exception as error:
-                    log.warning("real %s move failed: %r", kind, error)
-                    if kind == "stop":
-                        self.notify(f"⚠️ جابه‌جایی حد ضرر واقعی {record['symbol']} انجام نشد؛ حد ضرر قبلی سر جایش است.")
-                    continue
-                old, record[key] = record.get(key), new
-                if old:
-                    try:
-                        await ex.cancel_order(old, record["symbol"])
-                    except Exception:
-                        pass
+            try:
+                await self._set_stops(ex, record["symbol"], record["side"] == "long", p["stop"], p["takeProfit"])
+            except Exception as error:
+                log.warning("real stop move failed: %r", error)
+                self.notify(f"⚠️ جابه‌جایی حد ضرر واقعی {record['symbol']} انجام نشد؛ حد ضرر قبلی سر جایش است.")
 
     async def panic(self) -> str:
         """Emergency: close every real position, cancel every order, stop real trading."""
@@ -451,8 +447,9 @@ class ExchangeAccount:
                 amount = _num(x.get("contracts"))
                 if not amount:
                     continue
-                await self._close_market(ex, {"symbol": x["symbol"], "side": x.get("side"), "amount": amount})
-                closed += 1
+                record = {"symbol": x["symbol"], "side": x.get("side"), "amount": amount, "status": "open"}
+                await self._close_market(ex, record)
+                closed += record["status"] == "closed"
             try:
                 if ex.has.get("cancelAllOrders"):
                     await ex.cancel_all_orders()

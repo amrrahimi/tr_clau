@@ -13,7 +13,7 @@ import { direction, loadLanguage, saveLanguage, translate, type Language } from 
 import type { MessageKey } from "./locales/en.ts";
 import { formatPercent } from "./strategyState.ts";
 import { loadZone } from "./timezone.ts";
-import type { Candle, ConnectionState, IndicatorResult, ConsultAnswer, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults } from "./types.ts";
+import type { Candle, ConnectionState, IndicatorResult, ConsultAnswer, MarketInfo, PaperPosition, PaperState, PaperTrade, StrategyCard, StrategyResults, StrategyRow } from "./types.ts";
 
 const POLL_MS = 5000;
 
@@ -146,13 +146,9 @@ export class BotApp {
     this.els.title.innerHTML = leonWordmark(20);
     this.els.language.textContent = this.t("language.switch");
     this.els.language.title = this.t("language.switchLabel");
-    this.els.view.replaceChildren(...(["auto", "semi"] as View[]).map((v) => {
-      const b = document.createElement("button");
-      b.textContent = this.t(v === "auto" ? "view.auto" : "view.semi");
-      b.className = v === "auto" ? "active" : "";
-      if (v === "semi") b.addEventListener("click", () => this.onSwitch("semi"));
-      return b;
-    }));
+    // The semi-automatic screen is switched off (owner 2026-11-09); its code stays (app.ts) for later.
+    this.els.view.hidden = true;
+    void this.onSwitch;   // kept for when the semi-automatic screen comes back
     this.render();
     this.drawTrades(); // labels on the chart follow the language too
   }
@@ -345,10 +341,11 @@ export class BotApp {
       const profit = resultAt(p, p.takeProfit, fees.taker, fees.maker);
       const loss = resultAt(p, p.stop, fees.taker, fees.taker);
       const rr = Math.abs(p.takeProfit - p.entryPrice) / Math.abs(p.entryPrice - p.stop);
-      const texts = [this.t("box.profit", { pnl: formatMoney(profit), rr: rr.toFixed(1) })];
+      const num = (x: string) => `\u202A${x}\u202C`;   // a number keeps its own order inside Persian text (canvas)
+      const texts = [this.t("box.profit", { pnl: num(`${formatMoney(profit)}$`), rr: num(`1:${rr.toFixed(1)}`) })];
       const lines: BoxDecor["lines"] = [];
       if (this.eye.lock && trigger != null && at != null) {
-        texts.push(this.t("box.lock", { trigger: String(Math.round(trigger * 100)), at: String(Math.round(at * 100)) }));
+        texts.push(this.t("box.lock", { trigger: num(`${Math.round(trigger * 100)}%`), at: num(`${Math.round(at * 100)}%`) }));
         lines.push({ price: p.entryPrice + way * trigger, ...this.look("lockPoint") },
           { price: p.entryPrice + way * at, ...this.look("lockStop") });
       }
@@ -356,7 +353,7 @@ export class BotApp {
       if (this.eye.lock && even !== null) lines.push({ price: even, ...this.look("breakeven") });
       const from = candleStart(p.entryCandle, this.target.timeframe);
       decor.push({ from, kind: "profit", texts, lines },
-        { from, kind: "loss", texts: [this.t("box.loss", { pnl: formatMoney(loss) })], lines: [] });
+        { from, kind: "loss", texts: [this.t("box.loss", { pnl: num(`${formatMoney(loss)}$`) })], lines: [] });
     }
     this.chart.setDecor(decor, signals);
   }
@@ -478,6 +475,21 @@ export class BotApp {
     return levels;
   }
 
+  private async loadHistory(symbol: string, timeframe: string): Promise<void> {
+    const key = `${symbol}|${timeframe}`;
+    this.historyLoading.add(key);
+    try {
+      const o = await this.backend.getStrategyOverview({ marketType: "futures", symbol, timeframe,
+        tradingMode: ["1m", "3m", "5m"].includes(timeframe) ? "scalping" : "daily", settings: {}, active: null,
+        autoRule: null, fees: null });
+      this.history.set(key, { time: Date.now(), rows: o.rows, candles: o.candles });
+    } catch {
+      this.history.set(key, { time: Date.now() - 240_000, rows: [], candles: 0 });   // try again in a minute
+    }
+    this.historyLoading.delete(key);
+    this.renderPanel();
+  }
+
   /** A Telegram change or test; its answer (or error) is shown under the buttons. */
   private async telegram(call: () => Promise<PaperState>, ok?: string): Promise<void> {
     try {
@@ -563,7 +575,10 @@ export class BotApp {
   private tgTest: string | null = null;
   /** The owner's open / close choice of each panel section (this computer), and which switches were on. */
   private folds: Partial<Record<PanelSection, boolean>> = loadFolds();
-  private wasOn: Partial<Record<PanelSection, boolean>> = {};   // the last Telegram test's words
+  private wasOn: Partial<Record<PanelSection, boolean>> = {};
+  /** History test of the strategies on a coin and timeframe ("symbol|tf"), asked for when its section is open. */
+  private history = new Map<string, { time: number; rows: StrategyRow[]; candles: number }>();
+  private historyLoading = new Set<string>();   // the last Telegram test's words
   private consults = new Map<number, ConsultAnswer>();
   private consulting = new Set<number>();
   /** The consult window open (full answers) or folded to one line, so the chart gets its room back. */
@@ -1549,6 +1564,41 @@ export class BotApp {
         box.append(row);
       }
       parts.push(heading("review", t("bot.review.title")), onOff, el("div", "bot-hint", t("bot.review.hint")), box);
+    }
+
+    // History test of every strategy on the chart's coin and timeframe (owner 2026-11-09: moved here from
+    // the semi-automatic screen, to help choose the strategies). Asked for only while the section is open.
+    if (this.target) {
+      const key = `${this.target.symbol}|${this.target.timeframe}`;
+      parts.push(heading("history", t("bot.history.title", { coin: this.target.symbol.split("/")[0], tf: this.target.timeframe })));
+      const got = this.history.get(key);
+      if (sectionOpen("history", this.folds) && (!got || Date.now() - got.time > 300_000) && !this.historyLoading.has(key)) {
+        void this.loadHistory(this.target.symbol, this.target.timeframe);
+      }
+      if (!got) {
+        parts.push(el("div", "bot-hint", t(this.historyLoading.has(key) ? "bot.history.loading" : "bot.history.none")));
+      } else {
+        const table = document.createElement("table");
+        table.className = "bot-history";
+        const head = document.createElement("tr");
+        for (const k of ["bot.history.strategy", "bot.history.trades", "bot.history.won", "bot.history.pf", "bot.history.net"] as MessageKey[]) {
+          head.append(el("th", "", t(k)));
+        }
+        table.append(head);
+        const used = new Set(s.strategies);
+        for (const r of [...got.rows].sort((a, b) => b.stats.netPercent - a.stats.netPercent)) {
+          const tr = document.createElement("tr");
+          if (used.has(r.strategy)) tr.className = "used";
+          const net = r.stats.netPercent;
+          tr.append(el("td", "", `${used.has(r.strategy) ? "✓ " : ""}${t(`strat.${r.strategy}` as MessageKey)}`),
+            el("td", "", String(r.stats.trades)),
+            el("td", "", r.stats.winRate == null ? "–" : `${r.stats.winRate.toFixed(0)}%`),
+            el("td", "", r.stats.profitFactor == null ? "–" : r.stats.profitFactor.toFixed(2)),
+            el("td", net > 0 ? "up" : net < 0 ? "down" : "", `${net > 0 ? "+" : ""}${net.toFixed(1)}%`));
+          table.append(tr);
+        }
+        parts.push(table, el("div", "bot-hint", t("bot.history.hint", { candles: String(got.candles) })));
+      }
     }
 
     // The bot's diary.

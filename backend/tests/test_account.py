@@ -40,16 +40,25 @@ class FakeExchange:
     async def set_leverage(self, lev, symbol):
         self.leverage = lev
 
-    async def create_order(self, symbol, type_, side, amount, price=None, params=None):
-        params = params or {}
-        if self.fail_protect and ("stopLossPrice" in params or "takeProfitPrice" in params):
+    def market(self, symbol):
+        return {"id": symbol.split("/")[0] + "-SWAP-USDT", "contractSize": 0.1}
+
+    async def privatePostApiV1FuturesOrder(self, body):
+        self.orders.append(("order", body))
+        self.positions = [{"symbol": "SOL/USDT:USDT", "side": "long" if body["side"] == "BUY_OPEN" else "short",
+                           "contracts": float(body["quantity"])}]
+        return {"orderId": "1"}
+
+    async def privatePostApiV1FuturesPositionTradingStop(self, body):
+        if self.fail_protect:
             raise RuntimeError("not supported")
-        self.orders.append((symbol, type_, side, amount, params))
-        if not params:
-            self.positions = [{"symbol": symbol, "side": "long" if side == "buy" else "short", "contracts": amount}]
-        elif params.get("reduceOnly") and not ("stopLossPrice" in params or "takeProfitPrice" in params):
-            self.positions = []
-        return {"id": f"o{len(self.orders)}"}
+        self.orders.append(("stops", body))
+        return {"code": 200}
+
+    async def privatePostApiV1FuturesFlashClose(self, body):
+        self.orders.append(("close", body))
+        self.positions = []
+        return {"code": 200}
 
     async def cancel_order(self, order_id, symbol):
         self.cancelled.append(order_id)
@@ -112,26 +121,24 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
     async def test_real_opens_with_exchange_side_stop_and_target(self):
         self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 1000, "maxLeverage": 10})
         await self.a.on_open(position())
-        kinds = [o[4] for o in self.ex.orders]
-        self.assertEqual(kinds[0], {})                              # market entry
-        self.assertEqual(kinds[1], {"reduceOnly": True, "stopLossPrice": 98.0})
-        self.assertEqual(kinds[2], {"reduceOnly": True, "takeProfitPrice": 104.0})
-        self.assertEqual(self.ex.orders[0][3], 5.0)                 # $10 risk / $2 distance
+        (k1, entry), (k2, stops) = self.ex.orders[:2]
+        self.assertEqual((k1, entry["side"], entry["priceType"], entry["symbol"]), ("order", "BUY_OPEN", "MARKET", "SOL-SWAP-USDT"))
+        self.assertEqual(entry["quantity"], "50.0")                 # $10 risk / $2 = 5 SOL = 50 contracts of 0.1
+        self.assertEqual((k2, stops["side"], stops["stopLoss"], stops["takeProfit"]), ("stops", "LONG", "98.0000", "104.0000"))
         self.assertEqual(self.a.plans[-1]["status"], "open")
-        # stop moved by the paper bot -> new stop on the exchange, old one cancelled
+        # stop moved by the paper bot -> moved on the exchange
         await self.a.on_levels(position(stop=100.5))
-        self.assertEqual(self.ex.orders[3][4]["stopLossPrice"], 100.5)
-        self.assertIn("o2", self.ex.cancelled)
+        self.assertEqual(self.ex.orders[-1][1]["stopLoss"], "100.5000")
         # paper closed -> real closed
         await self.a.on_close(position(), "review")
-        self.assertEqual(self.ex.orders[-1][4], {"reduceOnly": True})
+        self.assertEqual(self.ex.orders[-1], ("close", {"symbol": "SOL-SWAP-USDT", "side": "LONG"}))
         self.assertEqual(self.ex.positions, [])
 
     async def test_no_protection_closes_at_once_and_stops(self):
         self.ex.fail_protect = True
         self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 1000, "maxLeverage": 10})
         await self.a.on_open(position())
-        self.assertEqual(self.ex.orders[-1][4], {"reduceOnly": True})   # closed
+        self.assertEqual(self.ex.orders[-1][0], "close")             # closed at once
         self.assertEqual(self.a.halted, "protection failed")
         await self.a.on_open(position(id=8))
         self.assertTrue(self.a.plans[-1]["status"].startswith("skip: stopped"))
@@ -144,7 +151,7 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.a.answer(7, False, True), "باز نشد.")
         await self.a.on_open(position())
         self.assertEqual(await self.a.answer(7, True, True), "باز شد.")
-        self.assertEqual(len(self.ex.orders), 3)
+        self.assertEqual([o[0] for o in self.ex.orders], ["order", "stops"])
 
     async def test_daily_loss_and_panic(self):
         self.a.set(mode="real", agree_real=True, confirm=False, limits={"dailyLoss": 5})

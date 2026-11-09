@@ -442,7 +442,7 @@ export function saveLines(lines: Record<LineGroup, LineLook>): void {
 
 /** Sections of the bot's settings panel that open and close. */
 export type PanelSection = "timeframes" | "limit" | "ai" | "tg" | "coins" | "strategies" | "lock" | "review" | "memory"
-  | "brain" | "connection" | "diary";
+  | "brain" | "connection" | "history" | "diary";
 const FOLDS_KEY = "bot.sections";
 /** Open at first (owner 2026-11-09): the timeframes; a section with a switch while it is on. */
 const OPEN_FIRST: PanelSection[] = ["timeframes"];

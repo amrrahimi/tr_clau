@@ -698,3 +698,52 @@ html.see-through, html.see-through body, .scene[data-mode="clear"] { background:
 .account-window { position: relative; width: min(560px, 94vw); max-height: 88vh; overflow-y: auto; }
 .account-close { position: absolute; top: 10px; inset-inline-end: 12px; z-index: 1; }
 input.invalid { border-color: var(--down) !important; }
+.bot-history { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.bot-history th { color: var(--muted); font-weight: 500; text-align: start; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.bot-history td { padding: 3px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.bot-history td:not(:first-child), .bot-history th:not(:first-child) { text-align: end; direction: ltr; }
+.bot-history tr.used td:first-child { color: var(--accent); }
+.bot-history td.up { color: var(--up); }
+.bot-history td.down { color: var(--down); }
+
+/* ---------- Liquid Glass (owner 2026-11-09): clearer glass, light catching the edges, a bright rim ---------- */
+.bg-heading { color: var(--muted); font-size: 11px; padding: 6px 8px 2px; border-top: 1px solid var(--border); margin-top: 4px; }
+html.liquid { --glass-alpha: 0.16; --border: rgba(255, 255, 255, 0.22); --glass-blur: blur(10px) saturate(190%) brightness(1.08); }
+html.liquid.see-through { --glass-alpha: var(--glass-alpha); }
+html.liquid .bot-app .bot-panel, html.liquid .bot-app .chart-area, html.liquid .bot-app .bot-consult,
+html.liquid .bot-app .bot-trades, html.liquid .topbar, html.liquid .account-panel, html.liquid .chooser-card {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.55),      /* bright top rim */
+    inset 0 -1px 1px rgba(255, 255, 255, 0.14),     /* soft bottom rim */
+    inset 1px 0 1px rgba(255, 255, 255, 0.18),
+    inset -1px 0 1px rgba(255, 255, 255, 0.18),
+    inset 0 0 24px rgba(255, 255, 255, 0.06),       /* the body of the glass */
+    0 12px 36px rgba(0, 0, 0, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+html.liquid .bot-app .bot-panel::before, html.liquid .bot-app .chart-area::before, html.liquid .bot-app .bot-consult::before,
+html.liquid .bot-app .bot-trades::before, html.liquid .topbar::before, html.liquid .account-panel::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 0;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.04) 28%, transparent 55%),
+    radial-gradient(120% 60% at 50% -10%, rgba(255, 255, 255, 0.10), transparent 60%);
+}
+html.liquid .bot-app .bot-panel > *, html.liquid .bot-app .bot-consult > *, html.liquid .bot-app .bot-trades > *,
+html.liquid .topbar > *, html.liquid .account-panel > * { position: relative; z-index: 1; }
+html.liquid .segmented, html.liquid .timeframes { background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35); }
+html.liquid .segmented button.active, html.liquid .timeframes button.active {
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 2px 8px rgba(41, 98, 255, 0.45); }
+html.liquid .bot-power { box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 6px 18px rgba(0, 0, 0, 0.3); }
+html.liquid .chart-eye .eye-list, html.liquid .chart-eye .eye-toggle, html.liquid .bg-list {
+  background: rgba(30, 34, 50, 0.45); box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45), 0 8px 24px rgba(0, 0, 0, 0.35); }
+/* Chromium: the glass bends what is behind it */
+html.lens .bot-app .bot-panel, html.lens .bot-app .chart-area, html.lens .bot-app .bot-consult, html.lens .bot-app .bot-trades,
+html.lens .topbar, html.lens .account-panel {
+  -webkit-backdrop-filter: url(#liquid-lens) var(--glass-blur);
+  backdrop-filter: url(#liquid-lens) var(--glass-blur);
+}
+/* the chart and the table keep a little more tint, so candles and numbers stay easy to read */
+html.liquid .bot-app .chart-area, html.liquid .bot-app .bot-trades { background: rgba(10, 14, 24, calc(var(--glass-alpha) + 0.22)); }

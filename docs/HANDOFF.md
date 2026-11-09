@@ -227,6 +227,19 @@ API: GET/POST /api/account, POST /api/account/test|panic|resume. UI: start scree
 bot / semi screens: top-bar chip only when connected (opens the same panel). Live check prints ccxt's Toobit
 support (has[]) for the private calls. NOT yet tried on a real account (no keys here): start with read, then shadow.
 
+## Update 2026-11-09 15:08 (owner approved)
+- Real mode uses Toobit's own API (ccxt cannot place stops on Toobit): entry POST api/v1/futures/order
+  {symbol BTC-SWAP-USDT, side BUY_OPEN/SELL_OPEN, type LIMIT, priceType MARKET, quantity contracts};
+  stops POST api/v1/futures/position/trading-stop {symbol, side LONG/SHORT, stopLoss, takeProfit} (also to move
+  them); close POST api/v1/futures/flashClose {symbol, side}. Contracts = base amount / contractSize. Live check
+  prints whether ccxt has these implicit methods and the market id / contract size. Still untried on a real key.
+- Box texts on the chart: drawn by a top-z pane view on dark rounded labels (green box above its top edge, red
+  below its bottom edge), numbers wrapped in LRE..PDF (U+202A/U+202C) — Chrome canvas ignores isolates.
+- Liquid Glass panel style (🎨 menu "سبک پنل‌ها"; html.liquid; Chromium adds an SVG displacement lens html.lens).
+- Semi-automatic screen switched off (chooser card and top-bar switch removed; app.ts kept). The strategies'
+  history test moved into the bot panel: section "history" (botApp.loadHistory -> /api/strategies/overview for the
+  chart's coin/timeframe, cached 5 min, only while the section is open).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

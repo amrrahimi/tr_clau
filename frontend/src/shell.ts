@@ -41,7 +41,7 @@ export async function startShell(root: HTMLElement, backend: Backend): Promise<v
   } catch {
     // no session storage: show the chooser
   }
-  const view = next === "auto" || next === "semi" ? next : await choose(root, backend);
+  const view = next === "auto" ? next : await choose(root, backend);
   await open(root, backend, view);
   placeAccountChip(backend);
 }
@@ -86,9 +86,9 @@ function choose(root: HTMLElement, backend: Backend): Promise<View> {
     root.innerHTML = `<div class="chooser"><div class="chooser-brand">${leonWordmark(56)}</div><h1></h1><div class="chooser-cards"></div></div>`;
     root.querySelector("h1")!.textContent = t("view.chooseTitle");
     const cards = root.querySelector(".chooser-cards")!;
+    // Only the automatic screen (owner 2026-11-09): the semi-automatic one is switched off; its code stays.
     for (const [view, title, text] of [
       ["auto", "view.auto", "view.autoText"],
-      ["semi", "view.semi", "view.semiText"],
     ] as const) {
       const card = document.createElement("button");
       card.type = "button";
