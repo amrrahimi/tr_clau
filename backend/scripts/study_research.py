@@ -164,10 +164,13 @@ def vb_plus(c, mid, t: Tally, up: dict, name: str):
         half = 0 if c[cur[0]]["time"] < mid else 1
         for kname, k in (("k=0.5", 0.5), ("k=0.7", 0.7), ("k=noise", noise)):
             lvl = o + k * rng
+            down_first = False
             for i in cur:
                 x = c[i]
                 if x["high"] < lvl:
+                    down_first = down_first or x["low"] <= o - k * rng
                     continue
+                down_first = down_first or (x["low"] <= o - k * rng and x["open"] < lvl)
                 entry = max(lvl, x["open"])
                 last = cur[-1]
                 for sname, stop in (("stop=open", o), ("stop=half", entry - 0.5 * (entry - o))):
@@ -183,6 +186,10 @@ def vb_plus(c, mid, t: Tally, up: dict, name: str):
                         r = R(LONG, entry, x["close"], risk, FEES.taker, FEES.taker)
                     base = f"A+ {name} {kname} {sname}"
                     t.add(f"{base} (worst case)", half, r)
+                    if not down_first:
+                        t.add(f"{base} +not broken down first", half, r)
+                        if c[cur[0]]["open"] > ma5:
+                            t.add(f"{base} +not down first +coin above 5-day avg", half, r)
                     if up.get(d):
                         t.add(f"{base} +BTC up", half, r)
                     if c[cur[0]]["open"] > ma5:
