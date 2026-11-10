@@ -318,6 +318,19 @@ Owner asked to find and test new methods. R after fees, two halves. Bot baseline
   (no), H NY opening range (half 1 +, half 2 -): no.
 Nothing added to the bot yet; decision point sent (A as a paper strategy needs a day-end time exit).
 
+## Research study on our data (2026-11-10 14:30, study_research.py, top-40 + volatile-30 coins)
+- Fee (0.12% round trip) as share of the median candle range: top40 5m 53%, 15m 33%, 1h 17%, 4h 7%;
+  volatile30 5m 21%, 15m 15%, 1h 8%, 4h 4%. Low timeframes on top coins are mostly fee.
+- No usable serial pattern: next candle reverses 50-52%; lag-1 autocorrelation ~0; after 2-3x / >3x candles the
+  continuation is < 0.15% (under the fee). Matches research (15m crypto reversal ~1.3 bp gross vs costs).
+- BTC -> altcoin lead-lag: +0.02% at most before fees; after fees -0.09 to -0.15% per trade. Not usable.
+- CORRECTION of the volatility breakout: with consistent worst-case fills, 21-day warm-up and a 0.5% minimum stop
+  it is ~0 to negative (top40 1h k=0.7 -0.07R; with "not broken down first" -0.03R; + coin above 5-day avg +0.02R
+  with half 2 negative). Only volatile30 15m (1 month of data) stays positive (+0.13R). The earlier +0.14R needed
+  the bot's fee filter (big-range days only) and a close-based fill. Not robust: do not add yet.
+- Losers of the day (4h, top 40): 5% stop kills it (-0.07%); 10% stop +0.27%; 10% stop and BTC also fell +0.50%
+  (+0.10 / +0.70). Promising but uneven halves and wide stop.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
