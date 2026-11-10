@@ -274,6 +274,21 @@ Profile = 100 candles before the signal, 24 rows, VA 70%. R after fees, halves:
   ~30% of losers went 40-100% of the way before the stop.
 - Bugs: box label R:R uses the current stop (1:184); targets can be absurd (below zero) -> validate.
 
+## 2026-11-10 10:15: fixes + study of the stopped trades
+- BUILT: paper.anchor_target (target = strategy's own R:R from the real entry / order price, <= 4R, never further
+  than the signal's target, None when target <= 0 -> skip "past"); box label R:R from stopLoss (first stop).
+- How stops are set: per strategy, either an ATR multiple or the last 1-2 candles' extreme / an indicator line
+  (+ buffer). No strategy uses swing support / resistance.
+- 16 of 28 live trades hit (or would have hit) the first stop: 9 never reached 0.5R and died within 8 candles;
+  10 of 16 were in three coins (UAI 4, ON 3, JCT 2+) re-entered the same way after a loss; all coins are
+  BTC-independent small caps with ATR 2-25% per candle; side / strategy / market state: no pattern.
+  Live: 9 of 10 trades with a swing level closer than 1 ATR behind the entry lost (11 of 12 others had none).
+- History (study_stops.py, 40 coins): a stop behind the nearest swing level does NOT raise the win rate
+  (35% vs 35%) or avg R on 5m / 15m / 1h; 4h a little better (+0.020 vs +0.003, not in both halves clearly);
+  S/R target worse everywhere. Signals with no swing level at all behind them: -0.08..-0.35 R on every TF (few).
+- Owner wants (not built, decision points sent): time break-even only on his answer; a stay / close question when
+  a position gets long. Candidate to test: cooldown on a coin after a stop.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
