@@ -124,6 +124,8 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "max-open") {
+      state.rules.maxOpen = action.value;
     } else if (action.kind === "review") {
       const r = state.review ?? { enabled: true, after: 20, every: { "1m": 10, "3m": 10, "5m": 15, "15m": 15, "30m": 15, "1h": 15, "4h": 60 } };
       state.review = { enabled: action.enabled ?? r.enabled, after: action.after ?? r.after, every: { ...r.every, ...(action.every ?? {}) } };

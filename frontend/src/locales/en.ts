@@ -655,6 +655,8 @@ export const en = {
   "bg.liquid": "Liquid Glass",
   "bot.winSplit": "{w} won · {l} lost · {e} even",
   "bot.event.timeBeAsk": "{symbol} {timeframe}: 12 candles without the target ({pnl}$) — break-even asked on Telegram",
+  "bot.maxOpen": "Open trades at most",
+  "bot.maxOpenHint": "Waiting limit orders count too. One trade's margin is at most balance ÷ this number; the risk per trade stays about 1%.",
 } as const;
 
 export type MessageKey = keyof typeof en;

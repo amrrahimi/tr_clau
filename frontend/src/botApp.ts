@@ -1017,7 +1017,25 @@ export class BotApp {
         line.append(box, name);
         list.append(line);
       }
-      parts.push(heading("timeframes", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
+      // The owner's maximum of open trades (2026-11-10); the margin share of one trade follows it.
+      const maxRow = el("label", "bot-review-row", t("bot.maxOpen"));
+      const maxInput = document.createElement("input");
+      maxInput.type = "number";
+      maxInput.min = "1";
+      maxInput.max = "20";
+      maxInput.dir = "ltr";
+      maxInput.value = String(s.rules.maxOpen ?? 6);
+      maxInput.addEventListener("change", () => {
+        const n = Math.round(Number(maxInput.value));
+        if (!(n >= 1 && n <= 20)) {
+          maxInput.classList.add("invalid");
+          return;
+        }
+        void this.act({ kind: "max-open", value: n });
+      });
+      maxRow.append(maxInput);
+      parts.push(heading("timeframes", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")),
+        maxRow, el("div", "bot-hint", t("bot.maxOpenHint")));
     }
 
     // Limit entry (paper only): on/off, the waiting orders, market vs limit results.

@@ -657,4 +657,6 @@ export const fa: Record<MessageKey, string> = {
   "bg.liquid": "Liquid Glass (شیشه‌ی مایع)",
   "bot.winSplit": "{w} برد · {l} باخت · {e} سربه‌سر",
   "bot.event.timeBeAsk": "{symbol} {timeframe}: ۱۲ کندل بدون رسیدن به هدف ({pnl}$) — سربه‌سر در تلگرام پرسیده شد",
+  "bot.maxOpen": "حداکثر پوزیشن باز",
+  "bot.maxOpenHint": "سفارش‌های لیمیتِ منتظر هم حساب می‌شوند. مارجین هر معامله حداکثر موجودی ÷ همین عدد است؛ ریسک هر معامله همان حدود ۱٪ می‌ماند.",
 };

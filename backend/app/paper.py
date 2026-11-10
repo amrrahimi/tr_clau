@@ -799,7 +799,7 @@ class PaperBot:
             "flow": self.flow_summary(),
             "scanSeconds": self.scan_seconds,
             "rules": {"risk": RISK * 100,
-                      "maxOpen": MAX_POSITIONS, "timeBeCandles": TIME_BE_CANDLES, "staleTolerance": STALE_PART * 100,
+                      "maxOpen": self.max_open(), "timeBeCandles": TIME_BE_CANDLES, "staleTolerance": STALE_PART * 100,
                       "maxSameSide": None if self.profile.max_same_side >= UNLIMITED else self.profile.max_same_side,
                       "brainThreshold": a.get("brainThreshold"),
                       "coinMode": a.get("coinMode", "top"), "coins": a.get("coins", []),
@@ -843,7 +843,7 @@ class PaperBot:
         self._cancel_orders("limit_cancelled", "reset")
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
-                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt",
+                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
                                               "reviewEnabled", "reviewAfter", "reviewEvery")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
@@ -1873,7 +1873,7 @@ class PaperBot:
                 self._count("brain", len(weak))
         open_coins = {p["symbol"] for p in self.account["positions"]} | {o["symbol"] for o in self.account["orders"]}
         positions = self.account["positions"]
-        room = MAX_POSITIONS - len(positions) - len(self.account.get("orders", []))
+        room = self.max_open() - len(positions) - len(self.account.get("orders", []))
         if room <= 0:
             for c in candidates:
                 self._skip(c, tf, "full")
@@ -2103,13 +2103,13 @@ class PaperBot:
             return skip("reward")
         if any(o["symbol"] == c["symbol"] for o in self.account["orders"]):
             return skip("full")   # a limit order for this coin is already waiting (one per coin)
-        if len(self.account["positions"]) + len(self.account.get("orders", [])) >= MAX_POSITIONS:
+        if len(self.account["positions"]) + len(self.account.get("orders", [])) >= self.max_open():
             return skip("full")   # owner 2026-11-07: at most 6 open trades
         equity = self.equity()
         if self.account.get("limitEntry"):
             return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip, price_step(recent))
         size = position_size(s["side"], entry, stop, equity, equity - self.used_margin(), self.fees,
-                             self.profile.size_slots)
+                             self.slots())
         if size is None or size.notional <= 0:
             return skip("full")   # no free money left for another position
         self._new_position(c, tf, now, params, entry, recent[-1]["time"], size, self.fees.taker, "market")
@@ -2165,6 +2165,18 @@ class PaperBot:
         self.account["lockAt"] = float(at)
         self.save()
 
+    def max_open(self) -> int:
+        """Owner's setting (2026-11-10): how many trades may be open at once (waiting limit orders count)."""
+        return int(self.account.get("maxOpen") or MAX_POSITIONS)
+
+    def slots(self) -> int:
+        """Margin of one position at most equity / this (follows the owner's maximum, as with 6)."""
+        return self.max_open() if self.account.get("maxOpen") else self.profile.size_slots
+
+    def set_max_open(self, n: int) -> None:
+        self.account["maxOpen"] = max(1, min(20, int(n)))
+        self.save()
+
     def set_review(self, enabled: Optional[bool] = None, after: Optional[int] = None,
                    every: Optional[dict] = None) -> None:
         """Owner's look at long positions: on/off, after how many candles, every how many minutes per timeframe."""
@@ -2201,7 +2213,7 @@ class PaperBot:
         if (stop < rounded < price_now) if long_ else (price_now < rounded < stop):
             price = rounded
         size = position_size(s["side"], price, stop, equity, equity - self.used_margin(), self.fees,
-                             self.profile.size_slots)
+                             self.slots())
         if size is None or size.notional <= 0:
             return skip("full")
         a = self.account
@@ -2320,7 +2332,7 @@ class PaperBot:
             return refuse("reward")
         equity = self.equity()
         size = position_size(o["side"], price, stop, equity, equity - self.used_margin(), self.fees,
-                             self.profile.size_slots)
+                             self.slots())
         if size is None or size.notional <= 0:
             return refuse("full")
         self.account["limitStats"]["filled"] += 1

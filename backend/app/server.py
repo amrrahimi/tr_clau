@@ -269,6 +269,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             advisor.save_keys(keys)
             return b.public()
 
+        @app.post(f"/api/{prefix}/max-open")
+        async def paper_max_open(value: int = Body(..., embed=True)):
+            """Owner's maximum of open trades (1-20)."""
+            b.set_max_open(value)
+            return b.public()
+
         @app.post(f"/api/{prefix}/review")
         async def paper_review(enabled: Optional[bool] = Body(None), after: Optional[int] = Body(None),
                                every: Optional[dict] = Body(None)):

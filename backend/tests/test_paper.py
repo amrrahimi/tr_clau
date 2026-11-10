@@ -1899,3 +1899,19 @@ class AskOwnerTest(ReviewTest):
         await self.bot._telegram_answers(2_000_000)
         self.assertAlmostEqual(self.p["stop"], self.p["breakevenPrice"])
         self.assertEqual(self.p["timeBeAsk"]["answer"], "tbe")
+
+
+
+class MaxOpenTest(unittest.TestCase):
+    def test_owner_sets_the_maximum_and_the_margin_share_follows(self):
+        async def empty(*a):
+            return []
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), empty, empty, empty, now=lambda: 1_000_000, fees=FEES)
+        bot.reset(100)
+        self.assertEqual((bot.max_open(), bot.public()["rules"]["maxOpen"]), (6, 6))
+        bot.set_max_open(10)
+        self.assertEqual((bot.max_open(), bot.slots(), bot.public()["rules"]["maxOpen"]), (10, 10, 10))
+        bot.set_max_open(99)
+        self.assertEqual(bot.max_open(), 20)
