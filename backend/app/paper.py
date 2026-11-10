@@ -341,20 +341,31 @@ def check_minutes(position: dict, minutes: list[dict], now: float) -> Optional[t
 
 
 def _maybe_time_be(position: dict, candle: dict, tf_seconds: int) -> None:
-    """After TIME_BE_CANDLES closed candles: in profit, the stop moves to break-even; in loss, the trade
-    will close at break-even when the price comes back (beExit). Once."""
+    """After TIME_BE_CANDLES closed candles the owner is asked on Telegram (owner 2026-11-10: not
+    automatic any more); see time_be_answer. Marked here once; the message is sent by the bot."""
     n = TIME_BE_CANDLES.get(position.get("timeframe", ""))
     if not n or position.get("timeBeAt") or candle["time"] < position["entryCandle"] + n * tf_seconds:
         return
     long_ = position["side"] == LONG
     be = position["breakevenPrice"]
     position["timeBeAt"] = candle["time"]
-    if (candle["close"] > be) if long_ else (candle["close"] < be):
+    position["timeBeAsk"] = {"time": candle["time"], "inProfit": (candle["close"] > be) if long_ else (candle["close"] < be),
+                             "sent": False, "answer": None}
+
+
+def time_be_answer(position: dict, price: float, when: int) -> str:
+    """The owner said "break-even": in profit the stop moves to break-even; in a loss the trade will close
+    at break-even when the price comes back (beExit). Returns what was done: "stop" | "exit" | "none"."""
+    long_ = position["side"] == LONG
+    be = position["breakevenPrice"]
+    if (price > be) if long_ else (price < be):
         if (be > position["stop"]) if long_ else (be < position["stop"]):
             position["stop"] = be
-            position["breakevenAt"] = candle["time"]
-    else:
-        position["beExit"] = be
+            position["breakevenAt"] = when
+            return "stop"
+        return "none"
+    position["beExit"] = be
+    return "exit"
 
 
 def _stop_reason(position: dict) -> str:
@@ -1293,7 +1304,19 @@ class PaperBot:
             hit = (last, "cap")   # owner's profit cap: take the small profit now
         if hit:
             self._close(p, hit[0], hit[1], now)
-        elif self._review_due(p, now):
+            return
+        ask = p.get("timeBeAsk")
+        if ask and not ask["sent"]:
+            ask["sent"] = True
+            result = pnl(p, last, self.fees.taker)[0]
+            self._event("timeBeAsk", symbol=p["base"], timeframe=p["timeframe"], pnl=result)
+            self.notify(f"⏱ {p['base']} {p['timeframe']} {telegram.side_word(p)}: "
+                        f"{TIME_BE_CANDLES.get(p['timeframe'])} کندل گذشته و به هدف نرسیده (الان {telegram._money(result)}).\n"
+                        + ("در سود است: حد ضرر به سربه‌سر برود؟" if result > 0 else
+                           "در ضرر است: وقتی قیمت به ورود برگشت، سربه‌سر بسته شود؟")
+                        + "\nبی‌جواب: هیچ تغییری داده نمی‌شود.",
+                        buttons=[("⚖️ سربه‌سر کن", f"tbe:{p['id']}"), ("ادامه بده", f"tgo:{p['id']}")])
+        if self._review_due(p, now):
             await self._review(p, last, now)
         elif self.profile.advice and p.get("advice") is None and self._half_way(p, last):
             await self._advise(p, now)
@@ -1322,7 +1345,12 @@ class PaperBot:
         review = {"time": now, "price": price, "higher": higher, "state": state, "against": against,
                   "ai": None, "decision": "hold"}
         p["review"] = review
+        view = "against" if against else "with"
+        changed = p.get("reviewView") != view
+        p["reviewView"] = view
         if not against:
+            if changed:   # owner 2026-11-10: asked once when it gets long, again only when the view changes
+                await self._ask_stay(p, price, now, higher, state)
             return
         if self.ai_keys():
             answer = await self.consult(p["id"])
@@ -1343,6 +1371,28 @@ class PaperBot:
         self._event("reviewAsk", symbol=p["base"], timeframe=p["timeframe"], pnl=result)
         self.notify(telegram.closing_text(p, why, price) + f"\nدر ضرر است ({result:+.2f}$): ببندم یا ادامه بدهم؟",
                     buttons=[("ببند", f"close:{p['id']}"), ("ادامه", f"hold:{p['id']}")])
+
+    async def _ask_stay(self, p: dict, price: float, now: float, higher: Optional[str], state: Optional[str]) -> None:
+        """The position got long (or the bot's view changed): stay or close? With the bot's and Gemini's view."""
+        result = pnl(p, price, self.fees.taker)[0]
+        risk = p.get("openRisk") or p["risk"]
+        words = {"up": "صعودی", "down": "نزولی", "range": "رنج"}
+        lines = [f"⏳ پوزیشن طولانی شد: {p['base']} {p['timeframe']} {telegram.side_word(p)}",
+                 f"الان {telegram._money(result)}" + (f" ({result / risk:+.2f}R)" if risk else "") + f" · قیمت {price:.6g}",
+                 f"نظر ربات: روند تایم‌فریم بالاتر {words.get(higher, 'نامعلوم')}، حالت بازار {state or 'نامعلوم'}"
+                 f" — {'هم‌جهت با پوزیشن، ماندن' if p.get('reviewView') == 'with' else 'برخلاف پوزیشن'}"]
+        if self.ai_keys():
+            answer = await self.consult(p["id"])
+            ai = (answer or {}).get("ai") or {}
+            if ai.get("action"):
+                act = {"hold": "بماند", "exit": "خارج شود", "move_stop": "حد ضرر جابه‌جا شود"}.get(ai["action"], ai["action"])
+                lines.append(f"نظر Gemini: {act}" + (f" — {ai['reason'][:200]}" if ai.get("reason") else ""))
+        if p not in self.account["positions"]:
+            return
+        p["reviewAsk"] = {"time": now, "price": price, "answer": None}
+        self._event("reviewAsk", symbol=p["base"], timeframe=p["timeframe"], pnl=result)
+        self.notify("\n".join(lines) + "\nبمانم یا ببندم؟ (بی‌جواب: می‌ماند)",
+                    buttons=[("بمان", f"hold:{p['id']}"), ("ببند", f"close:{p['id']}")])
 
     @staticmethod
     def _review_words(higher: Optional[str], state: Optional[str]) -> str:
@@ -1472,6 +1522,20 @@ class PaperBot:
             await self._tg_say(settings, "این پوزیشن دیگر باز نیست.")
             return
         rows = {x["id"]: x for x in self._telegram_positions()}
+        if action in ("tbe", "tgo"):
+            ask = p.get("timeBeAsk") or {}
+            ask["answer"] = action
+            if action == "tgo":
+                await self._tg_say(settings, f"{p['base']}: بدون تغییر ادامه می‌دهد.")
+            else:
+                price = rows[pid].get("price") or p["entryPrice"]
+                done = time_be_answer(p, price, int(now))
+                self.save()
+                self.mirror("levels", p)
+                await self._tg_say(settings, {"stop": f"✅ حد ضرر {p['base']} به سربه‌سر ({p['breakevenPrice']:.6g}) رفت.",
+                                              "exit": f"✅ {p['base']}: وقتی قیمت به ورود برگشت، سربه‌سر بسته می‌شود.",
+                                              "none": f"{p['base']}: حد ضرر از سربه‌سر هم بهتر است؛ تغییری لازم نبود."}[done])
+            return
         if action == "pos":
             await self._tg_say(settings, telegram.positions_text([rows[pid]], now), telegram.manage_buttons(p))
         elif action in ("est", "etp"):

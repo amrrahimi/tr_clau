@@ -590,7 +590,7 @@ export const en = {
   "bot.review.title": "Look again at long positions",
   "bot.review.after": "Start after (candles)",
   "bot.review.every": "Every (minutes) on {tf}",
-  "bot.review.hint": "If the trend turned against the position: in profit it closes at once; in a loss you are asked on Telegram (close / go on). No answer: asked again next time.",
+  "bot.review.hint": "Asked on Telegram once when a position gets long (with the bot's and Gemini's view), and again only when the bot's view changes. Trend turned against it: in profit it closes at once; in a loss you are asked. No answer: it stays.",
   "bot.tg.short.on": "connected",
   "bot.tg.short.noChat": "no chat yet",
   "bot.reason.review": "trend turned (timed look)",
@@ -654,6 +654,7 @@ export const en = {
   "bg.frost": "Frosted glass",
   "bg.liquid": "Liquid Glass",
   "bot.winSplit": "{w} won · {l} lost · {e} even",
+  "bot.event.timeBeAsk": "{symbol} {timeframe}: 12 candles without the target ({pnl}$) — break-even asked on Telegram",
 } as const;
 
 export type MessageKey = keyof typeof en;

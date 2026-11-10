@@ -253,7 +253,7 @@ export interface PaperTrade extends PaperPosition {
 
 export interface PaperEvent {
   time: number;
-  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice" | "reviewAsk" | "reviewAnswer"
+  kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice" | "reviewAsk" | "reviewAnswer" | "timeBeAsk"
     | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult";
   start?: number; // blind: from when the bot did not see the prices (seconds)
   end?: number;   // blind: until when

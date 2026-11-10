@@ -289,6 +289,14 @@ Profile = 100 candles before the signal, 24 rows, VA 70%. R after fees, halves:
 - Owner wants (not built, decision points sent): time break-even only on his answer; a stay / close question when
   a position gets long. Candidate to test: cooldown on a coin after a stop.
 
+## Asked, not automatic (owner approved 2026-11-10 10:59)
+- Time break-even (12 candles on 1m-15m): _maybe_time_be only marks p["timeBeAsk"]; _watch_one sends a Telegram
+  question (tbe:<id> "break-even" / tgo:<id> "go on"); time_be_answer: in profit stop -> breakeven price, in a loss
+  beExit. No answer: nothing changes.
+- Long positions: _review asks once when the review starts (view "with") via _ask_stay (bot view + Gemini consult,
+  buttons hold / close), again only when the view changes (p["reviewView"]). Trend turned + profit: closed by
+  itself; + loss: asked (as before). No answer: stays.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

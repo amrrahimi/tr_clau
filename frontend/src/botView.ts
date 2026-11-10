@@ -250,6 +250,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
     }
     case "reviewAsk":
       return t("bot.event.reviewAsk", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "", pnl: formatMoney(e.pnl) });
+    case "timeBeAsk":
+      return t("bot.event.timeBeAsk", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "", pnl: formatMoney(e.pnl) });
     case "reviewAnswer":
       return t("bot.event.reviewAnswer", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "",
         answer: (e as { answer?: string }).answer === "close" ? t("bot.review.answerClose") : t("bot.review.answerHold") });

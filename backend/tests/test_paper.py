@@ -1467,18 +1467,23 @@ class OwnersDesignTest(unittest.IsolatedAsyncioTestCase):
         p = position(timeframe="5m", entryCandle=0, checkedFrom=0, breakevenPart=0, breakevenPrice=100.12)
         flat = [bar(0, 100, 100, 100, 100)] + [bar(300 * i, 99.8, 100.05, 99.6, 99.8) for i in range(1, 13)]
         self.assertIsNone(pp.check_exit(p, flat, 99.8, 300, now=300 * 13 + 1))
-        self.assertEqual((p["beExit"], p["stop"]), (100.12, 99))           # in loss after 12: aims at break-even
+        # owner 2026-11-10: nothing changes by itself, the owner is asked
+        self.assertEqual((p.get("beExit"), p["stop"], p["timeBeAsk"]["inProfit"], p["timeBeAsk"]["sent"]), (None, 99, False, False))
+        self.assertEqual(pp.time_be_answer(p, 99.8, 4000), "exit")          # his "break-even" in a loss
+        self.assertEqual(p["beExit"], 100.12)
         flat.append(bar(300 * 13, 99.8, 100.2, 99.7, 100.1))               # comes back to the entry
         self.assertEqual(pp.check_exit(p, flat, 100.1, 300, now=300 * 14 + 1), (100.12, "timeBe"))
         q = position(timeframe="5m", entryCandle=0, checkedFrom=0, breakevenPart=0, breakevenPrice=100.12)
         up = [bar(0, 100, 100, 100, 100)] + [bar(300 * i, 100.5, 100.9, 100.4, 100.6) for i in range(1, 13)]
         self.assertIsNone(pp.check_exit(q, up, 100.6, 300, now=300 * 13 + 1))
-        self.assertEqual((q["stop"], q.get("beExit")), (100.12, None))     # in profit: the stop to break-even
+        self.assertEqual((q["stop"], q["timeBeAsk"]["inProfit"]), (99, True))
+        self.assertEqual(pp.time_be_answer(q, 100.6, 4000), "stop")         # in profit: the stop to break-even
+        self.assertEqual((q["stop"], q.get("beExit")), (100.12, None))
         self.assertEqual(pp.trade_outcome({"exitReason": "timeBe", "pnl": -0.001, "notional": 50}), "even")
         h = position(timeframe="1h", entryCandle=0, checkedFrom=0, breakevenPart=0, breakevenPrice=100.12)
         hours = [bar(0, 100, 100, 100, 100)] + [bar(3600 * i, 99.8, 100.05, 99.6, 99.8) for i in range(1, 14)]
         pp.check_exit(h, hours, 99.8, 3600, now=3600 * 14 + 1)
-        self.assertNotIn("beExit", h)                                      # not on 1h (no effect there)
+        self.assertNotIn("timeBeAsk", h)                                   # not on 1h (no effect there)
 
 
 class LockPointAndWhyTest(unittest.IsolatedAsyncioTestCase):
@@ -1548,6 +1553,7 @@ class TelegramTest(unittest.IsolatedAsyncioTestCase):
         self.bot.tg_post = post
         self.bot.reset(100)
         tg.save(token="", chatId=None, enabled=True)
+        self.addCleanup(lambda: tg.save(token="", chatId=None, enabled=True))   # other tests send nothing
 
     async def test_test_finds_chat_and_close_sends_message(self):
         tg.save(token="123:ABC-secret", chatId=None)
@@ -1852,3 +1858,44 @@ class AnchorTargetTest(unittest.TestCase):
     def test_levels_that_make_no_sense(self):
         self.assertIsNone(pp.anchor_target("short", 0.0026, 0.0026, 0.0043, -0.0012))   # target below zero
         self.assertIsNone(pp.anchor_target("long", 100, 98.9, 99, 102))                 # entry past the stop
+
+
+
+class AskOwnerTest(ReviewTest):
+    """Owner 2026-11-10: time break-even and long positions are asked on Telegram."""
+    test_open_message_is_short = test_due_after_20_candles_then_every_15_minutes = None
+    test_trend_turned_in_profit_closes = test_trend_same_way_goes_on = test_ai_says_hold_goes_on = None
+    test_loss_asks_on_telegram_then_buttons = None
+
+    async def test_long_position_asked_once_then_on_change(self):
+        self.trend = "up"                                       # with the long position
+        await self.bot._review(self.p, self.p["entryPrice"] * 1.002, 2_000_000)
+        await self.flush()
+        body = self.sent[-1][1]
+        self.assertIn("بمانم یا ببندم", body["text"])
+        self.assertEqual(len(self.bot.account["positions"]), 1)
+        n = len(self.sent)
+        await self.bot._review(self.p, self.p["entryPrice"] * 1.002, 2_001_000)
+        await self.flush()
+        self.assertEqual(len(self.sent), n)                     # same view: not asked again
+        self.trend = "down"                                     # turned, in profit: closed by itself
+        await self.bot._review(self.p, self.p["entryPrice"] * 1.01, 2_002_000)
+        self.assertFalse(self.bot.account["positions"])
+
+    async def test_time_break_even_question_and_answer(self):
+        self.p["timeBeAsk"] = {"time": 0, "inProfit": True, "sent": False, "answer": None}
+        self.p["timeframe"] = "15m"
+        self.bot.prices[self.p["id"]] = self.p["entryPrice"] * 1.005
+        tg.save(token="123:ABC", chatId=42, enabled=True)
+
+        async def post(url, body):
+            self.sent.append((url, body))
+            if url.endswith("/getUpdates"):
+                return 200, json.dumps({"ok": True, "result": [{"update_id": 70, "callback_query": {
+                    "id": "q", "data": f"tbe:{self.p['id']}", "message": {"chat": {"id": 42}}}}] if "offset" not in body else []})
+            return 200, json.dumps({"ok": True, "result": True})
+        self.bot.tg_post = post
+        tg._offset.clear()
+        await self.bot._telegram_answers(2_000_000)
+        self.assertAlmostEqual(self.p["stop"], self.p["breakevenPrice"])
+        self.assertEqual(self.p["timeBeAsk"]["answer"], "tbe")

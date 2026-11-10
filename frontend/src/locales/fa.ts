@@ -592,7 +592,7 @@ export const fa: Record<MessageKey, string> = {
   "bot.review.title": "بررسی دوره‌ای پوزیشن‌های طولانی",
   "bot.review.after": "شروع بعد از (کندل)",
   "bot.review.every": "هر چند دقیقه روی {tf}",
-  "bot.review.hint": "اگر روند برخلاف پوزیشن برگشت: در سود فوراً بسته می‌شود؛ در ضرر در تلگرام از شما می‌پرسد (ببند / ادامه). بی‌جواب: دفعه‌ی بعد دوباره می‌پرسد.",
+  "bot.review.hint": "وقتی پوزیشن طولانی شد یک بار در تلگرام (با نظر ربات و Gemini) می‌پرسد و بعد فقط اگر نظر ربات عوض شد. اگر روند برخلاف پوزیشن برگشت: در سود فوراً بسته می‌شود؛ در ضرر از شما می‌پرسد. بی‌جواب: می‌ماند.",
   "bot.tg.short.on": "وصل",
   "bot.tg.short.noChat": "هنوز چت پیدا نشده",
   "bot.reason.review": "تغییر روند (بررسی دوره‌ای)",
@@ -656,4 +656,5 @@ export const fa: Record<MessageKey, string> = {
   "bg.frost": "شیشه‌ی مات",
   "bg.liquid": "Liquid Glass (شیشه‌ی مایع)",
   "bot.winSplit": "{w} برد · {l} باخت · {e} سربه‌سر",
+  "bot.event.timeBeAsk": "{symbol} {timeframe}: ۱۲ کندل بدون رسیدن به هدف ({pnl}$) — سربه‌سر در تلگرام پرسیده شد",
 };
