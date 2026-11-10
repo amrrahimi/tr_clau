@@ -263,6 +263,17 @@ Profile = 100 candles before the signal, 24 rows, VA 70%. R after fees, halves:
   5m / 15m: kept worse than removed in both halves. => candidate rule for 1h / 4h only (not built).
 - D (VA edge back to POC) / E (80% rule): small samples, unstable; only 1h D long +0.117 (254, both halves +).
 
+## Target-distance study (2026-11-10, study_targets.py + live MFE of 28 trades)
+- Live (since 11-08, 1m candles): own targets median 2.55 R (up to 7.8 R; AKE #78 target below zero!) because the
+  entry is often better than the signal price (limit / one-sided stale rule) while stop and target stay. Losers:
+  11 of 16 never went 0.5 R in favour; 8 trades reached 1.5-2.7 R and came back. On these 28: own target -6.3 R,
+  1.5 R target +7.1 R, lock 50/25 +5.8 R, lock 80/40 -3.4 R (hindsight, tiny sample).
+- History (40 coins, all signals, strategies' own R:R = 2.0): closer targets / earlier locks do NOT raise avg R
+  (all variants within ~0.02 R, not stable across halves); win rate goes up (lock 50/25 ~50% vs 40%).
+  Lock 50/25 >= 80/40 on every timeframe (equal or a little better) -> candidate default.
+  ~30% of losers went 40-100% of the way before the stop.
+- Bugs: box label R:R uses the current stop (1:184); targets can be absurd (below zero) -> validate.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
