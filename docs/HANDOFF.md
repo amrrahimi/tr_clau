@@ -331,6 +331,19 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
 - Losers of the day (4h, top 40): 5% stop kills it (-0.07%); 10% stop +0.27%; 10% stop and BTC also fell +0.50%
   (+0.10 / +0.70). Promising but uneven halves and wide stop.
 
+## Broad research study (2026-11-10 15:00, study_more.py, top-40 + volatile-30)
+- Bot's 18 strategies (bot fee rule = stop >= 2.4%): volatile30 5m +0.045R (+0.052/+0.041), 15m +0.034 (+0.038/+0.032)
+  = best and stable; top40 5m +0.039, 15m +0.013; 1h/4h ~0 or negative (volatile30 4h -0.040).
+- Stop distance (top40): no clear rule; wider stops on 5m (6-10% +0.133) mostly half 2.
+- Walk-forward (keep strategy x tf positive in the previous third): helps 5m/15m/1h (volatile30 15m +0.041 vs
+  dropped -0.003), FAILS on 4h (picked -0.106 / -0.147). Positive in all three thirds: volume_breakout (5m/15m
+  volatile, 1h/15m top), donchian 5m/15m top, inside_bar 5m/15m both, rsi_pullback 4h/1h top, ichimoku 15m vol.
+- Pairs trading (1h, z>2): -0.18% per trade. No.
+- Day of week (4h, ~14 months): Thursday negative in both halves (-1.07% / -0.37% day open->close, before fees);
+  weak evidence (~60 Thursdays, coins move together).
+- Funding extremes contrarian (Toobit funding history, hold 24h, no stop): z>2 +0.32% (short side +0.15/+0.49);
+  funding beyond +/-0.05%: +1.18% per trade (+0.61 / +1.75), n=382. Most promising new signal; needs a stop test.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
