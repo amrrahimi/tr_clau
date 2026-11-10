@@ -1034,7 +1034,32 @@ export class BotApp {
         void this.act({ kind: "max-open", value: n });
       });
       maxRow.append(maxInput);
-      parts.push(heading("timeframes", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")),
+      // The owner's focus switch (2026-11-10): 5m + 15m on the volatile coins, the earlier settings kept.
+      const focusParts: HTMLElement[] = [];
+      if (s.focus) {
+        const f = s.focus;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", f.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (f.on !== on) void this.act({ kind: "focus", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.focus"));
+        row.append(onOff);
+        const line = (name: "focus" | "other") => {
+          const x = f.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "focus" ? "bot.focus.focus" : "bot.focus.other", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        focusParts.push(row, el("div", "bot-hint", t(f.on ? "bot.focus.onHint" : "bot.focus.offHint")),
+          el("div", "bot-hint", line("focus")), el("div", "bot-hint", line("other")));
+      }
+      parts.push(heading("timeframes", t("bot.timeframes")), ...focusParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
         maxRow, el("div", "bot-hint", t("bot.maxOpenHint")));
     }
 

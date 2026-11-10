@@ -344,6 +344,13 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
 - Funding extremes contrarian (Toobit funding history, hold 24h, no stop): z>2 +0.32% (short side +0.15/+0.49);
   funding beyond +/-0.05%: +1.18% per trade (+0.61 / +1.75), n=382. Most promising new signal; needs a stop test.
 
+## Focus switch (owner approved 2026-11-10 14:58: "you decide what is better")
+- Panel, timeframes section: "Focus mode (5m + 15m, volatile coins)" on/off. On: keeps chosenTimeframes / coinMode /
+  coins in account["focus"]["saved"], sets 5m + 15m and coinMode volatile. Off: the kept values come back exactly.
+  All 18 strategies stay on (a short list starved the bot on 11-01). Reset keeps the switch.
+- Trades opened in focus mode carry focus=True; the panel shows focus vs other trades (count, won %, result).
+- POST /api/paper/focus {on}; diary events focus on/off. Tests: FocusTest.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

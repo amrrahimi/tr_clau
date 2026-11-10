@@ -275,6 +275,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             b.set_max_open(value)
             return b.public()
 
+        @app.post(f"/api/{prefix}/focus")
+        async def paper_focus(on: bool = Body(..., embed=True)):
+            """Owner's focus switch: 5m + 15m on the volatile coins; off brings the earlier settings back."""
+            b.set_focus(on)
+            return b.public()
+
         @app.post(f"/api/{prefix}/review")
         async def paper_review(enabled: Optional[bool] = Body(None), after: Optional[int] = Body(None),
                                every: Optional[dict] = Body(None)):

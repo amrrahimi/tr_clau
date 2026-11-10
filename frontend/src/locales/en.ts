@@ -232,6 +232,8 @@ export const en = {
   "bot.evHalted": "Switched off: 30% loss",
   "bot.evReset": "Started again with {capital} USDT",
   "bot.evStart": "Started",
+  "bot.evFocusOn": "Focus mode on (5m + 15m, volatile coins)",
+  "bot.evFocusOff": "Focus mode off; the earlier settings are back",
   "bot.evStop": "Stopped",
   "bot.evError": "Problem: {message}",
   "bot.reason.target": "Take-profit",
@@ -656,6 +658,11 @@ export const en = {
   "bot.winSplit": "{w} won · {l} lost · {e} even",
   "bot.event.timeBeAsk": "{symbol} {timeframe}: 12 candles without the target ({pnl}$) — break-even asked on Telegram",
   "bot.maxOpen": "Open trades at most",
+  "bot.focus": "Focus mode (5m + 15m, volatile coins)",
+  "bot.focus.onHint": "On: the bot trades only 5m and 15m on the volatile coins. Turning it off brings the earlier timeframes and coins back exactly.",
+  "bot.focus.offHint": "Turning it on keeps the current timeframes and coin choice and moves the bot to 5m + 15m on the volatile coins.",
+  "bot.focus.focus": "Focus-mode trades: {n}, won {rate}%, result {pnl}$",
+  "bot.focus.other": "Other trades: {n}, won {rate}%, result {pnl}$",
   "bot.maxOpenHint": "Waiting limit orders count too. One trade's margin is at most balance ÷ this number; the risk per trade stays about 1%.",
 } as const;
 

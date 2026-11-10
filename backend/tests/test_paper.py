@@ -1915,3 +1915,40 @@ class MaxOpenTest(unittest.TestCase):
         self.assertEqual((bot.max_open(), bot.slots(), bot.public()["rules"]["maxOpen"]), (10, 10, 10))
         bot.set_max_open(99)
         self.assertEqual(bot.max_open(), 20)
+
+
+class FocusTest(unittest.TestCase):
+    def test_focus_keeps_the_settings_and_brings_them_back(self):
+        async def empty(*a):
+            return []
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), empty, empty, empty, now=lambda: 1_000_000, fees=FEES)
+        bot.reset(100)
+        bot.set_timeframes(["1m", "1h", "4h"])
+        bot.set_coins("manual", ["SOL/USDT:USDT"])
+        before = (bot.chosen_timeframes(), bot.account["coinMode"], bot.account["coins"])
+        bot.set_focus(True)
+        self.assertEqual(bot.chosen_timeframes(), ["5m", "15m"])
+        self.assertEqual(bot.account["coinMode"], "volatile")
+        self.assertTrue(bot.public()["focus"]["on"])
+        bot.set_focus(True)                      # twice: the kept settings are not overwritten
+        bot.reset(100)                           # a reset keeps the switch and what it kept
+        self.assertTrue(bot.public()["focus"]["on"])
+        bot.set_focus(False)
+        self.assertEqual((bot.chosen_timeframes(), bot.account["coinMode"], bot.account["coins"]), before)
+        self.assertFalse(bot.public()["focus"]["on"])
+
+    def test_trades_are_counted_apart(self):
+        async def empty(*a):
+            return []
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), empty, empty, empty, now=lambda: 1_000_000, fees=FEES)
+        bot.reset(100)
+        bot.account["closed"] = [{"pnl": 1.0, "notional": 50, "exitReason": "target", "focus": True},
+                                 {"pnl": -1.0, "notional": 50, "exitReason": "stop", "focus": True},
+                                 {"pnl": 2.0, "notional": 50, "exitReason": "target"}]
+        s = bot.focus_stats()
+        self.assertEqual((s["focus"]["trades"], s["focus"]["wins"], s["focus"]["losses"], s["focus"]["pnl"]), (2, 1, 1, 0.0))
+        self.assertEqual((s["other"]["trades"], s["other"]["pnl"]), (1, 2.0))

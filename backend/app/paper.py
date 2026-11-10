@@ -32,6 +32,7 @@ Futures funding payments are not counted yet.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -50,6 +51,10 @@ from .scanner import reliable
 from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params, reward_ok
 
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
+# Owner's "focus" switch (2026-11-10, research): 5m + 15m on the volatile coins; the earlier settings are kept
+# and come back when the switch is turned off.
+FOCUS_TIMEFRAMES = ("5m", "15m")
+FOCUS_KEYS = ("chosenTimeframes", "coinMode", "coins")
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
 STALE_PART = 0.10             # of the stop distance: further than this toward the target = too late
@@ -764,6 +769,8 @@ class PaperBot:
             "btc": self.btc_state,
             "telegram": {**telegram.public(), "lastError": self.tg_error},
             "limitEntry": a.get("limitEntry", False),
+            "focus": {"on": bool(a.get("focus")), "since": (a.get("focus") or {}).get("since"),
+                      "timeframes": list(FOCUS_TIMEFRAMES), "stats": self.focus_stats()},
             "review": {"enabled": a.get("reviewEnabled", True), "after": a.get("reviewAfter", REVIEW_AFTER_CANDLES),
                        "every": {**REVIEW_EVERY, **(a.get("reviewEvery") or {})}},
             "orders": [{k: o[k] for k in ("id", "symbol", "base", "timeframe", "strategy", "side", "price",
@@ -844,7 +851,7 @@ class PaperBot:
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
                                               "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
-                                              "reviewEnabled", "reviewAfter", "reviewEvery")
+                                              "reviewEnabled", "reviewAfter", "reviewEvery", "focus")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -2138,6 +2145,7 @@ class PaperBot:
             "history": {"trades": c["stats"]["trades"], "winRate": c["stats"].get("winRate"),
                         "profitFactor": c["stats"]["profitFactor"]},
             "trend": c.get("trend"), "btcLink": c.get("btcLink"), "btcTrend": c.get("btcTrend"),
+            "focus": bool(a.get("focus")),
             # Why the bot entered (the owner's "explanation" button, 2026-11-07).
             "why": {"signalPrice": s.get("entry"), "signalTime": s["time"], "marketState": c.get("marketState"),
                     "higherTf": HIGHER_TF.get(tf), "feeShare": 2 * self.fees.taker / 100 * entry / abs(entry - stop)
@@ -2176,6 +2184,39 @@ class PaperBot:
     def set_max_open(self, n: int) -> None:
         self.account["maxOpen"] = max(1, min(20, int(n)))
         self.save()
+
+    def set_focus(self, on: bool) -> None:
+        """Owner's focus switch: on = keep the current timeframes / coin choice and trade 5m + 15m on the
+        volatile coins; off = the kept settings come back exactly."""
+        a = self.account
+        if on and not a.get("focus"):
+            a["focus"] = {"since": self.now(), "saved": {k: copy.deepcopy(a[k]) for k in FOCUS_KEYS if k in a}}
+            a["chosenTimeframes"] = [tf for tf in self.profile.timeframes if tf in FOCUS_TIMEFRAMES] \
+                or a.get("chosenTimeframes")
+            a["coinMode"] = "volatile"
+            self._event("focus", on=True)
+        elif not on and a.get("focus"):
+            saved = a["focus"].get("saved") or {}
+            for k in FOCUS_KEYS:
+                if k in saved:
+                    a[k] = saved[k]
+                else:
+                    a.pop(k, None)
+            a["coinMode"] = a.get("coinMode", "top")
+            a["focus"] = None
+            self._event("focus", on=False)
+        self.save()
+
+    def focus_stats(self) -> dict:
+        """Closed trades opened in focus mode against the others (count, wins, losses, net USDT)."""
+        out = {}
+        for name, want in (("focus", True), ("other", False)):
+            trades = [t for t in self.account["closed"] if bool(t.get("focus")) == want]
+            wins = sum(1 for t in trades if trade_outcome(t) == "win")
+            losses = sum(1 for t in trades if trade_outcome(t) == "loss")
+            out[name] = {"trades": len(trades), "wins": wins, "losses": losses,
+                         "pnl": sum(t["pnl"] for t in trades)}
+        return out
 
     def set_review(self, enabled: Optional[bool] = None, after: Optional[int] = None,
                    every: Optional[dict] = None) -> None:
