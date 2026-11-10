@@ -73,19 +73,22 @@ def day(t: int) -> int:
 
 
 # ---------------- A. volatility breakout (1h) ----------------
-def vol_breakout(c, mid, t: Tally):
+def vol_breakout(c, mid, t: Tally, p: Tally | None = None, tf: str = "1h"):
     days = defaultdict(list)
     for n, k in enumerate(c):
         days[day(k["time"])].append(n)
     keys = sorted(days)
     for d0, d1 in zip(keys, keys[1:]):
         prev, cur = days[d0], days[d1]
-        if len(prev) < 24 or len(cur) < 24:
+        per = 24 * 3600 // (c[1]["time"] - c[0]["time"])
+        if len(prev) < per or len(cur) < per:
             continue
         rng = max(c[i]["high"] for i in prev) - min(c[i]["low"] for i in prev)
         o = c[cur[0]]["open"]
         trend_up = c[prev[-1]]["close"] > c[prev[0]]["open"]
         half = 0 if c[cur[0]]["time"] < mid else 1
+        if p is not None:
+            p.add(f"A {tf} drift: long every day open->close", half, pct(LONG, o, c[cur[-1]]["close"]))
         for k in (0.5, 0.7):
             up, dn = o + k * rng, o - k * rng
             for n in cur:
@@ -100,16 +103,26 @@ def vol_breakout(c, mid, t: Tally):
                 if not fee_ok(entry, o, FEES, FEE_RATIO_BY_TF["1h"]):
                     break
                 last = cur[-1]
+                rk = abs(entry - o)
+                stopped = R(side, entry, o, rk, FEES.taker, FEES.taker)
                 if (x["close"] <= o) if side == LONG else (x["close"] >= o):
-                    r = R(side, entry, o, abs(entry - o), FEES.taker, FEES.taker)
+                    r = stopped
                 else:
                     r = trade(c, n + 1, side, entry, o, None, limit=last - n) if n < last else \
-                        R(side, entry, x["close"], abs(entry - o), FEES.taker, FEES.taker)
-                t.add(f"A k={k} both sides", half, r)
+                        R(side, entry, x["close"], rk, FEES.taker, FEES.taker)
+                # worst case: the entry candle touched the day open after the entry
+                worst = stopped if ((x["low"] <= o) if side == LONG else (x["high"] >= o)) else r
+                t.add(f"A {tf} k={k} both sides", half, r)
+                t.add(f"A {tf} k={k} both sides, worst case", half, worst)
                 if side == LONG:
-                    t.add(f"A k={k} long only", half, r)
+                    t.add(f"A {tf} k={k} long only", half, r)
+                    t.add(f"A {tf} k={k} long only, worst case", half, worst)
+                    if p is not None:
+                        p.add(f"A {tf} k={k} long only (net %)", half, r * rk / entry * 100)
+                else:
+                    t.add(f"A {tf} k={k} short only", half, r)
                 if (side == LONG) == trend_up:
-                    t.add(f"A k={k} with yesterday's direction", half, r)
+                    t.add(f"A {tf} k={k} with yesterday's direction", half, r)
                 break
 
 
@@ -262,8 +275,9 @@ async def main() -> int:
                 lance(c, tf, mid, t)
                 if tf == "15m":
                     orb(c, mid, t)
+                    vol_breakout(c, mid, t, None, "15m")
                 if tf == "1h":
-                    vol_breakout(c, mid, t)
+                    vol_breakout(c, mid, t, p, "1h")
                     hours += [(k["time"], (k["time"] // 3600) % 24, (k["close"] - k["open"]) / k["open"] * 100) for k in c]
                 if tf == "4h":
                     four[symbol] = {k["time"]: k for k in c}
