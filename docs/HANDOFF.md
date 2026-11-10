@@ -297,6 +297,13 @@ Profile = 100 candles before the signal, 24 rows, VA 70%. R after fees, halves:
   buttons hold / close), again only when the view changes (p["reviewView"]). Trend turned + profit: closed by
   itself; + loss: asked (as before). No answer: stays.
 
+## SP2L study (2026-11-10 13:05, owner's videos, branch study-2026-11-09, scripts/study_sp2l.py, 40 coins)
+Setup: strong first leg (2-8 same-colour candles, FVG-like gap, closes in top 25%/40% of range, size >= 1.5x/1.2x
+the 20 before), limit at the previous candle's low/high on the first pullback (within 3 candles), stop behind the leg,
+targets 1/1.5/2R, 2R+lock 50/25, with/without EMA200. Result: negative almost everywhere. The video's 1:1 wins
+only 38-49% (needs >~53% after fees). Best: 15m strict 2R+lock +0.039R (n=123), 4h loose+EMA200 2R +0.003R:
+noise. The bot's own strategies on the same candles are better (5m +0.052, 15m +0.020). Not added to the bot.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
