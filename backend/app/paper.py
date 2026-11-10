@@ -291,6 +291,28 @@ def check_exit(position: dict, candles: list[dict], last_price: Optional[float],
     return None
 
 
+MAX_REWARD = 4.0   # a target further than this many times the risk is not what any strategy was tested with
+
+
+def anchor_target(side: str, signal_entry: Optional[float], entry: float, stop: float, target: float) -> Optional[float]:
+    """The target for the real entry price (owner 2026-11-10: targets were too far). The strategy's own
+    reward:risk (measured at the signal's price, at most MAX_REWARD) is kept from the price actually
+    entered at, so a better entry (limit order, price moved toward the stop) brings the target closer
+    instead of leaving it at 3-8 times the new, smaller risk. Never further than the signal's target.
+    None when the levels make no sense (target at or below zero, entry past the stop)."""
+    d = 1 if side == LONG else -1
+    base = signal_entry if signal_entry is not None else entry
+    risk0, risk = (base - stop) * d, (entry - stop) * d
+    if risk <= 0 or target <= 0:
+        return None
+    reward = min((target - base) * d / risk0, MAX_REWARD) if risk0 > 0 else MAX_REWARD
+    if reward <= 0:
+        return None
+    new = entry + d * reward * risk
+    new = min(new, target) if d == 1 else max(new, target)
+    return new if new > 0 and (new - entry) * d > 0 else None
+
+
 def check_minutes(position: dict, minutes: list[dict], now: float) -> Optional[tuple[float, str]]:
     """The part of the chart's candle that is still forming, minute by minute (owner 2026-11-09, audit):
     like a stop order on the exchange, a stop crossed inside a minute fills at the stop, and at that
@@ -1988,8 +2010,16 @@ class PaperBot:
             return
         entry = recent[-1]["close"]             # the price now
         s = c["signal"]
-        stop, target = s["stopLoss"], s["takeProfit"]
         long_ = s["side"] == LONG
+        if self.account.get("limitEntry"):      # the entry will be the order's price, a little better
+            entry_at = entry - (1 if long_ else -1) * LIMIT_OFFSET * abs(entry - s["stopLoss"])
+        else:
+            entry_at = entry
+        anchored = anchor_target(s["side"], s.get("entry"), entry_at, s["stopLoss"], s["takeProfit"])
+        if anchored is not None:                # the target counted from the real entry (see anchor_target)
+            s = {**s, "takeProfit": anchored}
+            c = {**c, "signal": s}
+        stop, target = s["stopLoss"], s["takeProfit"]
         def skip(reason: str) -> None:
             self._count(reason)
             self._event("skip", symbol=c["base"], timeframe=tf, reason=reason)
@@ -1998,7 +2028,7 @@ class PaperBot:
 
         # The price may have moved since the signal: skip if it already passed the stop or the target,
         # or moved too far for the stop to still be where the strategy meant it.
-        if (entry <= stop or entry >= target) if long_ else (entry >= stop or entry <= target):
+        if anchored is None or ((entry <= stop or entry >= target) if long_ else (entry >= stop or entry <= target)):
             return skip("past")
         if is_stale(s["entry"], entry, stop):
             return skip("stale")

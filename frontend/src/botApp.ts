@@ -340,7 +340,7 @@ export class BotApp {
       const at = lock && trigger != null ? trigger * (lock.at / lock.trigger) : null;
       const profit = resultAt(p, p.takeProfit, fees.taker, fees.maker);
       const loss = resultAt(p, p.stop, fees.taker, fees.taker);
-      const rr = Math.abs(p.takeProfit - p.entryPrice) / Math.abs(p.entryPrice - p.stop);
+      const rr = Math.abs(p.takeProfit - p.entryPrice) / Math.abs(p.entryPrice - p.stopLoss);   // the first stop, not a moved one
       const num = (x: string) => `\u202A${x}\u202C`;   // a number keeps its own order inside Persian text (canvas)
       const texts = [this.t("box.profit", { pnl: num(`${formatMoney(profit)}$`), rr: num(`1:${rr.toFixed(1)}`) })];
       const lines: BoxDecor["lines"] = [];

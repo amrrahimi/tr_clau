@@ -254,7 +254,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.recent_rows["A/USDT:USDT"] = [bar(999_960, 100, 100.5, 100, 100.5)]   # short at 100, stop 101
         await bot._open(cand("A", 2.0, 20, side=SHORT), "15m", self.clock[0], {"fee_ratio": 0.33})
         p = bot.account["positions"][0]
-        self.assertEqual((p["entryPrice"], p["stop"], p["takeProfit"]), (100.5, 101, 98))
+        self.assertEqual((p["entryPrice"], p["stop"], p["takeProfit"]), (100.5, 101, 99.5))
         self.recent_rows["B/USDT:USDT"] = [bar(999_960, 100, 101.2, 100, 101.2)]   # past the stop: still no
         await bot._open(cand("B", 2.0, 20, side=SHORT), "15m", self.clock[0], {"fee_ratio": 0.33})
         self.assertEqual(bot.account["events"][-1]["reason"], "past")
@@ -1152,7 +1152,8 @@ class LimitEntryTest(unittest.IsolatedAsyncioTestCase):
         await self.bot._watch_orders(self.clock[0])
         self.assertEqual(self.bot.account["orders"], [])
         p = self.bot.account["positions"][0]
-        self.assertEqual((p["entryType"], p["entryPrice"], p["stop"], p["takeProfit"]), ("limit", 99.9, 99, 102))
+        self.assertEqual((p["entryType"], p["entryPrice"], p["stop"]), ("limit", 99.9, 99))
+        self.assertAlmostEqual(p["takeProfit"], 101.7)   # 2R from the real entry, not from the signal's price
         self.assertAlmostEqual(p["entryFee"], p["notional"] * 0.02 / 100)       # maker
         self.assertAlmostEqual(p["breakevenPrice"], 99.9 * 1.0002 / 0.9994)     # maker in, taker out
         self.assertLess(p["breakevenPrice"], pp.breakeven_price(LONG, 99.9, FEES))
@@ -1218,7 +1219,8 @@ class LimitEntryTest(unittest.IsolatedAsyncioTestCase):
         self.clock[0] = 1_000_400
         self.minutes(bar(1_000_200, 100, 100, 99.8, 99.9), bar(1_000_260, 99.9, 102.3, 99.9, 102.2), last=102)
         await self.bot._watch_orders(self.clock[0])
-        self.assertEqual((a["closed"][-1]["exitReason"], a["closed"][-1]["exitPrice"]), ("target", 102))
+        self.assertEqual(a["closed"][-1]["exitReason"], "target")
+        self.assertAlmostEqual(a["closed"][-1]["exitPrice"], 101.7)
 
     async def test_waiting_orders_survive_closing_the_app(self):
         await self.place()
@@ -1833,3 +1835,20 @@ class TelegramManageTest(TelegramAskTest):
         self.assertEqual(self.bot.account["closed"][-1]["exitReason"], "manual")
         # someone else's chat cannot touch anything
         self.assertEqual(await self.tap("pos:1", chat=99), [])
+
+
+
+class AnchorTargetTest(unittest.TestCase):
+    """Owner 2026-11-10: the target is counted from the real entry (the strategy's own reward:risk)."""
+
+    def test_better_entry_brings_the_target_closer(self):
+        self.assertAlmostEqual(pp.anchor_target("long", 100, 99.5, 99, 102), 100.5)     # 2R of 0.5
+        self.assertAlmostEqual(pp.anchor_target("short", 100, 100.5, 101, 98), 99.5)
+
+    def test_never_further_than_the_signal_target_and_capped(self):
+        self.assertAlmostEqual(pp.anchor_target("long", 100, 100.05, 99, 102), 102)     # worse entry: not further
+        self.assertAlmostEqual(pp.anchor_target("long", 100, 100, 99, 110), 104)        # at most 4R
+
+    def test_levels_that_make_no_sense(self):
+        self.assertIsNone(pp.anchor_target("short", 0.0026, 0.0026, 0.0043, -0.0012))   # target below zero
+        self.assertIsNone(pp.anchor_target("long", 100, 98.9, 99, 102))                 # entry past the stop
