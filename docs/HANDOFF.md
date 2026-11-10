@@ -361,6 +361,12 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
   15m today +1.6, deeper -0.2 to -1.4. Reason: adverse selection (only the failing signals dip further; the good
   ones run off without us). Not built.
 
+- Follow-up (study_dip2.py): (1) IF the price goes against the signal (known only afterwards) the idea is far better
+  for those trades (entered as usual -0.25/-0.5/-1.0R avg for a 0.25/0.5/1 x risk dip; idea ~0R). (2) The owner's
+  exact case "bot missed the entry, then the price fell": extra trades with moved levels are ~0 to negative on
+  volatile 5m (-0.06 to -0.17R) and 15m (-0.01 to -0.21R); positive only on top40 5m (+0.15 to +0.25, small n).
+  Adds -0.5 to +1.0R per 100 signals. Not built.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
