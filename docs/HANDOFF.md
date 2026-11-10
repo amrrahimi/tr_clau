@@ -304,6 +304,20 @@ targets 1/1.5/2R, 2R+lock 50/25, with/without EMA200. Result: negative almost ev
 only 38-49% (needs >~53% after fees). Best: 15m strict 2R+lock +0.039R (n=123), 4h loose+EMA200 2R +0.003R:
 noise. The bot's own strategies on the same candles are better (5m +0.052, 15m +0.020). Not added to the bot.
 
+## New strategy families (2026-11-10 13:40, branch study-2026-11-09, scripts/study_new.py, 40 coins)
+Owner asked to find and test new methods. R after fees, two halves. Bot baseline: 5m +0.052, 15m +0.020, 4h +0.007.
+- A Larry Williams volatility breakout (UTC day, entry when price passes day open +/- k x yesterday's range, stop at
+  the day open, exit at day end): BEST. 1h long only k=0.7: +0.142R (+0.110 / +0.172), 772 trades, ~+1.0% net per
+  trade vs +0.07% for simply holding every day; worst case (entry candle touched the stop) still +0.050 (+0.068 / +0.032).
+  15m long k=0.7 +0.135 (+0.215 / +0.071). Shorts ~0. Both sides k=0.5 +0.082 but negative in the worst case.
+- G cross-sectional 1d reversal "long the 5 biggest losers of the day, hold 1 day": +0.54% net per trade (+0.12 / +0.72),
+  no stop; shorting winners loses. Promising but risky (no stop) and uneven halves.
+- F Lance-like Fibonacci trend: small positives in many variants (15m N=50 2R +0.083/+0.053; 4h N=100 exit on flip
+  +0.29 but +0.01 / +0.54). Weak.
+- D RSI(2) (60% wins but negative), E exhaustion fade (bad), B hour of day (fails out of sample), C 12h sessions
+  (no), H NY opening range (half 1 +, half 2 -): no.
+Nothing added to the bot yet; decision point sent (A as a paper strategy needs a day-end time exit).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
