@@ -351,6 +351,16 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
 - Trades opened in focus mode carry focus=True; the panel shows focus vs other trades (count, won %, result).
 - POST /api/paper/focus {on}; diary events focus on/off. Tests: FocusTest.
 
+## Owner's deeper-entry idea (2026-11-10 16:37): price goes our way while the limit waits -> enter deeper,
+## stop and target moved by the same amount
+- Our 43 closed paper trades (1m candles from the local app; 3 oldest on 5m): plain simulation of today's entries
+  -8.11$ (-5.44R); +0.5 risk deeper, 1 candle: 15 trades, +21.9$ (+8.39R) BUT one trade (#34 JCT, owner-moved far
+  target, 3$ risk) gives +18.5$; without it ~+2R. 3 days, too few trades.
+- Bot strategies on history (study_dip.py, 40 + 30 coins, 5m-1h, thousands of signals): every deeper variant is
+  worse than today's limit (0.1 x risk, 1 candle). volatile30 5m today +1.9R per 100 signals, deeper -0.5 to -2.3;
+  15m today +1.6, deeper -0.2 to -1.4. Reason: adverse selection (only the failing signals dip further; the good
+  ones run off without us). Not built.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
