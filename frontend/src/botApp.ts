@@ -340,7 +340,7 @@ export class BotApp {
       const at = lock && trigger != null ? trigger * (lock.at / lock.trigger) : null;
       const profit = resultAt(p, p.takeProfit, fees.taker, fees.maker);
       const loss = resultAt(p, p.stop, fees.taker, fees.taker);
-      const rr = Math.abs(p.takeProfit - p.entryPrice) / Math.abs(p.entryPrice - p.stop);
+      const rr = Math.abs(p.takeProfit - p.entryPrice) / Math.abs(p.entryPrice - p.stopLoss);   // the first stop, not a moved one
       const num = (x: string) => `\u202A${x}\u202C`;   // a number keeps its own order inside Persian text (canvas)
       const texts = [this.t("box.profit", { pnl: num(`${formatMoney(profit)}$`), rr: num(`1:${rr.toFixed(1)}`) })];
       const lines: BoxDecor["lines"] = [];
@@ -1017,7 +1017,169 @@ export class BotApp {
         line.append(box, name);
         list.append(line);
       }
-      parts.push(heading("timeframes", t("bot.timeframes")), list, el("div", "bot-hint", t("bot.timeframesHint")));
+      // The owner's maximum of open trades (2026-11-10); the margin share of one trade follows it.
+      const maxRow = el("label", "bot-review-row", t("bot.maxOpen"));
+      const maxInput = document.createElement("input");
+      maxInput.type = "number";
+      maxInput.min = "1";
+      maxInput.max = "20";
+      maxInput.dir = "ltr";
+      maxInput.value = String(s.rules.maxOpen ?? 6);
+      maxInput.addEventListener("change", () => {
+        const n = Math.round(Number(maxInput.value));
+        if (!(n >= 1 && n <= 20)) {
+          maxInput.classList.add("invalid");
+          return;
+        }
+        void this.act({ kind: "max-open", value: n });
+      });
+      maxRow.append(maxInput);
+      // Owner 2026-11-11: a coin waits this many hours after a stop-loss (a number, 0 = off).
+      const pauseParts: HTMLElement[] = [];
+      if (s.coinPause) {
+        const cp = s.coinPause;
+        const pauseRow = el("label", "bot-review-row", t("bot.coinPause"));
+        const pauseInput = document.createElement("input");
+        pauseInput.type = "number";
+        pauseInput.min = "0";
+        pauseInput.max = "168";
+        pauseInput.step = "0.5";
+        pauseInput.dir = "ltr";
+        pauseInput.value = String(cp.hours);
+        pauseInput.addEventListener("change", () => {
+          const h = Number(pauseInput.value);
+          if (!(h >= 0 && h <= 168) || pauseInput.value.trim() === "") {
+            pauseInput.classList.add("invalid");
+            return;
+          }
+          void this.act({ kind: "coin-pause", hours: h });
+        });
+        pauseRow.append(pauseInput);
+        const now = Date.now() / 1000;
+        const waiting = Object.entries(cp.paused).filter(([, until]) => until > now)
+          .map(([coin, until]) => t("bot.coinPause.left", { coin, minutes: String(Math.ceil((until - now) / 60)) }));
+        pauseParts.push(pauseRow, el("div", "bot-hint", t(cp.hours > 0 ? "bot.coinPauseHint" : "bot.coinPauseOff")));
+        if (waiting.length) pauseParts.push(el("div", "bot-hint", t("bot.coinPause.now", { list: waiting.join("، ") })));
+      }
+      // The owner's focus switch (2026-11-10): 5m + 15m on the volatile coins, the earlier settings kept.
+      const focusParts: HTMLElement[] = [];
+      if (s.focus) {
+        const f = s.focus;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", f.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (f.on !== on) void this.act({ kind: "focus", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.focus"));
+        row.append(onOff);
+        const line = (name: "focus" | "other") => {
+          const x = f.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "focus" ? "bot.focus.focus" : "bot.focus.other", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        focusParts.push(row, el("div", "bot-hint", t(f.on ? "bot.focus.onHint" : "bot.focus.offHint")),
+          el("div", "bot-hint", line("focus")), el("div", "bot-hint", line("other")));
+      }
+      // 2026-11-11: Trend Rider, the bot's own 4h trend engine.
+      const riderParts: HTMLElement[] = [];
+      if (s.rider) {
+        const rd = s.rider;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", rd.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (rd.on !== on) void this.act({ kind: "rider", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.rider"));
+        row.append(onOff);
+        const line = (name: "on" | "other") => {
+          const x = rd.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "on" ? "bot.rider.statOn" : "bot.rider.statOther", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        riderParts.push(row, el("div", "bot-hint", t("bot.riderHint", {
+          tf: rd.timeframe, stop: String(rd.stopAtr), max: String(rd.maxPositions) })));
+        if (rd.last.time) {
+          riderParts.push(el("div", "bot-hint", t("bot.rider.last", {
+            coins: String(rd.last.coins ?? 0), long: String(rd.last.long ?? 0), short: String(rd.last.short ?? 0),
+            opened: String(rd.last.opened ?? 0), closed: String(rd.last.closed ?? 0) })));
+        }
+        riderParts.push(el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
+      }
+      // 2026-11-11: the proven set (only the strategies that passed the 28-month test, on 1h and 4h).
+      const provenParts: HTMLElement[] = [];
+      if (s.proven) {
+        const pv = s.proven;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", pv.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (pv.on !== on) void this.act({ kind: "proven", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.proven"));
+        row.append(onOff);
+        const sets = Object.entries(pv.sets)
+          .map(([tf, kinds]) => `${tf}: ${kinds.map((k) => t(`strat.${k}` as MessageKey)).join("، ")}`).join(" · ");
+        const line = (name: "on" | "other") => {
+          const x = pv.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "on" ? "bot.proven.statOn" : "bot.proven.statOther", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        provenParts.push(row, el("div", "bot-hint", t("bot.provenHint", { sets })),
+          el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
+      }
+      // Owner 2026-11-11: the strategy league switch and its table for the ticked timeframes.
+      const leagueParts: HTMLElement[] = [];
+      if (s.league) {
+        const lg = s.league;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", lg.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (lg.on !== on) void this.act({ kind: "league", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.league"));
+        row.append(onOff);
+        leagueParts.push(row, el("div", "bot-hint", t("bot.leagueHint", { days: String(lg.days), min: String(lg.min) })));
+        for (const [tf, kinds] of Object.entries(lg.table)) {
+          const ranked = Object.entries(kinds).sort((a, b) => b[1].avgR - a[1].avgR);
+          // Only the left-out ones are listed (every other strategy trades).
+          const off = ranked.filter(([, v]) => !v.on)
+            .map(([k, v]) => `${t(`strat.${k}` as MessageKey)} (${v.avgR >= 0 ? "+" : ""}${v.avgR.toFixed(2)}R، ${v.count})`);
+          leagueParts.push(el("div", "bot-hint", t("bot.league.tf", {
+            tf, off: off.length ? off.join("، ") : t("bot.league.none"),
+          })));
+        }
+        const line = (name: "on" | "other") => {
+          const x = lg.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "on" ? "bot.league.statOn" : "bot.league.statOther", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        leagueParts.push(el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
+      }
+      parts.push(heading("timeframes", t("bot.timeframes")), ...riderParts, ...provenParts, ...focusParts, ...leagueParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
+        maxRow, el("div", "bot-hint", t("bot.maxOpenHint")), ...pauseParts);
     }
 
     // Limit entry (paper only): on/off, the waiting orders, market vs limit results.

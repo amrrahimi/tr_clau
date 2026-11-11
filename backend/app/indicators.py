@@ -208,22 +208,36 @@ def macd(closes: Sequence[float], fast: int = 12, slow: int = 26, signal: int = 
     return macd_line, signal_line, hist
 
 
-def highest(values: Sequence[Optional[float]], length: int) -> Series:
+def _rolling_extreme(values: Sequence[Optional[float]], length: int, better) -> Series:
+    """Highest / lowest of the last `length` values in one pass (a queue of candidates), None where the
+    window holds a None or is not full yet. Same numbers as taking max / min of every window, much faster."""
     out: Series = [None] * len(values)
-    for i in range(length - 1, len(values)):
-        window = values[i - length + 1 : i + 1]
-        if all(v is not None for v in window):
-            out[i] = max(window)  # type: ignore[type-var]
+    queue: list[int] = []     # indexes whose values could still be the window's extreme, best first
+    head = 0
+    last_none = -1
+    for i, v in enumerate(values):
+        if v is None:
+            last_none = i
+            queue, head = [], 0
+            continue
+        while len(queue) > head and not better(values[queue[-1]], v):
+            queue.pop()
+        queue.append(i)
+        if queue[head] <= i - length:
+            head += 1
+        if head > 64:
+            queue, head = queue[head:], 0
+        if i >= length - 1 and last_none <= i - length:
+            out[i] = values[queue[head]]
     return out
+
+
+def highest(values: Sequence[Optional[float]], length: int) -> Series:
+    return _rolling_extreme(values, length, lambda a, b: a > b)
 
 
 def lowest(values: Sequence[Optional[float]], length: int) -> Series:
-    out: Series = [None] * len(values)
-    for i in range(length - 1, len(values)):
-        window = values[i - length + 1 : i + 1]
-        if all(v is not None for v in window):
-            out[i] = min(window)  # type: ignore[type-var]
-    return out
+    return _rolling_extreme(values, length, lambda a, b: a < b)
 
 
 def stoch_raw(source: Sequence[Optional[float]], highs: Sequence[Optional[float]],
@@ -293,3 +307,173 @@ def supertrend(highs: Sequence[float], lows: Sequence[float], closes: Sequence[f
         direction[i] = d
         prev_upper, prev_lower, prev_line = upper, lower, line[i]
     return line, direction
+
+
+# ---------- indicators added for the second strategy set (2026-11-11) ----------
+
+def roc(values: Sequence[float], length: int) -> Series:
+    """Rate of change in percent over `length` candles (TradingView ta.roc)."""
+    out: Series = [None] * len(values)
+    for i in range(length, len(values)):
+        if values[i - length]:
+            out[i] = (values[i] - values[i - length]) / values[i - length] * 100
+    return out
+
+
+def hma(values: Sequence[Optional[float]], length: int) -> Series:
+    """Hull moving average (TradingView ta.hma): WMA(2 x WMA(n/2) - WMA(n), sqrt(n)). Smooth and fast."""
+    half, full = wma(values, max(1, length // 2)), wma(values, length)
+    diff: Series = [None if a is None or b is None else 2 * a - b for a, b in zip(half, full)]
+    return wma(diff, max(1, int(math.sqrt(length))))
+
+
+def kama(values: Sequence[float], length: int = 10, fast: int = 2, slow: int = 30) -> Series:
+    """Kaufman's adaptive moving average: fast in a straight move, slow in a choppy one."""
+    out: Series = [None] * len(values)
+    if len(values) <= length:
+        return out
+    f, s = 2 / (fast + 1), 2 / (slow + 1)
+    path = sum(abs(values[j] - values[j - 1]) for j in range(1, length + 1))
+    previous = values[length]
+    out[length] = previous
+    for i in range(length + 1, len(values)):
+        path += abs(values[i] - values[i - 1]) - abs(values[i - length] - values[i - length - 1])
+        er = abs(values[i] - values[i - length]) / path if path > 0 else 0.0
+        previous = previous + (er * (f - s) + s) ** 2 * (values[i] - previous)
+        out[i] = previous
+    return out
+
+
+def efficiency(values: Sequence[float], length: int) -> Series:
+    """Kaufman's efficiency ratio, 0 to 1: the straight move divided by the whole path."""
+    out: Series = [None] * len(values)
+    if len(values) <= length:
+        return out
+    path = sum(abs(values[j] - values[j - 1]) for j in range(1, length + 1))
+    out[length] = abs(values[length] - values[0]) / path if path > 0 else 0.0
+    for i in range(length + 1, len(values)):
+        path += abs(values[i] - values[i - 1]) - abs(values[i - length] - values[i - length - 1])
+        out[i] = abs(values[i] - values[i - length]) / path if path > 1e-300 else 0.0
+    return out
+
+
+def cci(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], length: int = 20) -> Series:
+    """Commodity Channel Index (TradingView ta.cci on hlc3)."""
+    typical = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
+    mean = sma(typical, length)
+    out: Series = [None] * len(closes)
+    for i in range(length - 1, len(closes)):
+        m = mean[i]
+        dev = sum(abs(v - m) for v in typical[i - length + 1: i + 1]) / length
+        out[i] = (typical[i] - m) / (0.015 * dev) if dev > 0 else 0.0
+    return out
+
+
+def psar(highs: Sequence[float], lows: Sequence[float], start: float = 0.02, step: float = 0.02,
+         maximum: float = 0.2) -> tuple[Series, list[Optional[int]]]:
+    """Parabolic SAR: (line, direction). Direction 1 = the line is under the price (up), -1 = above."""
+    n = len(highs)
+    line: Series = [None] * n
+    direction: list[Optional[int]] = [None] * n
+    if n < 2:
+        return line, direction
+    up = highs[1] >= highs[0]
+    sar = lows[0] if up else highs[0]
+    extreme = highs[1] if up else lows[1]
+    af = start
+    line[1], direction[1] = sar, 1 if up else -1
+    for i in range(2, n):
+        sar = sar + af * (extreme - sar)
+        if up:
+            sar = min(sar, lows[i - 1], lows[i - 2])
+            if lows[i] < sar:
+                up, sar, extreme, af = False, extreme, lows[i], start
+            elif highs[i] > extreme:
+                extreme, af = highs[i], min(af + step, maximum)
+        else:
+            sar = max(sar, highs[i - 1], highs[i - 2])
+            if highs[i] > sar:
+                up, sar, extreme, af = True, extreme, highs[i], start
+            elif lows[i] < extreme:
+                extreme, af = lows[i], min(af + step, maximum)
+        line[i], direction[i] = sar, 1 if up else -1
+    return line, direction
+
+
+def aroon(highs: Sequence[float], lows: Sequence[float], length: int = 14) -> tuple[Series, Series]:
+    """Aroon (up, down), 0 to 100: how recently the highest high / lowest low of the window came."""
+    n = len(highs)
+    up: Series = [None] * n
+    down: Series = [None] * n
+    for i in range(length, n):
+        hi = lo = i - length
+        for j in range(i - length, i + 1):
+            if highs[j] >= highs[hi]:
+                hi = j
+            if lows[j] <= lows[lo]:
+                lo = j
+        up[i] = 100 * (length - (i - hi)) / length
+        down[i] = 100 * (length - (i - lo)) / length
+    return up, down
+
+
+def vortex(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+           length: int = 14) -> tuple[Series, Series]:
+    """Vortex indicator: (VI+, VI-)."""
+    n = len(highs)
+    plus: Series = [None] * n
+    minus: Series = [None] * n
+    vp = [0.0] + [abs(highs[i] - lows[i - 1]) for i in range(1, n)]
+    vm = [0.0] + [abs(lows[i] - highs[i - 1]) for i in range(1, n)]
+    tr = true_range(highs, lows, closes)
+    for i in range(length, n):
+        total = sum(tr[i - length + 1: i + 1])  # type: ignore[arg-type]
+        if total > 0:
+            plus[i] = sum(vp[i - length + 1: i + 1]) / total
+            minus[i] = sum(vm[i - length + 1: i + 1]) / total
+    return plus, minus
+
+
+def obv(closes: Sequence[float], volumes: Sequence[float]) -> list[float]:
+    """On-balance volume: volume added on up candles, taken away on down candles."""
+    out = [0.0] * len(closes)
+    for i in range(1, len(closes)):
+        v = volumes[i] or 0.0
+        out[i] = out[i - 1] + (v if closes[i] > closes[i - 1] else -v if closes[i] < closes[i - 1] else 0.0)
+    return out
+
+
+def mfi(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], volumes: Sequence[float],
+        length: int = 14) -> Series:
+    """Money Flow Index, 0 to 100: an RSI that also weighs the volume."""
+    n = len(closes)
+    typical = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
+    pos = [0.0] * n
+    neg = [0.0] * n
+    for i in range(1, n):
+        flow = typical[i] * (volumes[i] or 0.0)
+        if typical[i] > typical[i - 1]:
+            pos[i] = flow
+        elif typical[i] < typical[i - 1]:
+            neg[i] = flow
+    out: Series = [None] * n
+    for i in range(length, n):
+        p, m = sum(pos[i - length + 1: i + 1]), sum(neg[i - length + 1: i + 1])
+        out[i] = 100.0 if m == 0 else 100 - 100 / (1 + p / m)
+    return out
+
+
+def williams_r(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], length: int = 14) -> Series:
+    """Williams %R, -100 to 0: where the close sits in the recent range (-100 = at the low)."""
+    hh, ll = highest(highs, length), lowest(lows, length)
+    return [None if h is None or l is None or h == l else -100 * (h - c) / (h - l) for h, l, c in zip(hh, ll, closes)]
+
+
+def trix(closes: Sequence[float], length: int = 15) -> Series:
+    """TRIX: percent change of a triple-smoothed EMA."""
+    e3 = ema(ema(ema(closes, length), length), length)
+    out: Series = [None] * len(closes)
+    for i in range(1, len(closes)):
+        if e3[i] is not None and e3[i - 1]:
+            out[i] = (e3[i] - e3[i - 1]) / e3[i - 1] * 100
+    return out

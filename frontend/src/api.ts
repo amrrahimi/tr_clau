@@ -38,6 +38,12 @@ export type PaperAction =
   | { kind: "limit"; enabled: boolean }
   | { kind: "lock"; enabled: boolean; trigger: number; at: number }
   | { kind: "review"; enabled?: boolean; after?: number; every?: Record<string, number> }
+  | { kind: "max-open"; value: number }
+  | { kind: "focus"; on: boolean }
+  | { kind: "coin-pause"; hours: number }
+  | { kind: "league"; on: boolean }
+  | { kind: "proven"; on: boolean }
+  | { kind: "rider"; on: boolean }
   | { kind: "close-all" }
   | { kind: "cap"; usd: number }
   | { kind: "pause"; losses: number; fall: number }

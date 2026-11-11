@@ -105,6 +105,11 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     store_path = paper_path or default_path()
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
+    if "proven" not in bot.account:
+        # Trend Rider (the other engine) stays off until the owner switches it on in the panel.
+        # 2026-11-11: the proven set starts switched on (every other choice lost in the 28-month test);
+        # the owner can switch it off in the panel, and that choice is kept.
+        bot.set_proven(True)
     real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons))
     bot.real = real
 
@@ -267,6 +272,42 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             if len(keys) > advisor.MAX_KEYS or any(len(k) > 300 for k in keys):
                 raise HTTPException(400, f"at most {advisor.MAX_KEYS} keys")
             advisor.save_keys(keys)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/max-open")
+        async def paper_max_open(value: int = Body(..., embed=True)):
+            """Owner's maximum of open trades (1-20)."""
+            b.set_max_open(value)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/league")
+        async def paper_league(on: bool = Body(..., embed=True)):
+            """The strategy league switch (last 3 days of live signals per strategy x timeframe)."""
+            b.set_league(on)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/rider")
+        async def paper_rider(on: bool = Body(..., embed=True)):
+            """The Trend Rider switch (the bot's own 4h trend engine instead of the signal scan)."""
+            b.set_rider(on)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/proven")
+        async def paper_proven(on: bool = Body(..., embed=True)):
+            """The proven-set switch (only the tested strategies on 1h / 4h)."""
+            b.set_proven(on)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/coin-pause")
+        async def paper_coin_pause(hours: float = Body(..., embed=True)):
+            """Hours a coin waits after a stop-loss (0 = off)."""
+            b.set_coin_pause(hours)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/focus")
+        async def paper_focus(on: bool = Body(..., embed=True)):
+            """Owner's focus switch: 5m + 15m on the volatile coins; off brings the earlier settings back."""
+            b.set_focus(on)
             return b.public()
 
         @app.post(f"/api/{prefix}/review")

@@ -121,7 +121,7 @@ _offset: dict[str, int] = {}
 
 # Managing one open position from Telegram (owner 2026-11-09): show it, new stop / target, break-even,
 # close (asked twice).
-MANAGE = ("pos", "est", "etp", "pbe", "pcl", "pcy")
+MANAGE = ("pos", "est", "etp", "pbe", "pcl", "pcy", "tbe", "tgo")
 
 
 def _number(text: str) -> Optional[float]:

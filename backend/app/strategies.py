@@ -527,6 +527,586 @@ def _volume_breakout(c: Candles, p: dict) -> list[Signal]:
     return out
 
 
+# ---------- second strategy set (2026-11-11): the trend / breakout family and well-known classics ----------
+# Tested on 28 months of 5m futures candles (about 95 coins, after fees): see docs/RESEARCH-2026-11-11.md.
+
+def _atr_stop(c: Candles, p: dict) -> list:
+    return ind.atr(c.highs, c.lows, c.closes, 14)
+
+
+# 19. Turtle breakout: a close beyond the high / low of the last N candles (55: the slow Turtle system),
+#     only on the trend EMA's side. Stop: a multiple of ATR.
+def _turtle(c: Candles, p: dict) -> list[Signal]:
+    high, low = ind.highest(c.highs, p["length"]), ind.lowest(c.lows, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(high[i - 1], low[i - 1], atr[i], trend[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if c.closes[i] > high[i - 1] and c.closes[i - 1] <= high[i - 1] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i] < low[i - 1] and c.closes[i - 1] >= low[i - 1] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 20. Keltner breakout: the close crosses out of the Keltner channel on the trend's side. Stop: the middle line.
+def _keltner_breakout(c: Candles, p: dict) -> list[Signal]:
+    mid = ind.ema(c.closes, p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(mid[i - 1], atr[i - 1], trend[i]):
+            continue
+        up, dn = mid[i] + p["kc_mult"] * atr[i], mid[i] - p["kc_mult"] * atr[i]
+        pup, pdn = mid[i - 1] + p["kc_mult"] * atr[i - 1], mid[i - 1] - p["kc_mult"] * atr[i - 1]
+        if c.closes[i] > up and c.closes[i - 1] <= pup and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=mid[i], reward=p["reward"]))
+        elif c.closes[i] < dn and c.closes[i - 1] >= pdn and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=mid[i], reward=p["reward"]))
+    return out
+
+
+# 21. Bollinger breakout: the close crosses out of the bands while they are widening, on the trend's side.
+#     Stop: the middle line.
+def _bb_breakout(c: Candles, p: dict) -> list[Signal]:
+    upper, basis, lower = ind.bollinger(c.closes, p["length"], p["mult"])
+    trend = ind.ema(c.closes, p["trend"])
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(upper[i - 1], trend[i]):
+            continue
+        widening = upper[i] - lower[i] > upper[i - 1] - lower[i - 1]
+        if widening and c.closes[i] > upper[i] and c.closes[i - 1] <= upper[i - 1] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=basis[i], reward=p["reward"]))
+        elif widening and c.closes[i] < lower[i] and c.closes[i - 1] >= lower[i - 1] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=basis[i], reward=p["reward"]))
+    return out
+
+
+# 22. EMA ribbon: three EMAs fall into order (fast > middle > slow) on the trend's side.
+def _ema_ribbon(c: Candles, p: dict) -> list[Signal]:
+    a, b, d = ind.ema(c.closes, p["fast"]), ind.ema(c.closes, p["mid"]), ind.ema(c.closes, p["slow"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(d[i - 1], trend[i], atr[i]):
+            continue
+        up, was_up = a[i] > b[i] > d[i], a[i - 1] > b[i - 1] > d[i - 1]
+        down, was_down = a[i] < b[i] < d[i], a[i - 1] < b[i - 1] < d[i - 1]
+        stop = atr[i] * p["atr_mult"]
+        if up and not was_up and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif down and not was_down and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 23. Momentum thrust: the move of the last N candles becomes larger than `thrust` ATRs (time-series momentum).
+def _momentum(c: Candles, p: dict) -> list[Signal]:
+    n = p["length"]
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(n + 1, len(c.closes)):
+        if not _ready(atr[i], atr[i - 1]):
+            continue
+        now, before = c.closes[i] - c.closes[i - n], c.closes[i - 1] - c.closes[i - 1 - n]
+        level, level_before = p["thrust"] * atr[i], p["thrust"] * atr[i - 1]
+        stop = atr[i] * p["atr_mult"]
+        if now > level and before <= level_before:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif now < -level and before >= -level_before:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 24. MACD zero cross: the MACD line crosses zero on the trend's side.
+def _macd_zero(c: Candles, p: dict) -> list[Signal]:
+    line, _, _ = ind.macd(c.closes, p["fast"], p["slow"], 9)
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(line[i - 1], line[i], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if line[i - 1] <= 0 < line[i] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif line[i - 1] >= 0 > line[i] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 25. Hull MA turn: the Hull moving average turns up (down) on the trend's side.
+def _hma_turn(c: Candles, p: dict) -> list[Signal]:
+    h = ind.hma(c.closes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(2, len(c.closes)):
+        if not _ready(h[i - 2], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if h[i] > h[i - 1] <= h[i - 2] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif h[i] < h[i - 1] >= h[i - 2] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 26. Parabolic SAR flip on the trend's side. Stop: the SAR line.
+def _psar_flip(c: Candles, p: dict) -> list[Signal]:
+    line, direction = ind.psar(c.highs, c.lows, p["step"], p["step"], p["maximum"])
+    trend = ind.ema(c.closes, p["trend"])
+    out = []
+    for i in range(2, len(c.closes)):
+        if not _ready(line[i], direction[i - 1], trend[i]):
+            continue
+        if direction[i - 1] == -1 and direction[i] == 1 and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=line[i], reward=p["reward"]))
+        elif direction[i - 1] == 1 and direction[i] == -1 and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=line[i], reward=p["reward"]))
+    return out
+
+
+# 27. CCI trend: CCI crosses above +100 (below -100) on the trend's side (Lambert's original use).
+def _cci_trend(c: Candles, p: dict) -> list[Signal]:
+    cci = ind.cci(c.highs, c.lows, c.closes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(cci[i - 1], cci[i], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if cci[i - 1] <= p["level"] < cci[i] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif cci[i - 1] >= -p["level"] > cci[i] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 28. Aroon cross: Aroon Up crosses above Aroon Down and is strong (mirror for shorts).
+def _aroon_cross(c: Candles, p: dict) -> list[Signal]:
+    up, down = ind.aroon(c.highs, c.lows, p["length"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(up[i - 1], up[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if _crossed_up(up, down, i) and up[i] >= p["strong"]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif _crossed_down(up, down, i) and down[i] >= p["strong"]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 29. Vortex cross on the trend's side.
+def _vortex_cross(c: Candles, p: dict) -> list[Signal]:
+    plus, minus = ind.vortex(c.highs, c.lows, c.closes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(plus[i - 1], plus[i], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if _crossed_up(plus, minus, i) and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif _crossed_down(plus, minus, i) and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 30. ADX breakout: a close beyond the last N candles while ADX shows a trend that is getting stronger.
+def _adx_breakout(c: Candles, p: dict) -> list[Signal]:
+    high, low = ind.highest(c.highs, p["length"]), ind.lowest(c.lows, p["length"])
+    adx = ind.adx(c.highs, c.lows, c.closes, 14, 14)
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(3, len(c.closes)):
+        if not _ready(high[i - 1], adx[i], adx[i - 3], atr[i]) or adx[i] < p["min_adx"] or adx[i] <= adx[i - 3]:
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if c.closes[i] > high[i - 1]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i] < low[i - 1]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 31. OBV breakout: on-balance volume makes a new N-candle high (low) on the trend's side: the volume leads.
+def _obv_breakout(c: Candles, p: dict) -> list[Signal]:
+    obv = ind.obv(c.closes, c.volumes)
+    high, low = ind.highest(obv, p["length"]), ind.lowest(obv, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(2, len(c.closes)):
+        if not _ready(high[i - 2], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if obv[i] > high[i - 1] and obv[i - 1] <= high[i - 2] and c.closes[i] > trend[i] and c.closes[i] > c.opens[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif obv[i] < low[i - 1] and obv[i - 1] >= low[i - 2] and c.closes[i] < trend[i] and c.closes[i] < c.opens[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 32. KAMA cross: the close crosses Kaufman's adaptive average while the move is efficient (not choppy).
+def _kama_cross(c: Candles, p: dict) -> list[Signal]:
+    k = ind.kama(c.closes, p["length"])
+    er = ind.efficiency(c.closes, p["length"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(k[i - 1], k[i], er[i], atr[i]) or er[i] < p["min_er"]:
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if c.closes[i - 1] <= k[i - 1] and c.closes[i] > k[i] and k[i] >= k[i - 1]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i - 1] >= k[i - 1] and c.closes[i] < k[i] and k[i] <= k[i - 1]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 33. Structure break: swing highs and lows (pivots). A close above the last swing high after a higher low
+#     is a break of structure upward (mirror for shorts). Stop: beyond the last swing low.
+def _structure_break(c: Candles, p: dict) -> list[Signal]:
+    w = p["pivot"]
+    atr = _atr_stop(c, p)
+    out = []
+    highs_seen: list[float] = []      # confirmed swing highs, oldest first
+    lows_seen: list[float] = []
+    used_high = used_low = None
+    for i in range(2 * w, len(c.closes)):
+        k = i - w                     # the candle that can now be confirmed as a pivot
+        if c.highs[k] == max(c.highs[k - w: k + w + 1]):
+            highs_seen.append(c.highs[k])
+        if c.lows[k] == min(c.lows[k - w: k + w + 1]):
+            lows_seen.append(c.lows[k])
+        if atr[i] is None or len(highs_seen) < 2 or len(lows_seen) < 2:
+            continue
+        buf = p["buffer"] * atr[i]
+        hi, lo = highs_seen[-1], lows_seen[-1]
+        if c.closes[i] > hi and c.closes[i - 1] <= hi and lo > lows_seen[-2] and used_high != hi:
+            used_high = hi
+            out.append(Signal(i, LONG, stop_price=lo - buf, reward=p["reward"]))
+        elif c.closes[i] < lo and c.closes[i - 1] >= lo and hi < highs_seen[-2] and used_low != lo:
+            used_low = lo
+            out.append(Signal(i, SHORT, stop_price=hi + buf, reward=p["reward"]))
+    return out
+
+
+# 34. NR7 breakout: the narrowest candle of the last 7, then a close beyond it on the trend's side.
+def _nr7_breakout(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    n = p["length"]
+    for i in range(n + 1, len(c.closes)):
+        if not _ready(trend[i], atr[i]):
+            continue
+        m = i - 1
+        rng = c.highs[m] - c.lows[m]
+        if any(c.highs[j] - c.lows[j] < rng for j in range(m - n + 1, m)):
+            continue
+        buf = p["buffer"] * atr[i]
+        if c.closes[i] > c.highs[m] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=min(c.lows[m], c.lows[i]) - buf, reward=p["reward"]))
+        elif c.closes[i] < c.lows[m] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=max(c.highs[m], c.highs[i]) + buf, reward=p["reward"]))
+    return out
+
+
+# 35. Heikin-Ashi turn: after at least `run` red Heikin-Ashi candles a green one with no lower wick, on the
+#     trend's side (mirror for shorts).
+def _heikin_ashi(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    ha_open = prev_close = None
+    reds = greens = 0
+    for i in range(len(c.closes)):
+        ha_close = (c.opens[i] + c.highs[i] + c.lows[i] + c.closes[i]) / 4
+        ha_open = (c.opens[i] + c.closes[i]) / 2 if ha_open is None else (ha_open + prev_close) / 2
+        prev_close = ha_close
+        green = ha_close > ha_open
+        if _ready(trend[i], atr[i]):
+            buf = p["buffer"] * atr[i]
+            if green and reds >= p["run"] and min(c.lows[i], ha_open) >= ha_open and c.closes[i] > trend[i]:
+                out.append(Signal(i, LONG, stop_price=min(c.lows[max(0, i - 2): i + 1]) - buf, reward=p["reward"]))
+            elif not green and greens >= p["run"] and max(c.highs[i], ha_open) <= ha_open and c.closes[i] < trend[i]:
+                out.append(Signal(i, SHORT, stop_price=max(c.highs[max(0, i - 2): i + 1]) + buf, reward=p["reward"]))
+        reds, greens = (0, greens + 1) if green else (reds + 1, 0)
+    return out
+
+
+# 36. Engulfing: a candle whose body swallows the previous opposite candle's body, after a dip, on the
+#     trend's side.
+def _engulfing(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    rsi = ind.rsi(c.closes, 14)
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(trend[i], rsi[i - 1], atr[i]):
+            continue
+        buf = p["buffer"] * atr[i]
+        o1, c1, o2, c2 = c.opens[i - 1], c.closes[i - 1], c.opens[i], c.closes[i]
+        if c1 < o1 and c2 > o2 and c2 >= o1 and o2 <= c1 and rsi[i - 1] < p["dip"] and c2 > trend[i]:
+            out.append(Signal(i, LONG, stop_price=min(c.lows[i - 1], c.lows[i]) - buf, reward=p["reward"]))
+        elif c1 > o1 and c2 < o2 and c2 <= o1 and o2 >= c1 and rsi[i - 1] > 100 - p["dip"] and c2 < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=max(c.highs[i - 1], c.highs[i]) + buf, reward=p["reward"]))
+    return out
+
+
+# 37. Pin bar: a long wick rejecting the low of the last N candles (the wick at least `wick` times the body,
+#     the close in the upper third), on the trend's side.
+def _pin_bar(c: Candles, p: dict) -> list[Signal]:
+    low, high = ind.lowest(c.lows, p["length"]), ind.highest(c.highs, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(low[i], trend[i], atr[i]):
+            continue
+        rng = c.highs[i] - c.lows[i]
+        if rng <= 0:
+            continue
+        body = abs(c.closes[i] - c.opens[i])
+        lower = min(c.opens[i], c.closes[i]) - c.lows[i]
+        upper = c.highs[i] - max(c.opens[i], c.closes[i])
+        buf = p["buffer"] * atr[i]
+        if c.lows[i] <= low[i] and lower >= p["wick"] * body and lower >= 0.6 * rng and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=c.lows[i] - buf, reward=p["reward"]))
+        elif c.highs[i] >= high[i] and upper >= p["wick"] * body and upper >= 0.6 * rng and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=c.highs[i] + buf, reward=p["reward"]))
+    return out
+
+
+# 38. RSI(2) dip (Connors): in an uptrend a very short RSI falls to an extreme; buy the dip (mirror for shorts).
+def _rsi2_dip(c: Candles, p: dict) -> list[Signal]:
+    rsi = ind.rsi(c.closes, p["rsi_length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(rsi[i], rsi[i - 1], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if c.closes[i] > trend[i] and rsi[i] < p["oversold"] <= rsi[i - 1]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i] < trend[i] and rsi[i] > 100 - p["oversold"] >= rsi[i - 1]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 39. Williams %R pullback: on the trend's side, %R comes back up out of the oversold zone.
+def _williams_pullback(c: Candles, p: dict) -> list[Signal]:
+    wr = ind.williams_r(c.highs, c.lows, c.closes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(wr[i], wr[i - 1], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if c.closes[i] > trend[i] and wr[i - 1] < -p["zone"] <= wr[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i] < trend[i] and wr[i - 1] > p["zone"] - 100 >= wr[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 40. Z-score reversion: the close is more than `z` standard deviations from its average and turns back,
+#     in a quiet market (ADX low). Target: the average.
+def _zscore_reversion(c: Candles, p: dict) -> list[Signal]:
+    mean, dev = ind.sma(c.closes, p["length"]), ind.stdev(c.closes, p["length"])
+    adx = ind.adx(c.highs, c.lows, c.closes, 14, 14)
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(mean[i - 1], dev[i - 1], mean[i], adx[i], atr[i]) or not dev[i - 1] or adx[i] > p["max_adx"]:
+            continue
+        z_before = (c.closes[i - 1] - mean[i - 1]) / dev[i - 1]
+        buf = 0.5 * atr[i]
+        if z_before < -p["z"] and c.closes[i] > c.closes[i - 1]:
+            out.append(Signal(i, LONG, stop_price=min(c.lows[i - 1], c.lows[i]) - buf, target_price=mean[i]))
+        elif z_before > p["z"] and c.closes[i] < c.closes[i - 1]:
+            out.append(Signal(i, SHORT, stop_price=max(c.highs[i - 1], c.highs[i]) + buf, target_price=mean[i]))
+    return out
+
+
+# 41. MFI turn: the Money Flow Index comes back out of its oversold zone on the trend's side.
+def _mfi_turn(c: Candles, p: dict) -> list[Signal]:
+    mfi = ind.mfi(c.highs, c.lows, c.closes, c.volumes, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(mfi[i], mfi[i - 1], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if c.closes[i] > trend[i] and mfi[i - 1] < p["zone"] <= mfi[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif c.closes[i] < trend[i] and mfi[i - 1] > 100 - p["zone"] >= mfi[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 42. Three soldiers: three strong candles in a row the same way, each closing near its end, with growing
+#     volume, on the trend's side: the move is expected to go on. Stop: beyond the first of the three.
+def _three_soldiers(c: Candles, p: dict) -> list[Signal]:
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(3, len(c.closes)):
+        if not _ready(trend[i], atr[i - 3]):
+            continue
+        ups = downs = True
+        for j in (i - 2, i - 1, i):
+            rng = c.highs[j] - c.lows[j]
+            body = c.closes[j] - c.opens[j]
+            if rng <= 0 or abs(body) < 0.6 * rng or abs(body) < p["size"] * atr[i - 3]:
+                ups = downs = False
+                break
+            ups = ups and body > 0
+            downs = downs and body < 0
+        loud = (c.volumes[i] or 0) > (c.volumes[i - 2] or 0)
+        buf = p["buffer"] * atr[i]
+        if ups and loud and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=c.lows[i - 2] - buf, reward=p["reward"]))
+        elif downs and loud and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=c.highs[i - 2] + buf, reward=p["reward"]))
+    return out
+
+
+# 43. Volatility contraction: the short ATR shrinks well under the long ATR (a tight coil), then a close
+#     beyond the coil's high / low on the trend's side.
+def _contraction(c: Candles, p: dict) -> list[Signal]:
+    short, long_ = ind.atr(c.highs, c.lows, c.closes, 5), ind.atr(c.highs, c.lows, c.closes, 50)
+    high, low = ind.highest(c.highs, p["length"]), ind.lowest(c.lows, p["length"])
+    trend = ind.ema(c.closes, p["trend"])
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(short[i - 1], long_[i - 1], high[i - 1], low[i - 1], trend[i]) or not long_[i - 1]:
+            continue
+        if short[i - 1] > p["tight"] * long_[i - 1]:
+            continue
+        if c.closes[i] > high[i - 1] and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_price=low[i - 1], reward=p["reward"]))
+        elif c.closes[i] < low[i - 1] and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_price=high[i - 1], reward=p["reward"]))
+    return out
+
+
+# 44. Box breakout: the price stays in a narrow box for N candles, then closes out of it on clearly higher
+#     volume. Stop: the middle of the box.
+def _box_breakout(c: Candles, p: dict) -> list[Signal]:
+    n = p["length"]
+    high, low = ind.highest(c.highs, n), ind.lowest(c.lows, n)
+    atr = ind.atr(c.highs, c.lows, c.closes, 50)
+    avg_volume = ind.sma(c.volumes, n)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(high[i - 1], low[i - 1], atr[i - 1], avg_volume[i - 1]) or not avg_volume[i - 1]:
+            continue
+        top, bottom = high[i - 1], low[i - 1]
+        if top - bottom > p["box"] * atr[i - 1] or (c.volumes[i] or 0) < p["volume_mult"] * avg_volume[i - 1]:
+            continue
+        if c.closes[i] > top:
+            out.append(Signal(i, LONG, stop_price=(top + bottom) / 2, reward=p["reward"]))
+        elif c.closes[i] < bottom:
+            out.append(Signal(i, SHORT, stop_price=(top + bottom) / 2, reward=p["reward"]))
+    return out
+
+
+# 45. TRIX cross: TRIX crosses its signal line on the right side of zero, on the trend's side.
+def _trix_cross(c: Candles, p: dict) -> list[Signal]:
+    line = ind.trix(c.closes, p["length"])
+    signal = ind.ema(line, p["signal"])
+    trend = ind.ema(c.closes, p["trend"])
+    atr = _atr_stop(c, p)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(signal[i - 1], signal[i], trend[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        if _crossed_up(line, signal, i) and c.closes[i] > trend[i]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif _crossed_down(line, signal, i) and c.closes[i] < trend[i]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
+# 46. Trend day: a very large candle (at least `size` ATRs) that closes near its end on higher volume,
+#     breaking the last N candles: big moves tend to go on (momentum ignition).
+def _wide_bar(c: Candles, p: dict) -> list[Signal]:
+    high, low = ind.highest(c.highs, p["length"]), ind.lowest(c.lows, p["length"])
+    atr = _atr_stop(c, p)
+    avg_volume = ind.sma(c.volumes, 20)
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(high[i - 1], low[i - 1], atr[i - 1], avg_volume[i - 1]):
+            continue
+        rng = c.highs[i] - c.lows[i]
+        if rng < p["size"] * atr[i - 1] or (c.volumes[i] or 0) < 1.5 * avg_volume[i - 1]:
+            continue
+        mid = (c.highs[i] + c.lows[i]) / 2
+        if c.closes[i] > high[i - 1] and c.closes[i] >= c.highs[i] - 0.25 * rng:
+            out.append(Signal(i, LONG, stop_price=mid, reward=p["reward"]))
+        elif c.closes[i] < low[i - 1] and c.closes[i] <= c.lows[i] + 0.25 * rng:
+            out.append(Signal(i, SHORT, stop_price=mid, reward=p["reward"]))
+    return out
+
+
+# 47. Trend Rider (2026-11-11, the bot's own engine: docs/RESEARCH-2026-11-11.md, part 2). The trend score is
+#     the average of five channel states: for the last N, 2N, 4N, 8N and 16N candles, +1 after a close at the
+#     highest close of that window, -1 after a close at the lowest, until the other happens. +1 = every window
+#     says up. As a card (history table, other modes) it enters when the score rises to `enter` and uses a fixed
+#     target; in the bot's rider mode there is no target: the trade ends when the score falls to zero.
+TREND_STEPS = (1, 2, 4, 8, 16)
+
+
+def trend_score(closes: list[float], base: int) -> list[Optional[float]]:
+    n = len(closes)
+    total = [0.0] * n
+    for step in TREND_STEPS:
+        high, low = ind.highest(closes, base * step), ind.lowest(closes, base * step)
+        state = 0
+        for i in range(n):
+            if high[i] is not None:
+                if closes[i] >= high[i]:
+                    state = 1
+                elif closes[i] <= low[i]:
+                    state = -1
+            total[i] += state / len(TREND_STEPS)
+    first = base * TREND_STEPS[-1] - 1     # the longest window must be full
+    return [None if i < first else total[i] for i in range(n)]
+
+
+def _trend_rider(c: Candles, p: dict) -> list[Signal]:
+    score = trend_score(c.closes, p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, p["atr_length"])
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(score[i - 1], score[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        edge = p["enter"] - 1e-9
+        if score[i] >= edge > score[i - 1]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif score[i] <= -edge < score[i - 1]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
 def _ema_line(n, iid="trend") -> dict:
     return {"id": f"s-{iid}", "type": "ema", "params": {"length": n}}
 
@@ -607,6 +1187,98 @@ _STRATEGIES = [
               TREND, _reward(2)),
              _volume_breakout,
              lambda p: [_ema_line(p["length"], "mid"), _ema_line(p["trend"])]),
+    # ---- second set (2026-11-11) ----
+    Strategy("turtle", "Turtle Breakout", ("trend_up", "trend_down", "volatile"), ("Donchian", "EMA", "ATR"),
+             (Param("length", 55, 2, 500), TREND, _atr_mult(2), _reward(3)),
+             _turtle, lambda p: [_ema_line(p["trend"])]),
+    Strategy("keltner_breakout", "Keltner Breakout", ("trend_up", "trend_down", "volatile"), ("Keltner", "EMA"),
+             (Param("length", 20, 2, 500), Param("kc_mult", 2, 0.1, 10, 0.1), TREND, _reward(2)),
+             _keltner_breakout, lambda p: [_ema_line(p["length"], "mid"), _ema_line(p["trend"])]),
+    Strategy("bb_breakout", "Bollinger Breakout", ("trend_up", "trend_down", "volatile"), ("BB", "EMA"),
+             (Param("length", 20, 2, 500), Param("mult", 2, 0.1, 10, 0.1), TREND, _reward(2)),
+             _bb_breakout,
+             lambda p: [_ema_line(p["trend"]), {"id": "s-bb", "type": "bb", "params": {"length": p["length"], "mult": p["mult"]}}]),
+    Strategy("ema_ribbon", "EMA Ribbon", ("trend_up", "trend_down"), ("EMA", "ATR"),
+             (Param("fast", 8, 1, 500), Param("mid", 21, 1, 500), Param("slow", 55, 1, 500), TREND, _atr_mult(2), _reward(2)),
+             _ema_ribbon,
+             lambda p: [_ema_line(p["fast"], "fast"), _ema_line(p["mid"], "mid"), _ema_line(p["slow"], "slow"), _ema_line(p["trend"])]),
+    Strategy("momentum", "Momentum Thrust", ("trend_up", "trend_down", "volatile"), ("Momentum", "ATR"),
+             (Param("length", 20, 2, 500), Param("thrust", 4, 0.5, 20, 0.5), _atr_mult(2), _reward(2)),
+             _momentum),
+    Strategy("macd_zero", "MACD Zero Cross", ("trend_up", "trend_down"), ("MACD", "EMA", "ATR"),
+             (Param("fast", 12, 1, 500), Param("slow", 26, 1, 500), TREND, _atr_mult(2), _reward(2)),
+             _macd_zero,
+             lambda p: [_ema_line(p["trend"]), {"id": "s-macd", "type": "macd", "params": {"fast": p["fast"], "slow": p["slow"], "signal": 9}}]),
+    Strategy("hma_turn", "Hull MA Turn", ("trend_up", "trend_down"), ("HMA", "EMA", "ATR"),
+             (Param("length", 55, 2, 500), TREND, _atr_mult(2), _reward(2)),
+             _hma_turn, lambda p: [_ema_line(p["trend"])]),
+    Strategy("psar_flip", "Parabolic SAR Flip", ("trend_up", "trend_down"), ("PSAR", "EMA"),
+             (Param("step", 0.02, 0.001, 0.2, 0.001), Param("maximum", 0.2, 0.01, 1, 0.01), TREND, _reward(2)),
+             _psar_flip, lambda p: [_ema_line(p["trend"])]),
+    Strategy("cci_trend", "CCI Trend", ("trend_up", "trend_down", "volatile"), ("CCI", "EMA", "ATR"),
+             (Param("length", 20, 2, 500), Param("level", 100, 10, 400), TREND, _atr_mult(2), _reward(2)),
+             _cci_trend, lambda p: [_ema_line(p["trend"])]),
+    Strategy("aroon_cross", "Aroon Cross", ("trend_up", "trend_down", "range", "volatile"), ("Aroon", "ATR"),
+             (Param("length", 25, 2, 500), Param("strong", 70, 0, 100), _atr_mult(2), _reward(2)),
+             _aroon_cross),
+    Strategy("vortex_cross", "Vortex Cross", ("trend_up", "trend_down"), ("Vortex", "EMA", "ATR"),
+             (Param("length", 14, 2, 500), TREND, _atr_mult(2), _reward(2)),
+             _vortex_cross, lambda p: [_ema_line(p["trend"])]),
+    Strategy("adx_breakout", "ADX Breakout", ("trend_up", "trend_down", "volatile"), ("Donchian", "ADX", "ATR"),
+             (Param("length", 20, 2, 500), Param("min_adx", 25, 5, 80), _atr_mult(2), _reward(2)),
+             _adx_breakout),
+    Strategy("obv_breakout", "OBV Breakout", ("trend_up", "trend_down", "volatile"), ("OBV", "EMA", "ATR"),
+             (Param("length", 50, 2, 500), TREND, _atr_mult(2), _reward(2)),
+             _obv_breakout, lambda p: [_ema_line(p["trend"])]),
+    Strategy("kama_cross", "KAMA Cross", ("trend_up", "trend_down", "volatile"), ("KAMA", "ATR"),
+             (Param("length", 10, 2, 500), Param("min_er", 0.3, 0, 1, 0.05), _atr_mult(2), _reward(2)),
+             _kama_cross),
+    Strategy("structure_break", "Structure Break (BOS)", ("trend_up", "trend_down", "range", "volatile"), ("Price action", "ATR"),
+             (Param("pivot", 5, 1, 50), BUFFER, _reward(2)),
+             _structure_break),
+    Strategy("nr7_breakout", "NR7 Breakout", ("trend_up", "trend_down", "range"), ("Price action", "EMA"),
+             (Param("length", 7, 2, 50), TREND, BUFFER, _reward(2)),
+             _nr7_breakout, lambda p: [_ema_line(p["trend"])]),
+    Strategy("heikin_ashi", "Heikin-Ashi Turn", ("trend_up", "trend_down"), ("Heikin-Ashi", "EMA"),
+             (Param("run", 3, 1, 20), TREND, BUFFER, _reward(2)),
+             _heikin_ashi, lambda p: [_ema_line(p["trend"])]),
+    Strategy("engulfing", "Engulfing", ("trend_up", "trend_down"), ("Price action", "RSI", "EMA"),
+             (Param("dip", 45, 1, 99), TREND, BUFFER, _reward(2)),
+             _engulfing, lambda p: [_ema_line(p["trend"])]),
+    Strategy("pin_bar", "Pin Bar", ("trend_up", "trend_down", "range"), ("Price action", "EMA"),
+             (Param("length", 10, 2, 200), Param("wick", 2, 1, 10, 0.5), TREND, BUFFER, _reward(2)),
+             _pin_bar, lambda p: [_ema_line(p["trend"])]),
+    Strategy("rsi2_dip", "RSI(2) Dip", ("trend_up", "trend_down"), ("RSI", "EMA", "ATR"),
+             (Param("rsi_length", 2, 2, 50), Param("oversold", 10, 1, 49), TREND, _atr_mult(2.5), _reward(1.5)),
+             _rsi2_dip, lambda p: [_ema_line(p["trend"])]),
+    Strategy("williams_pullback", "Williams %R Pullback", ("trend_up", "trend_down"), ("Williams %R", "EMA", "ATR"),
+             (Param("length", 14, 2, 500), Param("zone", 80, 50, 99), TREND, _atr_mult(1.5), _reward(2)),
+             _williams_pullback, lambda p: [_ema_line(p["trend"])]),
+    Strategy("zscore_reversion", "Z-Score Reversion", ("range",), ("SMA", "StDev", "ADX"),
+             (Param("length", 50, 5, 500), Param("z", 2.5, 0.5, 6, 0.1), Param("max_adx", 20, 5, 80)),
+             _zscore_reversion),
+    Strategy("mfi_turn", "MFI Turn", ("trend_up", "trend_down"), ("MFI", "EMA", "ATR"),
+             (Param("length", 14, 2, 500), Param("zone", 20, 1, 49), TREND, _atr_mult(1.5), _reward(2)),
+             _mfi_turn, lambda p: [_ema_line(p["trend"])]),
+    Strategy("three_soldiers", "Three Soldiers", ("trend_up", "trend_down", "volatile"), ("Price action", "Volume", "EMA"),
+             (Param("size", 0.5, 0.1, 5, 0.1), TREND, BUFFER, _reward(2)),
+             _three_soldiers, lambda p: [_ema_line(p["trend"])]),
+    Strategy("contraction", "Volatility Contraction", ("trend_up", "trend_down", "range"), ("ATR", "Donchian", "EMA"),
+             (Param("length", 10, 2, 200), Param("tight", 0.7, 0.1, 1, 0.05), TREND, _reward(2)),
+             _contraction, lambda p: [_ema_line(p["trend"])]),
+    Strategy("box_breakout", "Box Breakout", ("range", "volatile"), ("Price action", "Volume", "ATR"),
+             (Param("length", 20, 5, 500), Param("box", 4, 0.5, 20, 0.5), Param("volume_mult", 1.5, 1, 10, 0.1), _reward(2)),
+             _box_breakout),
+    Strategy("trix_cross", "TRIX Cross", ("trend_up", "trend_down"), ("TRIX", "EMA", "ATR"),
+             (Param("length", 15, 2, 200), Param("signal", 9, 2, 100), TREND, _atr_mult(2), _reward(2)),
+             _trix_cross, lambda p: [_ema_line(p["trend"])]),
+    Strategy("wide_bar", "Wide-Range Bar", ("trend_up", "trend_down", "range", "volatile"), ("Price action", "Volume", "ATR"),
+             (Param("length", 20, 2, 500), Param("size", 2.5, 1, 10, 0.1), _reward(2)),
+             _wide_bar),
+    Strategy("trend_rider", "Trend Rider", ("trend_up", "trend_down", "range", "volatile"), ("Donchian", "ATR"),
+             (Param("length", 30, 2, 200), Param("enter", 0.6, 0.2, 1, 0.2), Param("atr_length", 84, 1, 500),
+              _atr_mult(4), _reward(4)),
+             _trend_rider),
 ]
 
 STRATEGIES: dict[str, Strategy] = {s.type: s for s in _STRATEGIES}

@@ -2,7 +2,7 @@
 
 A personal desktop app (Windows, macOS and Android) for the Toobit exchange: live crypto charts, indicators, strategy history tests, a scanner and a paper-trading bot (virtual money).
 
-**Current state:** live charts for spot and futures, 18 strategies with history tests after fees, a scanner, and a paper bot on 1m-4h with a memory of every signal, an optional learning filter ("brain") and optional AI approval (Gemini, the owner's own key kept on his computer). Persian and English. **No real orders are ever sent to the exchange.** Details and the latest findings: `docs/HANDOFF.md`.
+**Current state:** live charts for spot and futures, 47 strategies with history tests after fees, a scanner, and a paper bot on 1m-4h with a memory of every signal, an optional learning filter ("brain") and optional AI approval (Gemini, the owner's own key kept on his computer). Persian and English. **No real orders are ever sent to the exchange.** By default the bot trades the "proven set": breakout / momentum strategies on 1h and 4h, tuned per timeframe and taken in a fixed priority order, with many small trades. "Trend Rider" (a 4h trend-following engine) is a second mode behind a switch: `docs/RESEARCH-2026-11-11.md`. Details and the latest findings: `docs/HANDOFF.md`.
 
 ## How it is built
 
@@ -47,7 +47,7 @@ This repository is public. **Never commit API keys, passwords or account details
 
 برنامه‌ی شخصی (ویندوز، مک و اندروید) برای صرافی توبیت: نمودار زنده، اندیکاتورها، آزمون تاریخی استراتژی‌ها، اسکنر و ربات پیپر (پول مجازی).
 
-**وضعیت فعلی:** نمودار زنده‌ی اسپات و فیوچرز، ۱۸ استراتژی با آزمون تاریخی بعد از کارمزد، اسکنر، و ربات پیپر روی تایم‌فریم‌های ۱ دقیقه تا ۴ ساعت با حافظه‌ی همه‌ی سیگنال‌ها، فیلتر یادگیرنده («مغز») و تأیید اختیاری هوش مصنوعی (Gemini، با کلید خود صاحب برنامه که فقط روی کامپیوتر او می‌ماند). فارسی و انگلیسی. **هیچ سفارش واقعی به صرافی فرستاده نمی‌شود.** جزئیات و آخرین یافته‌ها: `docs/HANDOFF.md`.
+**وضعیت فعلی:** نمودار زنده‌ی اسپات و فیوچرز، ۴۷ استراتژی با آزمون تاریخی بعد از کارمزد، اسکنر، و ربات پیپر روی تایم‌فریم‌های ۱ دقیقه تا ۴ ساعت با حافظه‌ی همه‌ی سیگنال‌ها، فیلتر یادگیرنده («مغز») و تأیید اختیاری هوش مصنوعی (Gemini، با کلید خود صاحب برنامه که فقط روی کامپیوتر او می‌ماند). فارسی و انگلیسی. **هیچ سفارش واقعی به صرافی فرستاده نمی‌شود.** به‌طور پیش‌فرض ربات «مجموعه‌ی آزموده» را معامله می‌کند: استراتژی‌های شکست / مومنتوم روی ۱ ساعته و ۴ ساعته، تنظیم‌شده برای هر تایم‌فریم و با ترتیب اولویت ثابت، با معامله‌های کوچک و پرتعداد. «روندسوار» (موتور روندی ۴ ساعته) حالت دوم است و با یک کلید روشن می‌شود: `docs/RESEARCH-2026-11-11.md`. جزئیات و آخرین یافته‌ها: `docs/HANDOFF.md`.
 
 **دریافت برنامه:** در زبانه‌ی **Actions** گزینه‌ی **Build desktop apps** و سپس **Run workflow** را بزنید. بعد از پایان، فایل `windows` یا `macos-intel` را از بخش **Artifacts** دانلود کنید. برنامه امضای دیجیتال ندارد؛ هشدار ویندوز و مک در اجرای اول طبیعی است.
 

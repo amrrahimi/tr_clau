@@ -250,6 +250,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
     }
     case "reviewAsk":
       return t("bot.event.reviewAsk", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "", pnl: formatMoney(e.pnl) });
+    case "timeBeAsk":
+      return t("bot.event.timeBeAsk", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "", pnl: formatMoney(e.pnl) });
     case "reviewAnswer":
       return t("bot.event.reviewAnswer", { symbol: e.symbol ?? "", timeframe: e.timeframe ?? "",
         answer: (e as { answer?: string }).answer === "close" ? t("bot.review.answerClose") : t("bot.review.answerHold") });
@@ -278,6 +280,18 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t("bot.evStart");
     case "stop":
       return t("bot.evStop");
+    case "league":
+      return t(e.on ? "bot.evLeagueOn" : "bot.evLeagueOff");
+    case "rider":
+      return t(e.on ? "bot.evRiderOn" : "bot.evRiderOff");
+    case "riderRound":
+      return t("bot.evRiderRound", { coins: String(e.coins ?? ""), opened: String(e.opened ?? 0), closed: String(e.closed ?? 0) });
+    case "proven":
+      return t(e.on ? "bot.evProvenOn" : "bot.evProvenOff");
+    case "coinPause":
+      return t("bot.evCoinPause", { coin: e.symbol ?? "", hours: String(e.hours ?? "") });
+    case "focus":
+      return t(e.on ? "bot.evFocusOn" : "bot.evFocusOff");
     default:
       return t("bot.evError", { message: e.message ?? "" });
   }

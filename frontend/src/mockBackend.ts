@@ -124,6 +124,29 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "league") {
+      const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+      state.league = { on: action.on, days: 3, min: 50, table: state.league?.table ?? {},
+        stats: state.league?.stats ?? { on: { ...empty }, other: { ...empty } } };
+    } else if (action.kind === "rider") {
+      const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+      state.rider = { on: action.on, timeframe: "4h", maxPositions: 15, enter: 0.6, exit: 0, stopAtr: 4, last: {},
+        stats: state.rider?.stats ?? { on: { ...empty }, other: { ...empty } } };
+    } else if (action.kind === "proven") {
+      const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+      state.proven = { on: action.on, sets: state.proven?.sets ?? {},
+        stats: state.proven?.stats ?? { on: { ...empty }, other: { ...empty } } };
+    } else if (action.kind === "coin-pause") {
+      state.coinPause = { hours: Math.max(0, Math.min(168, action.hours)), paused: state.coinPause?.paused ?? {} };
+    } else if (action.kind === "focus") {
+      state.focus = { on: action.on, since: action.on ? Date.now() / 1000 : null, timeframes: ["5m", "15m"],
+        stats: state.focus?.stats ?? { focus: { trades: 0, wins: 0, losses: 0, pnl: 0 }, other: { trades: 0, wins: 0, losses: 0, pnl: 0 } } };
+      if (action.on) {
+        state.chosenTimeframes = ["5m", "15m"];
+        state.rules.coinMode = "volatile";
+      }
+    } else if (action.kind === "max-open") {
+      state.rules.maxOpen = action.value;
     } else if (action.kind === "review") {
       const r = state.review ?? { enabled: true, after: 20, every: { "1m": 10, "3m": 10, "5m": 15, "15m": 15, "30m": 15, "1h": 15, "4h": 60 } };
       state.review = { enabled: action.enabled ?? r.enabled, after: action.after ?? r.after, every: { ...r.every, ...(action.every ?? {}) } };

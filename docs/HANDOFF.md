@@ -255,6 +255,212 @@ support (has[]) for the private calls. NOT yet tried on a real account (no keys 
   position message has ✏️ stop (est:), ✏️ target (etp:) — the new price is the next message (5 min, /cancel),
   checked by set_levels — ⚖️ break-even (pbe:, only in profit), 🔄, ❌ close (pcl: then pcy: to confirm).
 
+## Volume Profile study (2026-11-09 21:46, branch study-2026-11-09, scripts/study_vp.py, 40 coins)
+Profile = 100 candles before the signal, 24 rows, VA 70%. R after fees, halves:
+- B (bot signals with VP stop / target, rr>=1): 1h -0.113 and 4h -0.050 (both halves negative); 5m / 15m mixed. No.
+- C (POC side filter: longs below POC, shorts above, own levels): 4h kept +0.049 (+0.064/+0.033) vs removed
+  +0.011; 1h kept +0.002 (-0.037/+0.039) vs removed -0.035 (-0.106/+0.023) -> better in both halves on 1h/4h.
+  5m / 15m: kept worse than removed in both halves. => candidate rule for 1h / 4h only (not built).
+- D (VA edge back to POC) / E (80% rule): small samples, unstable; only 1h D long +0.117 (254, both halves +).
+
+## Target-distance study (2026-11-10, study_targets.py + live MFE of 28 trades)
+- Live (since 11-08, 1m candles): own targets median 2.55 R (up to 7.8 R; AKE #78 target below zero!) because the
+  entry is often better than the signal price (limit / one-sided stale rule) while stop and target stay. Losers:
+  11 of 16 never went 0.5 R in favour; 8 trades reached 1.5-2.7 R and came back. On these 28: own target -6.3 R,
+  1.5 R target +7.1 R, lock 50/25 +5.8 R, lock 80/40 -3.4 R (hindsight, tiny sample).
+- History (40 coins, all signals, strategies' own R:R = 2.0): closer targets / earlier locks do NOT raise avg R
+  (all variants within ~0.02 R, not stable across halves); win rate goes up (lock 50/25 ~50% vs 40%).
+  Lock 50/25 >= 80/40 on every timeframe (equal or a little better) -> candidate default.
+  ~30% of losers went 40-100% of the way before the stop.
+- Bugs: box label R:R uses the current stop (1:184); targets can be absurd (below zero) -> validate.
+
+## 2026-11-10 10:15: fixes + study of the stopped trades
+- BUILT: paper.anchor_target (target = strategy's own R:R from the real entry / order price, <= 4R, never further
+  than the signal's target, None when target <= 0 -> skip "past"); box label R:R from stopLoss (first stop).
+- How stops are set: per strategy, either an ATR multiple or the last 1-2 candles' extreme / an indicator line
+  (+ buffer). No strategy uses swing support / resistance.
+- 16 of 28 live trades hit (or would have hit) the first stop: 9 never reached 0.5R and died within 8 candles;
+  10 of 16 were in three coins (UAI 4, ON 3, JCT 2+) re-entered the same way after a loss; all coins are
+  BTC-independent small caps with ATR 2-25% per candle; side / strategy / market state: no pattern.
+  Live: 9 of 10 trades with a swing level closer than 1 ATR behind the entry lost (11 of 12 others had none).
+- History (study_stops.py, 40 coins): a stop behind the nearest swing level does NOT raise the win rate
+  (35% vs 35%) or avg R on 5m / 15m / 1h; 4h a little better (+0.020 vs +0.003, not in both halves clearly);
+  S/R target worse everywhere. Signals with no swing level at all behind them: -0.08..-0.35 R on every TF (few).
+- Owner wants (not built, decision points sent): time break-even only on his answer; a stay / close question when
+  a position gets long. Candidate to test: cooldown on a coin after a stop.
+
+## Asked, not automatic (owner approved 2026-11-10 10:59)
+- Time break-even (12 candles on 1m-15m): _maybe_time_be only marks p["timeBeAsk"]; _watch_one sends a Telegram
+  question (tbe:<id> "break-even" / tgo:<id> "go on"); time_be_answer: in profit stop -> breakeven price, in a loss
+  beExit. No answer: nothing changes.
+- Long positions: _review asks once when the review starts (view "with") via _ask_stay (bot view + Gemini consult,
+  buttons hold / close), again only when the view changes (p["reviewView"]). Trend turned + profit: closed by
+  itself; + loss: asked (as before). No answer: stays.
+
+## SP2L study (2026-11-10 13:05, owner's videos, branch study-2026-11-09, scripts/study_sp2l.py, 40 coins)
+Setup: strong first leg (2-8 same-colour candles, FVG-like gap, closes in top 25%/40% of range, size >= 1.5x/1.2x
+the 20 before), limit at the previous candle's low/high on the first pullback (within 3 candles), stop behind the leg,
+targets 1/1.5/2R, 2R+lock 50/25, with/without EMA200. Result: negative almost everywhere. The video's 1:1 wins
+only 38-49% (needs >~53% after fees). Best: 15m strict 2R+lock +0.039R (n=123), 4h loose+EMA200 2R +0.003R:
+noise. The bot's own strategies on the same candles are better (5m +0.052, 15m +0.020). Not added to the bot.
+
+## New strategy families (2026-11-10 13:40, branch study-2026-11-09, scripts/study_new.py, 40 coins)
+Owner asked to find and test new methods. R after fees, two halves. Bot baseline: 5m +0.052, 15m +0.020, 4h +0.007.
+- A Larry Williams volatility breakout (UTC day, entry when price passes day open +/- k x yesterday's range, stop at
+  the day open, exit at day end): BEST. 1h long only k=0.7: +0.142R (+0.110 / +0.172), 772 trades, ~+1.0% net per
+  trade vs +0.07% for simply holding every day; worst case (entry candle touched the stop) still +0.050 (+0.068 / +0.032).
+  15m long k=0.7 +0.135 (+0.215 / +0.071). Shorts ~0. Both sides k=0.5 +0.082 but negative in the worst case.
+- G cross-sectional 1d reversal "long the 5 biggest losers of the day, hold 1 day": +0.54% net per trade (+0.12 / +0.72),
+  no stop; shorting winners loses. Promising but risky (no stop) and uneven halves.
+- F Lance-like Fibonacci trend: small positives in many variants (15m N=50 2R +0.083/+0.053; 4h N=100 exit on flip
+  +0.29 but +0.01 / +0.54). Weak.
+- D RSI(2) (60% wins but negative), E exhaustion fade (bad), B hour of day (fails out of sample), C 12h sessions
+  (no), H NY opening range (half 1 +, half 2 -): no.
+Nothing added to the bot yet; decision point sent (A as a paper strategy needs a day-end time exit).
+
+## Research study on our data (2026-11-10 14:30, study_research.py, top-40 + volatile-30 coins)
+- Fee (0.12% round trip) as share of the median candle range: top40 5m 53%, 15m 33%, 1h 17%, 4h 7%;
+  volatile30 5m 21%, 15m 15%, 1h 8%, 4h 4%. Low timeframes on top coins are mostly fee.
+- No usable serial pattern: next candle reverses 50-52%; lag-1 autocorrelation ~0; after 2-3x / >3x candles the
+  continuation is < 0.15% (under the fee). Matches research (15m crypto reversal ~1.3 bp gross vs costs).
+- BTC -> altcoin lead-lag: +0.02% at most before fees; after fees -0.09 to -0.15% per trade. Not usable.
+- CORRECTION of the volatility breakout: with consistent worst-case fills, 21-day warm-up and a 0.5% minimum stop
+  it is ~0 to negative (top40 1h k=0.7 -0.07R; with "not broken down first" -0.03R; + coin above 5-day avg +0.02R
+  with half 2 negative). Only volatile30 15m (1 month of data) stays positive (+0.13R). The earlier +0.14R needed
+  the bot's fee filter (big-range days only) and a close-based fill. Not robust: do not add yet.
+- Losers of the day (4h, top 40): 5% stop kills it (-0.07%); 10% stop +0.27%; 10% stop and BTC also fell +0.50%
+  (+0.10 / +0.70). Promising but uneven halves and wide stop.
+
+## Broad research study (2026-11-10 15:00, study_more.py, top-40 + volatile-30)
+- Bot's 18 strategies (bot fee rule = stop >= 2.4%): volatile30 5m +0.045R (+0.052/+0.041), 15m +0.034 (+0.038/+0.032)
+  = best and stable; top40 5m +0.039, 15m +0.013; 1h/4h ~0 or negative (volatile30 4h -0.040).
+- Stop distance (top40): no clear rule; wider stops on 5m (6-10% +0.133) mostly half 2.
+- Walk-forward (keep strategy x tf positive in the previous third): helps 5m/15m/1h (volatile30 15m +0.041 vs
+  dropped -0.003), FAILS on 4h (picked -0.106 / -0.147). Positive in all three thirds: volume_breakout (5m/15m
+  volatile, 1h/15m top), donchian 5m/15m top, inside_bar 5m/15m both, rsi_pullback 4h/1h top, ichimoku 15m vol.
+- Pairs trading (1h, z>2): -0.18% per trade. No.
+- Day of week (4h, ~14 months): Thursday negative in both halves (-1.07% / -0.37% day open->close, before fees);
+  weak evidence (~60 Thursdays, coins move together).
+- Funding extremes contrarian (Toobit funding history, hold 24h, no stop): z>2 +0.32% (short side +0.15/+0.49);
+  funding beyond +/-0.05%: +1.18% per trade (+0.61 / +1.75), n=382. Most promising new signal; needs a stop test.
+
+## Focus switch (owner approved 2026-11-10 14:58: "you decide what is better")
+- Panel, timeframes section: "Focus mode (5m + 15m, volatile coins)" on/off. On: keeps chosenTimeframes / coinMode /
+  coins in account["focus"]["saved"], sets 5m + 15m and coinMode volatile. Off: the kept values come back exactly.
+  All 18 strategies stay on (a short list starved the bot on 11-01). Reset keeps the switch.
+- Trades opened in focus mode carry focus=True; the panel shows focus vs other trades (count, won %, result).
+- POST /api/paper/focus {on}; diary events focus on/off. Tests: FocusTest.
+
+## Owner's deeper-entry idea (2026-11-10 16:37): price goes our way while the limit waits -> enter deeper,
+## stop and target moved by the same amount
+- Our 43 closed paper trades (1m candles from the local app; 3 oldest on 5m): plain simulation of today's entries
+  -8.11$ (-5.44R); +0.5 risk deeper, 1 candle: 15 trades, +21.9$ (+8.39R) BUT one trade (#34 JCT, owner-moved far
+  target, 3$ risk) gives +18.5$; without it ~+2R. 3 days, too few trades.
+- Bot strategies on history (study_dip.py, 40 + 30 coins, 5m-1h, thousands of signals): every deeper variant is
+  worse than today's limit (0.1 x risk, 1 candle). volatile30 5m today +1.9R per 100 signals, deeper -0.5 to -2.3;
+  15m today +1.6, deeper -0.2 to -1.4. Reason: adverse selection (only the failing signals dip further; the good
+  ones run off without us). Not built.
+
+- Follow-up (study_dip2.py): (1) IF the price goes against the signal (known only afterwards) the idea is far better
+  for those trades (entered as usual -0.25/-0.5/-1.0R avg for a 0.25/0.5/1 x risk dip; idea ~0R). (2) The owner's
+  exact case "bot missed the entry, then the price fell": extra trades with moved levels are ~0 to negative on
+  volatile 5m (-0.06 to -0.17R) and 15m (-0.01 to -0.21R); positive only on top40 5m (+0.15 to +0.25, small n).
+  Adds -0.5 to +1.0R per 100 signals. Not built.
+
+- Scale-in (study_scale.py, 2026-11-11): half at the usual limit + half 0.25/0.5/0.75 x risk lower (same or moved
+  levels): about half of today's result wherever today is positive (volatile 5m +2.4 -> +0.1..+1.4; 15m +2.4 ->
+  +0.7..+1.6; top40 15m +3.9 -> +1.6..+2.4 R per 100 signals); 1h less negative only because less is traded.
+  Not built.
+
+## Funding extremes with stops (study_funding.py, 2026-11-11, top 40 + volatile 30, 1h prices)
+- The earlier +1.18% did not hold up: all coins, beyond 0.05%, 24h, no stop -0.22% per trade (n=1209); volatile
+  coins negative in almost every setting (-0.2 to -2.3%).
+- Only top coins, funding beyond 0.1%, hold 24h stay positive in both halves: stop 5% +1.17% (+0.09 / +2.29),
+  R +0.23, n=307; stop 3% +0.46% (+0.13 / +0.81). Best of 120 settings -> data-snooping risk. Not built.
+
+## Exit habits + per-coin pause (study_exits.py, 2026-11-11, bot strategies, 5m/15m, volatile 30 + top 40)
+- Owner's habits as rules (target 1R, half at +0.5R, BE at +0.5R, time exits) do NOT help on history: early profit
+  taking pulls avgR to ~0 (target 1R +0.003). Half at +1R then BE ~= base (+0.040/+0.044 vs +0.038/+0.037; worse
+  on top 5m). Lock 50/25 = same result, win rate 51% vs 41%.
+- KEY: like the bot (one trade per coin at a time), signals in time order: volatile 5m+15m -0.044R per trade (both
+  halves negative) = the live losses. With a pause on the coin after a stop: 2h +0.032, 6h +0.065 (+0.055 / +0.074),
+  12h +0.060, 24h -0.077. Top 40: -0.052 -> -0.020 / -0.026 (2h / 6h). Decision point: per-coin pause 6h.
+
+## Coin pause after a stop-loss (owner approved 2026-11-11: a typed number of hours)
+- account["coinPauseHours"] (default 6, 0 = off, max 168; kept on reset); account["coinPaused"] {symbol: until}.
+- Only exitReason "stop" with a loss starts it (break-even, lock, manual, review do not). Paused coins are skipped
+  in the scan with reason "coinPause"; event "coinPause". POST /api/paper/coin-pause {hours}. Panel: number input
+  under max-open, list of waiting coins with minutes left. Tests: CoinPauseTest.
+- Owner asked why so few signals (2026-11-11): the direction filter (owner's design 11-07): the coin's higher-tf
+  trend must agree, never in a range, and BTC followers need BTC's trend; BTC was "range" on 1h and 4h, so most
+  signals end as "range" / "btcFlat"; plus one trade per coin, max open, the brain (keeps ~half), the fee rule.
+  NOTE: study_exits.py did not apply the direction filter or the brain.
+
+## Strategy league test on the bot's own memory (2026-11-11, memory.db staged; /tmp/league*.py, not in repo)
+Rule: per strategy x timeframe, signals that ENDED in the last N days (all coins); keep if >= X and avg R > 0;
+evaluated on the next 6 hours' signals, walk-forward.
+- LIVE (12 days, 17k signals): N=3 X=50 picked +0.156R (+0.14 / +0.20) vs dropped -0.026; 5m+15m +0.112 vs -0.081.
+  BUT concentrated: donchian 3m +110R and volume_breakout 5m +81R of ~+134R; 11-05 alone +130R.
+- Pretrain "history" signals in memory (324k, ~2 months): no gain (picked -0.078 vs dropped -0.083; 5m+15m worse).
+- Exchange-candle study (study_more.py): picks helped 5m/15m/1h, failed on 4h.
+Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged results, default off.
+
+## Strategy league switch (owner approved 2026-11-11 "بساز"; rule changed the same day, see below)
+- CHANGED (owner agreed, 2026-11-11 evening): left out only with >= 50 signals AND avg R <= 0; fewer signals or
+  none = trades. The first rule blocked every 1h strategy (<= 13 signals in 3 days) with the proven set (1h/4h):
+  the live app opened nothing ("league" skips). Strategies missing from the table trade.
+- account["league"] bool (default off, kept on reset). PaperBot.league_table(): Memory.league(now - 3 days) ->
+  per (strategy, tf) live signals of all coins that ended (count, sum R); on = count >= 50 and avg R > 0; cached
+  6 h. In _scan_and_open a strategy not "on" for that tf is not a candidate (counted "league"). Only filters the
+  owner's ticked strategies. Positions carry league=True; panel shows league vs other trades (tagged_stats).
+- POST /api/paper/league {on}; panel: switch + per ticked timeframe the strategies on (avg R, count) and how many
+  off; diary events. Tests: LeagueTest (memory), LeagueSwitchTest.
+
+## Four schools study (study_schools.py, 2026-11-11; owner named the authors: Hosoda, Huddleston, iFmyante, Beggs)
+avg R per trade (half 1 / half 2); bot's 18 strategies same candles: vol 5m +0.039, 15m +0.064; top 5m +0.039, 15m +0.055.
+- Ichimoku TK cross + cloud + Chikou: 5m top +0.131 (+0.12/+0.14, n=105), 5m vol +0.113 (+0.18/+0.08, n=272);
+  15m half 1 negative. TK cross only: weak.
+- YTC TST: 15m top +0.264 (+0.34/+0.23, n=238), 15m vol +0.072 (+0.23/+0.01); 1h/30m negative.
+- YTC BPB: 15m vol +0.148 (+0.06/+0.19, n=311), 15m top +0.053; 30m both groups positive both halves.
+- ICT BOS 5m top +0.094 (both), vol +0.035 (both); CHoCH 15m top +0.037, vol +0.053 (both halves).
+- RTM QM: 30m top +0.133 (both), 1h top +0.096, 1h vol +0.111 (both); 5m negative.
+- RTM FTR/FL negative almost everywhere; CAPS too few trades. YTC BOF mixed / negative on 1h.
+Decision point: add the consistent ones as strategies per timeframe; the league then judges them live.
+
+## Big test + proven set (2026-11-11, full write-up: docs/RESEARCH-2026-11-11.md)
+- Data: Binance futures 5m candles 2024-07..2026-10 for Toobit's top / volatile coins (Toobit keeps only 3500
+  candles per timeframe). Scripts: backend/scripts/research (numba simulator with the bot's rules).
+- 28 new strategies (46 in all) + 12 indicators. Result after fees: everything on 5m-30m negative; only the
+  breakout / momentum family is positive, on 1h-1d (+0.03..+0.13 R per trade, both halves, t 1-2.3). Exits and
+  filters do not change the average. Portfolio (1% risk, 6 open): old 18 on 15m-4h 1.00 -> 0.29; proven set
+  1h + 4h -> about 2.5 with falls of up to 39%.
+- BUILT: proven-set switch (paper.PROVEN_BY_TF, account["proven"], POST /api/paper/proven, on by default from
+  server.py when the key is missing; panel: timeframes section). On: only those strategies are scanned (1h, 4h),
+  the manual list is ignored, the direction filter refuses only "against" / "btcAgainst". Tests: ProvenSetTest,
+  EveryStrategyTest (sane signals, both sides, no look into the future), SecondSetIndicatorsTest.
+- Real account: links paper <-> real kept in real-links.json (lost on restart before).
+- Not built (no gain in the test): trailing exits, 2h / 1d timeframes for the bot (1d family +0.13 R, few trades:
+  a candidate), filters on ADX / volume / Bitcoin.
+- Toobit's top-volume list now holds many stock tokens (NVDA, SNDK, ...): they move together; four momentum
+  longs opened at once in the live check. A cap per group is a candidate.
+
+## Trend Rider (2026-11-11 evening; RESEARCH-2026-11-11.md part 2)
+- Owner asked for a free search, a strategy of the author's own and 2-3% a day. Maker-limit scalping on 5m (24
+  settings) and cross-sectional momentum / reversal fail; a trend portfolio on 4h holds (Sharpe about 1.2-1.3, both
+  halves, about +0.2% a day, falls to 45%, 26% wins, all profit from a few huge trades). 2-3% a day: not reachable.
+- BUILT, on by default: account["rider"], paper.RIDER_* constants, _rider_round after each 4h candle (and at
+  start): score >= 0.6 long / <= -0.6 short, stop 4 x ATR(84), no target, exit at score <= 0 (reason "trend"),
+  1% risk, 15 trades. Replaces the signal scan while on (proven set and manual list unused). Card trend_rider.
+- Watch on paper: it opens up to 15 trades at once at the first start (trends already running), often mostly one
+  direction. The 30% total stop can end a run that the test would have survived (falls of 40%+ happened).
+
+## Proven set tuned + priority order (2026-11-11 night; RESEARCH part 3)
+- Owner asked: tune per timeframe, give the bot an order of choice, then a download. BUILT: PROVEN_BY_TF lists
+  are in priority order (pick(order=), PaperBot.priority), PROVEN_TUNING (only settings better in both halves),
+  risk budget 6% / max open trades (default 12 places x 0.5% with the proven set). Account test: 1.35 (fall 58%)
+  -> 3.77 (fall 27%); second half 0.90 -> 1.33. Optimistic end (chosen with both halves in view).
+- Default now: proven set ON, Trend Rider OFF (switch in the panel).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

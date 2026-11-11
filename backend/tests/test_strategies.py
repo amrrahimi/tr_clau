@@ -364,6 +364,76 @@ class RulesOnWaveDataTest(unittest.TestCase):
 
 
 ORIGINAL_SIX = ["ema_cross", "macd_ema", "rsi_pullback", "bb_reversion", "supertrend", "donchian"]
+SECOND_SET = ["turtle", "keltner_breakout", "bb_breakout", "ema_ribbon", "momentum", "macd_zero", "hma_turn",
+              "psar_flip", "cci_trend", "aroon_cross", "vortex_cross", "adx_breakout", "obv_breakout", "kama_cross",
+              "structure_break", "nr7_breakout", "heikin_ashi", "engulfing", "pin_bar", "rsi2_dip",
+              "williams_pullback", "zscore_reversion", "mfi_turn", "three_soldiers", "contraction", "box_breakout",
+              "trix_cross", "wide_bar", "trend_rider"]
+
+
+def wavy(n, seed=7):
+    """Candles with trends, ranges and bursts (a fixed pseudo-random walk), so every strategy finds signals."""
+    import random
+    rnd = random.Random(seed)
+    rows, price, drift = [], 100.0, 0.0
+    for i in range(n):
+        if i % 150 == 0:
+            drift = rnd.choice([-0.004, -0.002, 0.0, 0.002, 0.004])
+        vol = 0.012 if (i // 75) % 3 == 0 else 0.004
+        o = price
+        c = max(1.0, o * (1 + drift + rnd.gauss(0, vol)))
+        h, l = max(o, c) * (1 + abs(rnd.gauss(0, vol / 2))), min(o, c) * (1 - abs(rnd.gauss(0, vol / 2)))
+        rows.append({"time": i * 60, "open": o, "high": h, "low": l, "close": c, "volume": 100 * (1 + abs(rnd.gauss(0, 1.5)))})
+        price = c
+    return rows
+
+
+def as_candles(rows):
+    return Candles([r["open"] for r in rows], [r["high"] for r in rows], [r["low"] for r in rows],
+                   [r["close"] for r in rows], [r["volume"] for r in rows])
+
+
+class EveryStrategyTest(unittest.TestCase):
+    """Rules every strategy must keep, the 28 of the second set included."""
+    @classmethod
+    def setUpClass(cls):
+        cls.rows = wavy(1500)
+
+    def test_signals_are_sane(self):
+        data = as_candles(self.rows)
+        for kind, s in st.STRATEGIES.items():
+            found = s.signals(data, st.parse_params(kind, {}, "scalping"))
+            last = -1
+            for sig in found:
+                self.assertTrue(0 <= sig.index < len(self.rows), kind)
+                self.assertGreaterEqual(sig.index, last, kind)       # in time order
+                last = sig.index
+                self.assertIn(sig.side, (LONG, SHORT), kind)
+                self.assertTrue(sig.stop_price is not None or (sig.stop_distance or 0) > 0, kind)
+                self.assertTrue(sig.target_price is not None or (sig.reward or 0) > 0, kind)
+                if sig.stop_price is not None:   # the stop is on the losing side of the signal candle's close
+                    close = self.rows[sig.index]["close"]
+                    self.assertTrue(sig.stop_price < close if sig.side == LONG else sig.stop_price > close, kind)
+
+    def test_second_set_finds_signals_both_ways(self):
+        charts = [as_candles(wavy(6000, seed=seed)) for seed in (3, 5, 11)]
+        for kind in SECOND_SET:
+            p = st.parse_params(kind, {}, "scalping")
+            sides = {sig.side for data in charts for sig in st.STRATEGIES[kind].signals(data, p)}
+            self.assertEqual(sides, {LONG, SHORT}, kind)
+
+    def test_no_strategy_looks_into_the_future(self):
+        """A signal on candle i must not change when later candles arrive."""
+        full = as_candles(self.rows)
+        cut = 1100
+        part = as_candles(self.rows[:cut])
+        for kind, s in st.STRATEGIES.items():
+            p = st.parse_params(kind, {}, "scalping")
+            early = [(x.index, x.side, x.stop_price, x.stop_distance, x.target_price) for x in s.signals(part, p)]
+            later = [(x.index, x.side, x.stop_price, x.stop_distance, x.target_price) for x in s.signals(full, p)
+                     if x.index < cut]
+            self.assertEqual(early, later, kind)
+
 
 
 def flat(n, price=100.0, wiggle=0.2):
@@ -446,7 +516,7 @@ class CardsAndSettingsTest(unittest.TestCase):
         self.assertEqual(list(st.STRATEGIES), ORIGINAL_SIX + ["liquidity_sweep", "fvg_retest", "order_block",
                                                               "sd_zone", "squeeze", "vwap_reversion",
                                                           "ema_pullback", "dmi_adx", "ichimoku", "inside_bar",
-                                                          "stoch_rsi_trend", "volume_breakout"])
+                                                          "stoch_rsi_trend", "volume_breakout"] + SECOND_SET)
         for s in st.STRATEGIES.values():
             for p in s.params:
                 self.assertTrue(p.min <= p.default <= p.max, (s.type, p.name))

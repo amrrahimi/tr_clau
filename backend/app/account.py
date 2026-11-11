@@ -104,6 +104,30 @@ class ExchangeAccount:
         self.day: Optional[int] = None
         self.day_start: Optional[float] = None
         self.lock = asyncio.Lock()
+        self._load_links()
+
+    # Real positions the bot opened are remembered in a file (2026-11-11): before, closing the app forgot them,
+    # so a paper close or a moved stop after a restart never reached the exchange (the position then lived
+    # on with only its first stop and target).
+    @staticmethod
+    def _links_path():
+        return connection.settings_path().with_name("real-links.json")
+
+    def _load_links(self) -> None:
+        try:
+            data = json.loads(self._links_path().read_text(encoding="utf-8"))
+            self.links = {int(k): v for k, v in data.items() if isinstance(v, dict) and v.get("status") == "open"}
+        except (OSError, ValueError, AttributeError):
+            self.links = {}
+
+    def _save_links(self) -> None:
+        try:
+            path = self._links_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({str(k): v for k, v in self.links.items() if v.get("status") == "open"}),
+                            encoding="utf-8")
+        except OSError:
+            log.warning("could not save the real position links", exc_info=True)
 
     # ------------------------------------------------------------ settings
 
@@ -377,12 +401,14 @@ class ExchangeAccount:
                 return
             record = {"symbol": symbol, "side": plan["side"], "amount": contracts, "status": "open"}
             self.links[plan["paperId"]] = record
+            self._save_links()
             try:
                 await self._set_stops(ex, symbol, long_, plan["stop"], plan["target"])
             except Exception as error:
                 # never leave a real position without its stop
                 plan["status"] = f"error: protection failed ({type(error).__name__}); closed"
                 await self._close_market(ex, record)
+                self._save_links()
                 self.halted = "protection failed"
                 self.notify(f"🛑 حد ضرر روی صرافی ثبت نشد؛ پوزیشن واقعی {plan.get('base')} فوراً بسته شد و "
                             "ربات واقعی متوقف شد. ({})".format(str(error)[:120]))
@@ -418,6 +444,7 @@ class ExchangeAccount:
                 await self._close_market(ex, record)
             else:
                 record["status"] = "closed"   # its own stop / target on the exchange closed it
+            self._save_links()
 
     async def on_levels(self, p: dict) -> None:
         """The paper stop / target moved (lock, break-even, the owner's drag): move them on the exchange."""
@@ -457,6 +484,7 @@ class ExchangeAccount:
                 pass
             for record in self.links.values():
                 record["status"] = "closed"
+            self._save_links()
         save(mode="read")
         return f"{closed} پوزیشن واقعی بسته شد؛ حالت به «فقط خواندن» برگشت."
 
