@@ -2047,3 +2047,62 @@ class LeagueSwitchTest(unittest.TestCase):
         self.assertTrue(bot.account["league"])                        # the switch survives a reset
         bot.set_league(False)
         self.assertTrue(bot.league_allows("donchian", "5m"))
+
+
+class ProvenSetTest(unittest.IsolatedAsyncioTestCase):
+    """The proven-set switch (2026-11-11): only the tested strategies on 1h / 4h are scanned and traded."""
+    def bot(self):
+        async def empty(*a):
+            return []
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.clock = [1_000_000.0]
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), empty, empty, empty, now=lambda: self.clock[0], fees=FEES)
+        bot.reset(100)
+        return bot
+
+    def test_sets_are_real_strategies_of_real_timeframes(self):
+        for tf, kinds in pp.PROVEN_BY_TF.items():
+            self.assertIn(tf, pp.TIMEFRAMES)
+            self.assertTrue(kinds and all(k in pp.STRATEGIES for k in kinds), tf)
+
+    def test_switch_limits_what_is_scanned(self):
+        bot = self.bot()
+        self.assertEqual(set(bot.active_settings("5m")), set(pp.STRATEGIES))      # off: everything, as before
+        bot.set_timeframes(["5m", "15m"])
+        bot.set_focus(True)
+        bot.set_proven(True)
+        self.assertFalse(bot.account.get("focus"))                                # focus mode ends
+        self.assertEqual(bot.chosen_timeframes(), ["5m", "15m", "1h", "4h"])      # its timeframes get ticked
+        self.assertEqual(set(bot.active_settings("1h")), set(pp.PROVEN_1H))
+        self.assertEqual(set(bot.active_settings("4h")), set(pp.PROVEN_4H))
+        self.assertEqual(bot.active_settings("5m"), {})
+        self.assertEqual(bot._due_timeframes(self.clock[0]), ["4h", "1h"])        # nothing else is scanned
+        shown = bot.public()["proven"]
+        self.assertTrue(shown["on"])
+        self.assertEqual(shown["sets"]["1h"], list(pp.PROVEN_1H))
+        bot.reset(100)
+        self.assertTrue(bot.account["proven"])                                    # the switch survives a reset
+        bot.set_proven(False)
+        self.assertEqual(set(bot.active_settings("5m")), set(pp.STRATEGIES))
+
+    async def test_direction_filter_only_refuses_against(self):
+        bot = self.bot()
+        trends = {"X": "range", "BTC": "range"}
+
+        async def trend(symbol, tf, now):
+            return trends["BTC" if symbol == pp.BTC_SYMBOL else "X"]
+
+        async def link(symbol, now):
+            return 0.9
+        bot._trend, bot._btc_link = trend, link
+        c = {"symbol": "X/USDT:USDT", "base": "X", "signal": {"side": "long"}}
+        self.assertFalse(await bot._direction_ok(dict(c), "1h", 0))               # off: a range is refused
+        bot.set_proven(True)
+        self.assertTrue(await bot._direction_ok(dict(c), "1h", 0))                # on: a range is fine
+        trends["X"] = "up"
+        self.assertTrue(await bot._direction_ok(dict(c), "1h", 0))                # Bitcoin flat: fine too
+        trends["BTC"] = "down"
+        self.assertFalse(await bot._direction_ok(dict(c), "1h", 0))               # Bitcoin against: refused
+        trends.update(X="down", BTC="up")
+        self.assertFalse(await bot._direction_ok(dict(c), "1h", 0))               # against the coin's trend

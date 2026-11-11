@@ -163,3 +163,44 @@ class NewFormulasTest(unittest.TestCase):
         # In an uptrend the line never moves down.
         ups = [line[i] for i in range(20, 60) if direction[i] == -1]
         self.assertEqual(ups, sorted(ups))
+
+
+class SecondSetIndicatorsTest(unittest.TestCase):
+    """The indicators added with the second strategy set: simple hand-checked cases."""
+    def test_roc_and_efficiency(self):
+        self.assertEqual(ind.roc([100, 110, 121], 1), [None, 10.0, 10.0])
+        straight = ind.efficiency([1, 2, 3, 4, 5], 4)
+        choppy = ind.efficiency([1, 2, 1, 2, 1], 4)
+        self.assertEqual((straight[-1], choppy[-1]), (1.0, 0.0))
+
+    def test_obv_adds_volume_on_up_closes(self):
+        self.assertEqual(ind.obv([1, 2, 2, 1], [5, 3, 4, 2]), [0.0, 3.0, 3.0, 1.0])
+
+    def test_williams_r_and_mfi_extremes(self):
+        highs, lows = [10, 11, 12, 13], [9, 10, 11, 12]
+        self.assertEqual(ind.williams_r(highs, lows, [9.5, 10.5, 11.5, 13], 3)[-1], 0.0)     # close at the high
+        self.assertEqual(ind.williams_r(highs, lows, [9.5, 10.5, 11.5, 10], 3)[-1], -100.0)  # close at the low
+        self.assertEqual(ind.mfi(highs, lows, [9.5, 10.5, 11.5, 12.5], [1, 1, 1, 1], 3)[-1], 100.0)  # only inflow
+
+    def test_aroon_marks_how_recent_the_extremes_are(self):
+        up, down = ind.aroon([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], 4)
+        self.assertEqual((up[-1], down[-1]), (100.0, 0.0))
+
+    def test_psar_follows_and_flips(self):
+        highs = [10, 11, 12, 13, 14, 9]
+        lows = [9, 10, 11, 12, 13, 5]
+        line, direction = ind.psar(highs, lows)
+        self.assertEqual(direction[1:5], [1, 1, 1, 1])
+        self.assertTrue(all(line[i] < lows[i] for i in range(1, 5)))
+        self.assertEqual(direction[5], -1)            # the fall through the line flips it
+        self.assertEqual(line[5], 14)                 # ... to the highest price of the up move
+
+    def test_smooth_averages_follow_a_straight_line(self):
+        values = [float(i) for i in range(1, 80)]
+        # WMA lags (n - 1) / 3 on a line: 2 x WMA(8) - WMA(16) leads by 1/3, the last WMA(4) lags 1
+        self.assertAlmostEqual(ind.hma(values, 16)[-1], values[-1] - 2 / 3, places=6)
+        self.assertTrue(values[-10] < ind.kama(values)[-1] <= values[-1])
+        self.assertGreater(ind.cci([v + 1 for v in values], [v - 1 for v in values], values, 20)[-1], 100)
+        plus, minus = ind.vortex([v + 1 for v in values], [v - 1 for v in values], values, 14)
+        self.assertGreater(plus[-1], minus[-1])
+        self.assertGreater(ind.trix(values, 5)[-1], 0)

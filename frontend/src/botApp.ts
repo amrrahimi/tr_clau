@@ -1086,6 +1086,33 @@ export class BotApp {
         focusParts.push(row, el("div", "bot-hint", t(f.on ? "bot.focus.onHint" : "bot.focus.offHint")),
           el("div", "bot-hint", line("focus")), el("div", "bot-hint", line("other")));
       }
+      // 2026-11-11: the proven set (only the strategies that passed the 28-month test, on 1h and 4h).
+      const provenParts: HTMLElement[] = [];
+      if (s.proven) {
+        const pv = s.proven;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", pv.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (pv.on !== on) void this.act({ kind: "proven", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.proven"));
+        row.append(onOff);
+        const sets = Object.entries(pv.sets)
+          .map(([tf, kinds]) => `${tf}: ${kinds.map((k) => t(`strat.${k}` as MessageKey)).join("، ")}`).join(" · ");
+        const line = (name: "on" | "other") => {
+          const x = pv.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "on" ? "bot.proven.statOn" : "bot.proven.statOther", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        provenParts.push(row, el("div", "bot-hint", t("bot.provenHint", { sets })),
+          el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
+      }
       // Owner 2026-11-11: the strategy league switch and its table for the ticked timeframes.
       const leagueParts: HTMLElement[] = [];
       if (s.league) {
@@ -1119,7 +1146,7 @@ export class BotApp {
         };
         leagueParts.push(el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
       }
-      parts.push(heading("timeframes", t("bot.timeframes")), ...focusParts, ...leagueParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
+      parts.push(heading("timeframes", t("bot.timeframes")), ...provenParts, ...focusParts, ...leagueParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
         maxRow, el("div", "bot-hint", t("bot.maxOpenHint")), ...pauseParts);
     }
 

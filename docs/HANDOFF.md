@@ -413,6 +413,23 @@ Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged res
 - POST /api/paper/league {on}; panel: switch + per ticked timeframe the strategies on (avg R, count) and how many
   off; diary events. Tests: LeagueTest (memory), LeagueSwitchTest.
 
+## Big test + proven set (2026-11-11, full write-up: docs/RESEARCH-2026-11-11.md)
+- Data: Binance futures 5m candles 2024-07..2026-10 for Toobit's top / volatile coins (Toobit keeps only 3500
+  candles per timeframe). Scripts: backend/scripts/research (numba simulator with the bot's rules).
+- 28 new strategies (46 in all) + 12 indicators. Result after fees: everything on 5m-30m negative; only the
+  breakout / momentum family is positive, on 1h-1d (+0.03..+0.13 R per trade, both halves, t 1-2.3). Exits and
+  filters do not change the average. Portfolio (1% risk, 6 open): old 18 on 15m-4h 1.00 -> 0.29; proven set
+  1h + 4h -> about 2.5 with falls of up to 39%.
+- BUILT: proven-set switch (paper.PROVEN_BY_TF, account["proven"], POST /api/paper/proven, on by default from
+  server.py when the key is missing; panel: timeframes section). On: only those strategies are scanned (1h, 4h),
+  the manual list is ignored, the direction filter refuses only "against" / "btcAgainst". Tests: ProvenSetTest,
+  EveryStrategyTest (sane signals, both sides, no look into the future), SecondSetIndicatorsTest.
+- Real account: links paper <-> real kept in real-links.json (lost on restart before).
+- Not built (no gain in the test): trailing exits, 2h / 1d timeframes for the bot (1d family +0.13 R, few trades:
+  a candidate), filters on ADX / volume / Bitcoin.
+- Toobit's top-volume list now holds many stock tokens (NVDA, SNDK, ...): they move together; four momentum
+  longs opened at once in the live check. A cap per group is a candidate.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

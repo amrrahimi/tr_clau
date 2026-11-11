@@ -33,3 +33,8 @@ frontend/src-tauri/icons/
 Thumbs.db
 .vscode/
 .idea/
+
+# research data (downloaded by backend/scripts/research/dl.py) and results
+backend/scripts/research/data/
+backend/scripts/research/*.pkl
+backend/scripts/research/out_*.txt

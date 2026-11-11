@@ -84,6 +84,7 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         settings.pop("exchangeAccount", None)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(settings), encoding="utf-8")
+        acc.ExchangeAccount._links_path().unlink(missing_ok=True)
         self.ex = FakeExchange()
         self.sent = []
         self.a = acc.ExchangeAccount(factory=lambda k, s: self.ex, clock=lambda: 1_000_000.0,
@@ -101,6 +102,17 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
             self.a.set(limits={"maxLeverage": 50})
         self.a.set(mode="real", agree_real=True)
         self.assertEqual(self.a.public()["mode"], "real")
+
+    async def test_real_positions_are_remembered_after_a_restart(self):
+        self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 1000, "maxLeverage": 10})
+        await self.a.on_open(position())
+        again = acc.ExchangeAccount(factory=lambda k, s: self.ex, clock=lambda: 1_000_000.0)   # the app restarted
+        self.assertEqual(again.links[position()["id"]]["status"], "open")
+        await again.on_levels(position(stop=100.5))                 # a moved stop still reaches the exchange
+        self.assertEqual(self.ex.orders[-1][1]["stopLoss"], "100.5000")
+        await again.on_close(position(), "target")                  # and so does the close
+        self.assertEqual(self.ex.positions, [])
+        self.assertEqual(acc.ExchangeAccount(factory=lambda k, s: self.ex).links, {})   # closed: forgotten
 
     async def test_read_only_sends_nothing(self):
         self.a.set(mode="read")

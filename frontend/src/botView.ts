@@ -282,6 +282,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t("bot.evStop");
     case "league":
       return t(e.on ? "bot.evLeagueOn" : "bot.evLeagueOff");
+    case "proven":
+      return t(e.on ? "bot.evProvenOn" : "bot.evProvenOff");
     case "coinPause":
       return t("bot.evCoinPause", { coin: e.symbol ?? "", hours: String(e.hours ?? "") });
     case "focus":

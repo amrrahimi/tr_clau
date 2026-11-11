@@ -25,6 +25,9 @@ of the stop distance since the signal: the stop would then sit closer than
 the strategy meant. Bigger timeframes are checked first, so their signals
 do not wait behind the small ones.
 
+Proven set (2026-11-11, on by default in the app): only the strategies of PROVEN_BY_TF are scanned and traded
+(breakout / momentum family on 1h and 4h), see docs/RESEARCH-2026-11-11.md.
+
 The account is saved to a file, so it survives closing the app.
 Futures funding payments are not counted yet.
 """
@@ -65,6 +68,16 @@ COIN_PAUSE_MAX = 168.0
 LEAGUE_DAYS = 3
 LEAGUE_MIN = 50
 LEAGUE_REFRESH = 6 * 3600
+# The proven set (2026-11-11, docs/RESEARCH-2026-11-11.md): 46 strategies x 6 timeframes on 28 months of 5m
+# futures candles of about 95 coins, after fees, with the bot's rules. Only the breakout / momentum family on
+# 1h and 4h stayed positive in both halves; everything on 5m-30m and every other family lost on average. With the
+# switch on (account["proven"]) the bot scans and trades only these, whatever the manual list says, and the
+# direction filter only refuses trades AGAINST the higher trend (a range is where breakouts start).
+PROVEN_4H = ("donchian", "turtle", "volume_breakout", "momentum", "box_breakout", "wide_bar", "bb_breakout",
+             "keltner_breakout", "adx_breakout", "three_soldiers", "structure_break", "obv_breakout")
+PROVEN_1H = ("volume_breakout", "three_soldiers", "bb_breakout", "turtle", "keltner_breakout", "momentum",
+             "adx_breakout", "structure_break")
+PROVEN_BY_TF: dict[str, tuple[str, ...]] = {"1h": PROVEN_1H, "4h": PROVEN_4H}
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
 STALE_PART = 0.10             # of the stop distance: further than this toward the target = too late
@@ -783,6 +796,8 @@ class PaperBot:
             "league": {"on": bool(a.get("league")), "days": LEAGUE_DAYS, "min": LEAGUE_MIN,
                        "table": {tf: self.league_table().get(tf, {}) for tf in self.chosen_timeframes()},
                        "stats": self.tagged_stats("league")},
+            "proven": {"on": self.proven(), "sets": {tf: list(k) for tf, k in PROVEN_BY_TF.items()},
+                       "stats": self.tagged_stats("proven")},
             "coinPause": {"hours": self.coin_pause_hours(),
                           "paused": {k.split("/")[0]: v for k, v in self.coins_paused().items()}},
             "focus": {"on": bool(a.get("focus")), "since": (a.get("focus") or {}).get("since"),
@@ -868,7 +883,7 @@ class PaperBot:
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
                                               "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
                                               "reviewEnabled", "reviewAfter", "reviewEvery", "focus",
-                                              "coinPauseHours", "league")
+                                              "coinPauseHours", "league", "proven")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -1065,10 +1080,14 @@ class PaperBot:
         try:
             for tf in SCAN_ORDER:
                 mode = MODE_OF[tf]
-                settings = bot_settings(tf)
+                settings = self.active_settings(tf)
                 for symbol, base in coins:
                     now = self.now()
-                    chart_tf = f"{tf}#{STRATEGY_SET}"   # new strategies: every chart is rebuilt once
+                    if not settings:        # proven set: nothing is traded on this timeframe
+                        progress["done"] += 1
+                        continue
+                    # new strategies (or another set): every chart is rebuilt once
+                    chart_tf = f"{tf}#{STRATEGY_SET}{'p' if self.proven() else ''}"
                     if pretrain.due(memory.pretrain_time(symbol, chart_tf), now):
                         try:
                             rows = closed_only(await self.history(symbol, tf), tf, now)
@@ -1206,8 +1225,8 @@ class PaperBot:
     def _due_timeframes(self, now: float) -> list[str]:
         due = []
         for tf in [t for t in SCAN_ORDER if t in self.profile.timeframes]:
-            if not BOT_STRATEGIES_BY_TF.get(tf, True):
-                continue   # no strategy of the bot's list on this timeframe: nothing to scan
+            if not BOT_STRATEGIES_BY_TF.get(tf, True) or (self.proven() and not PROVEN_BY_TF.get(tf)):
+                continue   # no strategy of the bot's list (or of the proven set) on this timeframe: nothing to scan
             period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
             if self.account["lastScan"].get(tf, {}).get("period") != period:
                 self.account["lastScan"][tf] = {"period": period, "time": now}
@@ -1825,9 +1844,9 @@ class PaperBot:
 
     async def _scan_and_open(self, tf: str, now: float, trade: bool = True) -> None:
         mode = MODE_OF[tf]
-        settings = bot_settings(tf)
+        settings = self.active_settings(tf)
         benched = {k for k, until in self.account["benched"].items() if until > now}
-        allowed = set(self.account["strategies"]) - benched
+        allowed = (set(settings) if self.proven() else set(self.account["strategies"])) - benched
         memory = self.memory
         gate = asyncio.Semaphore(8)
         candidates: list[dict] = []
@@ -2072,9 +2091,12 @@ class PaperBot:
         c["trend"] = trend
         if trend is None:
             return True   # not enough candles to tell: as before
-        if trend == "range":
+        soft = self.proven()   # proven set: a range is where breakouts start; only "against" is refused
+        if trend == "range" and not soft:
             self._skip(c, tf, "range")
             return False
+        if trend == "range":
+            return True
         if trend != want:
             self._skip(c, tf, "against")
             return False
@@ -2083,10 +2105,10 @@ class PaperBot:
         if link is not None and link >= BTC_FOLLOWER and c["symbol"] != BTC_SYMBOL:
             btc = await self._trend(BTC_SYMBOL, tf, now)
             c["btcTrend"] = btc
-            if btc == "range":
+            if btc == "range" and not soft:
                 self._skip(c, tf, "btcFlat")
                 return False
-            if btc is not None and btc != want:
+            if btc is not None and btc != want and btc != "range":
                 self._skip(c, tf, "btcAgainst")
                 return False
         return True
@@ -2173,6 +2195,7 @@ class PaperBot:
             "trend": c.get("trend"), "btcLink": c.get("btcLink"), "btcTrend": c.get("btcTrend"),
             "focus": bool(a.get("focus")),
             "league": bool(a.get("league")),
+            "proven": bool(a.get("proven")),
             # Why the bot entered (the owner's "explanation" button, 2026-11-07).
             "why": {"signalPrice": s.get("entry"), "signalTime": s["time"], "marketState": c.get("marketState"),
                     "higherTf": HIGHER_TF.get(tf), "feeShare": 2 * self.fees.taker / 100 * entry / abs(entry - stop)
@@ -2257,6 +2280,33 @@ class PaperBot:
         paused = {k: v for k, v in (self.account.get("coinPaused") or {}).items() if v > now}
         self.account["coinPaused"] = paused
         return paused
+
+    def proven(self) -> bool:
+        return bool(self.account.get("proven"))
+
+    def set_proven(self, on: bool) -> None:
+        """The proven-set switch: on = only the tested strategies on 1h / 4h (PROVEN_BY_TF). Turning it on
+        ticks those timeframes (the others stay as they are but have nothing to trade) and ends focus mode."""
+        a = self.account
+        if bool(a.get("proven")) == bool(on):
+            return
+        if on:
+            if a.get("focus"):
+                self.set_focus(False)
+            chosen = a.get("chosenTimeframes")
+            if chosen:
+                a["chosenTimeframes"] = [tf for tf in self.profile.timeframes if tf in chosen or tf in PROVEN_BY_TF]
+        a["proven"] = bool(on)
+        self._event("proven", on=bool(on))
+        self.save()
+
+    def active_settings(self, tf: str) -> dict[str, dict]:
+        """Settings of the strategies scanned on this timeframe: the bot's list, or only the proven set."""
+        settings = bot_settings(tf)
+        if self.proven():
+            keep = PROVEN_BY_TF.get(tf, ())
+            settings = {k: v for k, v in settings.items() if k in keep}
+        return settings
 
     def set_league(self, on: bool) -> None:
         if bool(self.account.get("league")) != bool(on):

@@ -105,6 +105,10 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     store_path = paper_path or default_path()
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
+    if "proven" not in bot.account:
+        # 2026-11-11: the proven set starts switched on (every other choice lost in the 28-month test);
+        # the owner can switch it off in the panel, and that choice is kept.
+        bot.set_proven(True)
     real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons))
     bot.real = real
 
@@ -279,6 +283,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         async def paper_league(on: bool = Body(..., embed=True)):
             """The strategy league switch (last 3 days of live signals per strategy x timeframe)."""
             b.set_league(on)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/proven")
+        async def paper_proven(on: bool = Body(..., embed=True)):
+            """The proven-set switch (only the tested strategies on 1h / 4h)."""
+            b.set_proven(on)
             return b.public()
 
         @app.post(f"/api/{prefix}/coin-pause")
