@@ -396,6 +396,15 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
   signals end as "range" / "btcFlat"; plus one trade per coin, max open, the brain (keeps ~half), the fee rule.
   NOTE: study_exits.py did not apply the direction filter or the brain.
 
+## Strategy league test on the bot's own memory (2026-11-11, memory.db staged; /tmp/league*.py, not in repo)
+Rule: per strategy x timeframe, signals that ENDED in the last N days (all coins); keep if >= X and avg R > 0;
+evaluated on the next 6 hours' signals, walk-forward.
+- LIVE (12 days, 17k signals): N=3 X=50 picked +0.156R (+0.14 / +0.20) vs dropped -0.026; 5m+15m +0.112 vs -0.081.
+  BUT concentrated: donchian 3m +110R and volume_breakout 5m +81R of ~+134R; 11-05 alone +130R.
+- Pretrain "history" signals in memory (324k, ~2 months): no gain (picked -0.078 vs dropped -0.083; 5m+15m worse).
+- Exchange-candle study (study_more.py): picks helped 5m/15m/1h, failed on 4h.
+Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged results, default off.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
