@@ -378,6 +378,14 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
 - Only top coins, funding beyond 0.1%, hold 24h stay positive in both halves: stop 5% +1.17% (+0.09 / +2.29),
   R +0.23, n=307; stop 3% +0.46% (+0.13 / +0.81). Best of 120 settings -> data-snooping risk. Not built.
 
+## Exit habits + per-coin pause (study_exits.py, 2026-11-11, bot strategies, 5m/15m, volatile 30 + top 40)
+- Owner's habits as rules (target 1R, half at +0.5R, BE at +0.5R, time exits) do NOT help on history: early profit
+  taking pulls avgR to ~0 (target 1R +0.003). Half at +1R then BE ~= base (+0.040/+0.044 vs +0.038/+0.037; worse
+  on top 5m). Lock 50/25 = same result, win rate 51% vs 41%.
+- KEY: like the bot (one trade per coin at a time), signals in time order: volatile 5m+15m -0.044R per trade (both
+  halves negative) = the live losses. With a pause on the coin after a stop: 2h +0.032, 6h +0.065 (+0.055 / +0.074),
+  12h +0.060, 24h -0.077. Top 40: -0.052 -> -0.020 / -0.026 (2h / 6h). Decision point: per-coin pause 6h.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
