@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python scripts/study_funding.py
+      - run: python scripts/study_exits.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
