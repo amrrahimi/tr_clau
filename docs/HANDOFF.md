@@ -461,6 +461,16 @@ Decision point: add the consistent ones as strategies per timeframe; the league 
   -> 3.77 (fall 27%); second half 0.90 -> 1.33. Optimistic end (chosen with both halves in view).
 - Default now: proven set ON, Trend Rider OFF (switch in the panel).
 
+## Four schools on 28 months (study_schools28.py on the study branch, Binance 5m 2024-07..2026-10, 90 coins)
+The short-data results (Toobit, 52 days) did NOT hold: 5m / 15m all negative (BOS -0.019, TST -0.046, Ichimoku
+full -0.060 on 15m ...). Positive in both halves:
+- 4h: Ichimoku TK cross + cloud + Chikou +0.110 (+0.129 / +0.098, n=2449); TK + cloud +0.097 (+0.154 / +0.056);
+  ICT CHoCH +0.076 (+0.120 / +0.042, n=6198). Breakout family on 4h for reference: +0.041.
+- 1h: RTM QM +0.032 (+0.034 / +0.031, n=3803); BOS +0.021 (+0.003 / +0.037). 30m: QM +0.035 (both).
+- FTR/FL, BOF, TST, BPB: zero or negative on every timeframe.
+Decision point: add Ichimoku full + CHoCH to the 4h proven list, QM to the 1h list (after a portfolio test).
+Also merged branch claude/proven-set-research into main (2026-11-11) and changed the league rule (above).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
