@@ -275,6 +275,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             b.set_max_open(value)
             return b.public()
 
+        @app.post(f"/api/{prefix}/coin-pause")
+        async def paper_coin_pause(hours: float = Body(..., embed=True)):
+            """Hours a coin waits after a stop-loss (0 = off)."""
+            b.set_coin_pause(hours)
+            return b.public()
+
         @app.post(f"/api/{prefix}/focus")
         async def paper_focus(on: bool = Body(..., embed=True)):
             """Owner's focus switch: 5m + 15m on the volatile coins; off brings the earlier settings back."""

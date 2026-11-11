@@ -40,6 +40,7 @@ export type PaperAction =
   | { kind: "review"; enabled?: boolean; after?: number; every?: Record<string, number> }
   | { kind: "max-open"; value: number }
   | { kind: "focus"; on: boolean }
+  | { kind: "coin-pause"; hours: number }
   | { kind: "close-all" }
   | { kind: "cap"; usd: number }
   | { kind: "pause"; losses: number; fall: number }

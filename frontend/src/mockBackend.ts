@@ -124,6 +124,8 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "coin-pause") {
+      state.coinPause = { hours: Math.max(0, Math.min(168, action.hours)), paused: state.coinPause?.paused ?? {} };
     } else if (action.kind === "focus") {
       state.focus = { on: action.on, since: action.on ? Date.now() / 1000 : null, timeframes: ["5m", "15m"],
         stats: state.focus?.stats ?? { focus: { trades: 0, wins: 0, losses: 0, pnl: 0 }, other: { trades: 0, wins: 0, losses: 0, pnl: 0 } } };

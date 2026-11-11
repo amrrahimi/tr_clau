@@ -280,6 +280,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t("bot.evStart");
     case "stop":
       return t("bot.evStop");
+    case "coinPause":
+      return t("bot.evCoinPause", { coin: e.symbol ?? "", hours: String(e.hours ?? "") });
     case "focus":
       return t(e.on ? "bot.evFocusOn" : "bot.evFocusOff");
     default:

@@ -386,6 +386,16 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
   halves negative) = the live losses. With a pause on the coin after a stop: 2h +0.032, 6h +0.065 (+0.055 / +0.074),
   12h +0.060, 24h -0.077. Top 40: -0.052 -> -0.020 / -0.026 (2h / 6h). Decision point: per-coin pause 6h.
 
+## Coin pause after a stop-loss (owner approved 2026-11-11: a typed number of hours)
+- account["coinPauseHours"] (default 6, 0 = off, max 168; kept on reset); account["coinPaused"] {symbol: until}.
+- Only exitReason "stop" with a loss starts it (break-even, lock, manual, review do not). Paused coins are skipped
+  in the scan with reason "coinPause"; event "coinPause". POST /api/paper/coin-pause {hours}. Panel: number input
+  under max-open, list of waiting coins with minutes left. Tests: CoinPauseTest.
+- Owner asked why so few signals (2026-11-11): the direction filter (owner's design 11-07): the coin's higher-tf
+  trend must agree, never in a range, and BTC followers need BTC's trend; BTC was "range" on 1h and 4h, so most
+  signals end as "range" / "btcFlat"; plus one trade per coin, max open, the brain (keeps ~half), the fee rule.
+  NOTE: study_exits.py did not apply the direction filter or the brain.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

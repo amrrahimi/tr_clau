@@ -1034,6 +1034,33 @@ export class BotApp {
         void this.act({ kind: "max-open", value: n });
       });
       maxRow.append(maxInput);
+      // Owner 2026-11-11: a coin waits this many hours after a stop-loss (a number, 0 = off).
+      const pauseParts: HTMLElement[] = [];
+      if (s.coinPause) {
+        const cp = s.coinPause;
+        const pauseRow = el("label", "bot-review-row", t("bot.coinPause"));
+        const pauseInput = document.createElement("input");
+        pauseInput.type = "number";
+        pauseInput.min = "0";
+        pauseInput.max = "168";
+        pauseInput.step = "0.5";
+        pauseInput.dir = "ltr";
+        pauseInput.value = String(cp.hours);
+        pauseInput.addEventListener("change", () => {
+          const h = Number(pauseInput.value);
+          if (!(h >= 0 && h <= 168) || pauseInput.value.trim() === "") {
+            pauseInput.classList.add("invalid");
+            return;
+          }
+          void this.act({ kind: "coin-pause", hours: h });
+        });
+        pauseRow.append(pauseInput);
+        const now = Date.now() / 1000;
+        const waiting = Object.entries(cp.paused).filter(([, until]) => until > now)
+          .map(([coin, until]) => t("bot.coinPause.left", { coin, minutes: String(Math.ceil((until - now) / 60)) }));
+        pauseParts.push(pauseRow, el("div", "bot-hint", t(cp.hours > 0 ? "bot.coinPauseHint" : "bot.coinPauseOff")));
+        if (waiting.length) pauseParts.push(el("div", "bot-hint", t("bot.coinPause.now", { list: waiting.join("، ") })));
+      }
       // The owner's focus switch (2026-11-10): 5m + 15m on the volatile coins, the earlier settings kept.
       const focusParts: HTMLElement[] = [];
       if (s.focus) {
@@ -1060,7 +1087,7 @@ export class BotApp {
           el("div", "bot-hint", line("focus")), el("div", "bot-hint", line("other")));
       }
       parts.push(heading("timeframes", t("bot.timeframes")), ...focusParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
-        maxRow, el("div", "bot-hint", t("bot.maxOpenHint")));
+        maxRow, el("div", "bot-hint", t("bot.maxOpenHint")), ...pauseParts);
     }
 
     // Limit entry (paper only): on/off, the waiting orders, market vs limit results.

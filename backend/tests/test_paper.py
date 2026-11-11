@@ -1952,3 +1952,56 @@ class FocusTest(unittest.TestCase):
         s = bot.focus_stats()
         self.assertEqual((s["focus"]["trades"], s["focus"]["wins"], s["focus"]["losses"], s["focus"]["pnl"]), (2, 1, 1, 0.0))
         self.assertEqual((s["other"]["trades"], s["other"]["pnl"]), (1, 2.0))
+
+
+class CoinPauseTest(unittest.IsolatedAsyncioTestCase):
+    """Owner 2026-11-11: after a real stop-loss the coin waits a number of hours (0 = off)."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.clock = [1_000_000]
+
+        async def recent(symbol, tf):
+            return [bar(999_960, 100, 100, 100, 100)]
+
+        async def empty(*a):
+            return []
+        self.bot = pp.PaperBot(pp.Store(Path(self.dir.name) / "p.json"), empty, empty, recent,
+                               now=lambda: self.clock[0], fees=FEES)
+        self.bot.reset(100)
+        tg.save(token="", chatId=None, enabled=False)
+        self.addCleanup(lambda: tg.save(token="", chatId=None, enabled=True))
+
+    async def opened(self):
+        await self.bot._open(cand("A", 2.0, 20), "15m", self.clock[0], {"fee_ratio": 0.33})
+        return self.bot.account["positions"][-1]
+
+    async def test_stop_loss_pauses_the_coin_other_exits_do_not(self):
+        bot = self.bot
+        self.assertEqual(bot.public()["coinPause"]["hours"], 6.0)
+        p = await self.opened()
+        bot._close(p, p["stop"], "stop", self.clock[0])
+        self.assertEqual(bot.coins_paused(), {"A/USDT:USDT": 1_000_000 + 6 * 3600})
+        self.assertEqual(bot.account["events"][-2]["kind"], "coinPause")
+        self.assertIn("A", bot.public()["coinPause"]["paused"])
+        self.clock[0] += 6 * 3600 + 1
+        self.assertEqual(bot.coins_paused(), {})
+        p = await self.opened()
+        bot._close(p, p["entryPrice"] * 0.999, "manual", self.clock[0])     # the owner's close: no pause
+        p = await self.opened()
+        bot._close(p, p["takeProfit"], "target", self.clock[0])
+        self.assertEqual(bot.coins_paused(), {})
+
+    async def test_owner_number_and_off(self):
+        bot = self.bot
+        bot.set_coin_pause(2.5)
+        self.assertEqual(bot.public()["coinPause"]["hours"], 2.5)
+        bot.set_coin_pause(1000)
+        self.assertEqual(bot.coin_pause_hours(), pp.COIN_PAUSE_MAX)
+        bot.set_coin_pause(0)
+        p = await self.opened()
+        bot._close(p, p["stop"], "stop", self.clock[0])
+        self.assertEqual(bot.coins_paused(), {})
+        bot.reset(100)
+        self.assertEqual(bot.coin_pause_hours(), 0)          # the owner's number survives a reset

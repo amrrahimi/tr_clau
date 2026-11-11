@@ -55,6 +55,10 @@ TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
 # and come back when the switch is turned off.
 FOCUS_TIMEFRAMES = ("5m", "15m")
 FOCUS_KEYS = ("chosenTimeframes", "coinMode", "coins")
+# Owner 2026-11-11 (study_exits.py): after a real stop-loss the same coin waits this many hours before a new trade
+# (one trade per coin like the bot, volatile coins 5m + 15m: -0.044R per trade without, +0.065R with 6 hours).
+COIN_PAUSE_HOURS = 6.0
+COIN_PAUSE_MAX = 168.0
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
 STALE_PART = 0.10             # of the stop distance: further than this toward the target = too late
@@ -769,6 +773,8 @@ class PaperBot:
             "btc": self.btc_state,
             "telegram": {**telegram.public(), "lastError": self.tg_error},
             "limitEntry": a.get("limitEntry", False),
+            "coinPause": {"hours": self.coin_pause_hours(),
+                          "paused": {k.split("/")[0]: v for k, v in self.coins_paused().items()}},
             "focus": {"on": bool(a.get("focus")), "since": (a.get("focus") or {}).get("since"),
                       "timeframes": list(FOCUS_TIMEFRAMES), "stats": self.focus_stats()},
             "review": {"enabled": a.get("reviewEnabled", True), "after": a.get("reviewAfter", REVIEW_AFTER_CANDLES),
@@ -851,7 +857,8 @@ class PaperBot:
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
                                               "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
-                                              "reviewEnabled", "reviewAfter", "reviewEvery", "focus")
+                                              "reviewEnabled", "reviewAfter", "reviewEvery", "focus",
+                                              "coinPauseHours")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -1747,6 +1754,8 @@ class PaperBot:
         del self.account["closed"][:-KEEP_CLOSED]
         outcome = trade_outcome(trade)
         trade["outcome"] = outcome
+        if reason == "stop" and outcome == "loss":
+            self._pause_coin(p, now)
         if reason == "manual":
             pass   # closed by the owner: says nothing about the market, the pause count stays
         elif outcome == "loss":
@@ -1887,7 +1896,11 @@ class PaperBot:
             return
         # Steps 2-3 (owner 2026-11-07): only with the coin's higher-timeframe trend, never in a range,
         # and for coins that follow Bitcoin only with Bitcoin's trend.
-        fresh = [c for c in candidates if c["symbol"] not in open_coins]
+        paused = self.coins_paused()
+        for c in candidates:
+            if c["symbol"] in paused and c["symbol"] not in open_coins:
+                self._skip(c, tf, "coinPause")
+        fresh = [c for c in candidates if c["symbol"] not in open_coins and c["symbol"] not in paused]
         checked = []
         for c in sorted(fresh, key=lambda c: c["stats"]["trades"], reverse=True)[:max(room * 3, 6)]:
             if await self._direction_ok(c, tf, now):
@@ -2206,6 +2219,30 @@ class PaperBot:
             a["focus"] = None
             self._event("focus", on=False)
         self.save()
+
+    def coin_pause_hours(self) -> float:
+        h = self.account.get("coinPauseHours")
+        return COIN_PAUSE_HOURS if h is None else float(h)
+
+    def set_coin_pause(self, hours: float) -> None:
+        """Owner's number: hours a coin waits after a stop-loss (0 = off). Coins waiting now keep their time."""
+        self.account["coinPauseHours"] = round(max(0.0, min(COIN_PAUSE_MAX, float(hours))), 2)
+        self.save()
+
+    def _pause_coin(self, p: dict, now: float) -> None:
+        hours = self.coin_pause_hours()
+        if hours <= 0:
+            return
+        until = now + hours * 3600
+        self.account.setdefault("coinPaused", {})[p["symbol"]] = until
+        self._event("coinPause", symbol=p["base"], until=until, hours=hours)
+
+    def coins_paused(self) -> dict[str, float]:
+        """Coins still waiting after a stop-loss (symbol -> until); finished ones are dropped."""
+        now = self.now()
+        paused = {k: v for k, v in (self.account.get("coinPaused") or {}).items() if v > now}
+        self.account["coinPaused"] = paused
+        return paused
 
     def focus_stats(self) -> dict:
         """Closed trades opened in focus mode against the others (count, wins, losses, net USDT)."""
