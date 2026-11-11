@@ -25,6 +25,9 @@ of the stop distance since the signal: the stop would then sit closer than
 the strategy meant. Bigger timeframes are checked first, so their signals
 do not wait behind the small ones.
 
+Proven set (2026-11-11, on by default in the app): only the strategies of PROVEN_BY_TF are scanned and traded
+(breakout / momentum family on 1h and 4h), see docs/RESEARCH-2026-11-11.md.
+
 The account is saved to a file, so it survives closing the app.
 Futures funding payments are not counted yet.
 """
@@ -48,7 +51,8 @@ from .brain import Brain
 from . import advisor, pretrain, telegram
 from .memory import Memory, features
 from .scanner import reliable
-from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params, reward_ok
+from . import indicators as ind
+from .strategies import LONG, STRATEGIES, Fees, breakeven_price, fee_ok, parse_params, reward_ok, trend_score
 
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
 # Owner's "focus" switch (2026-11-10, research): 5m + 15m on the volatile coins; the earlier settings are kept
@@ -65,6 +69,51 @@ COIN_PAUSE_MAX = 168.0
 LEAGUE_DAYS = 3
 LEAGUE_MIN = 50
 LEAGUE_REFRESH = 6 * 3600
+# The proven set (2026-11-11, docs/RESEARCH-2026-11-11.md): 46 strategies x 6 timeframes on 28 months of 5m
+# futures candles of about 95 coins, after fees, with the bot's rules. Only the breakout / momentum family on
+# 1h and 4h stayed positive in both halves; everything on 5m-30m and every other family lost on average. With the
+# switch on (account["proven"]) the bot scans and trades only these, whatever the manual list says, and the
+# direction filter only refuses trades AGAINST the higher trend (a range is where breakouts start).
+# Order = priority (tuning run of 2026-11-11, scripts/research/tune.py and prio.py): when several signals
+# compete for a place, or two strategies signal on one coin, the earlier one in the list is taken. The order is
+# the result of each strategy on that timeframe over both halves of the 28 months, not the coin's own short
+# history (which did not predict anything in the bot's memory).
+PROVEN_4H = ("wide_bar", "box_breakout", "donchian", "three_soldiers", "obv_breakout", "adx_breakout",
+             "structure_break", "turtle", "momentum", "keltner_breakout", "volume_breakout", "bb_breakout")
+PROVEN_1H = ("bb_breakout", "three_soldiers", "volume_breakout", "momentum", "keltner_breakout", "turtle",
+             "adx_breakout", "structure_break")
+# Settings per timeframe that were better than the defaults in BOTH halves (the others stay at their defaults:
+# most "best on the first half" settings were worse on the second). Larger, rarer breakouts and a further
+# target did better; nothing that raised the win rate raised the result.
+PROVEN_TUNING: dict[str, dict[str, dict]] = {
+    "1h": {"bb_breakout": {"mult": 3.0}, "volume_breakout": {"reward": 3.0}, "momentum": {"reward": 3.0},
+           "keltner_breakout": {"reward": 3.0}},
+    "4h": {"wide_bar": {"size": 3.5}, "box_breakout": {"box": 6.0}, "donchian": {"reward": 3.0},
+           "keltner_breakout": {"kc_mult": 2.5}},
+}
+# More, smaller trades (prio2.py): with the same total risk open (PROVEN_RISK_BUDGET), 12 places instead of 6
+# gave the same result with a smaller fall (38% against 54%) and much less luck (1.2-2.8 against 0.7-4.8 over
+# five runs). The risk of one trade is the budget divided by the owner's maximum of open trades.
+PROVEN_RISK_BUDGET = 0.06
+PROVEN_MAX_POSITIONS = 12
+PROVEN_BY_TF: dict[str, tuple[str, ...]] = {"1h": PROVEN_1H, "4h": PROVEN_4H}
+# Trend Rider (2026-11-11, part 2 of the research): the bot's own engine, used instead of the signal scan while
+# account["rider"] is on. Every new 4h candle each coin gets a trend score (strategies.trend_score: five channel
+# windows of 5-80 days). Score >= RIDER_IN: long; <= -RIDER_IN: short; the trade has no target and ends when the
+# score comes back to RIDER_OUT (the trend is over) or at its stop, RIDER_STOP_ATR x ATR (of about 14 days) from
+# the entry. Size: the usual 1% of the money at the stop. Up to RIDER_MAX_POSITIONS trades, one per coin.
+# 28-month test (65 coins, fees 0.08% a side): Sharpe about 1.2 in both halves, about +0.2% a day on average,
+# falls of up to 45%, only about 27% of the trades win (a few large ones pay for the rest).
+RIDER = "trend_rider"
+RIDER_TF = "4h"
+RIDER_BASE = 30               # candles in the shortest window (5 days of 4h candles)
+RIDER_IN = 0.6
+RIDER_OUT = 0.0
+RIDER_ATR = 84                # candles (14 days)
+RIDER_STOP_ATR = 4.0
+RIDER_MIN_STOP, RIDER_MAX_STOP = 0.02, 0.5   # the stop distance as a share of the price: dead / wild coins are left out
+RIDER_MAX_POSITIONS = 15
+RIDER_TARGET_R = 20.0         # the far "target" the screen needs; the real exit is the score
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
 STALE_PART = 0.10             # of the stop distance: further than this toward the target = too late
@@ -215,7 +264,7 @@ def liquidation_price(side: str, entry: float, leverage: int) -> float:
 
 
 def position_size(side: str, entry: float, stop: float, equity: float, free_margin: float,
-                  fees: Fees, max_open: int = MAX_OPEN) -> Optional[Size]:
+                  fees: Fees, max_open: int = MAX_OPEN, risk: float = RISK) -> Optional[Size]:
     """Size so that the loss at the stop (with both taker fees) is RISK of the account.
 
     Leverage: the lowest that fits the slot (a third of the account), at most
@@ -227,7 +276,7 @@ def position_size(side: str, entry: float, stop: float, equity: float, free_marg
     if stop_frac <= 0:
         return None
     loss_frac = stop_frac + 2 * fees.taker / 100           # price move + fees in and out
-    notional = equity * RISK / loss_frac
+    notional = equity * risk / loss_frac
     slot = min(equity / max_open, free_margin)
     if slot <= 0:
         return None
@@ -457,7 +506,7 @@ def is_stale(signal_price: float, price: float, stop: float) -> bool:
 # ---------------------------------------------------------------- choosing
 
 def pick(candidates: list[dict], open_coins: set[str], slots: int,
-         side_room: Optional[dict[str, int]] = None) -> list[dict]:
+         side_room: Optional[dict[str, int]] = None, order: Optional[Callable[[dict], tuple]] = None) -> list[dict]:
     """Best reliable signals first (profit factor, then number of trades), one per
     coin, at most `slots`, and no more per direction than `side_room` allows."""
     def score(c):
@@ -465,7 +514,8 @@ def pick(candidates: list[dict], open_coins: set[str], slots: int,
         return (pf if pf is not None else float("inf"), c["stats"]["trades"])
     room = dict(side_room) if side_room is not None else None
     chosen, coins = [], set(open_coins)
-    for c in sorted(candidates, key=score, reverse=True):
+    ranked = sorted(candidates, key=order) if order is not None else sorted(candidates, key=score, reverse=True)
+    for c in ranked:
         if len(chosen) >= slots:
             break
         side = c["signal"]["side"]
@@ -574,6 +624,21 @@ def btc_correlation(coin: list[dict], btc: list[dict], hours: int = BTC_LINK_HOU
     sxx = sum((x - mx) ** 2 for x in xs)
     syy = sum((y - my) ** 2 for y in ys)
     return sxy / math.sqrt(sxx * syy) if sxx and syy else None
+
+
+def rider_view(candles: list[dict]) -> Optional[dict]:
+    """Trend Rider's reading of one coin from its closed 4h candles: score (-1..1), ATR, last close and
+    candle time; None with too little history."""
+    if len(candles) < RIDER_BASE * 16 + 1:
+        return None
+    closes = [c["close"] for c in candles]
+    score = trend_score(closes, RIDER_BASE)[-1]
+    atr = ind.atr([c["high"] for c in candles], [c["low"] for c in candles], closes, RIDER_ATR)[-1]
+    last = candles[-1]
+    if score is None or atr is None:
+        return None
+    return {"score": score, "atr": atr, "close": last["close"], "time": last["time"],
+            "flat": last["high"] == last["low"]}
 
 
 def trade_outcome(trade: dict) -> str:
@@ -717,6 +782,7 @@ class PaperBot:
         self._league: Optional[tuple[float, dict]] = None        # (time, strategy league table) cache
         self.ai_ask = advisor.ask            # replaced in tests
         self.ai_consult = advisor.consult    # the owner's "stay or exit?" button (replaced in tests)
+        self.rider_state: dict = {}          # Trend Rider's last round, for the panel
         self.btc_links: dict[str, tuple[float, Optional[float]]] = {}   # symbol -> (when, correlation with BTC)
         self.btc_state: dict = {}                                       # Bitcoin's 1h / 4h trend for the panel
         self.ai_keys = advisor.load_keys     # keys live in settings.json on this computer
@@ -783,6 +849,12 @@ class PaperBot:
             "league": {"on": bool(a.get("league")), "days": LEAGUE_DAYS, "min": LEAGUE_MIN,
                        "table": {tf: self.league_table().get(tf, {}) for tf in self.chosen_timeframes()},
                        "stats": self.tagged_stats("league")},
+            "rider": {"on": self.rider(), "timeframe": RIDER_TF, "maxPositions": RIDER_MAX_POSITIONS,
+                      "enter": RIDER_IN, "exit": RIDER_OUT, "stopAtr": RIDER_STOP_ATR, "last": self.rider_state,
+                      "stats": self.tagged_stats("rider")},
+            "proven": {"on": self.proven(), "sets": {tf: list(k) for tf, k in PROVEN_BY_TF.items()},
+                       "tuning": PROVEN_TUNING, "riskBudget": PROVEN_RISK_BUDGET * 100,
+                       "stats": self.tagged_stats("proven")},
             "coinPause": {"hours": self.coin_pause_hours(),
                           "paused": {k.split("/")[0]: v for k, v in self.coins_paused().items()}},
             "focus": {"on": bool(a.get("focus")), "since": (a.get("focus") or {}).get("since"),
@@ -821,7 +893,7 @@ class PaperBot:
             "profile": self.profile.name,
             "flow": self.flow_summary(),
             "scanSeconds": self.scan_seconds,
-            "rules": {"risk": RISK * 100,
+            "rules": {"risk": self.risk_per_trade() * 100,
                       "maxOpen": self.max_open(), "timeBeCandles": TIME_BE_CANDLES, "staleTolerance": STALE_PART * 100,
                       "maxSameSide": None if self.profile.max_same_side >= UNLIMITED else self.profile.max_same_side,
                       "brainThreshold": a.get("brainThreshold"),
@@ -851,6 +923,8 @@ class PaperBot:
     def start(self) -> None:
         if self.account["status"] != "halted":
             self.account["status"] = "running"
+            if self.rider():   # Trend Rider trades at once, not only after the next 4h candle
+                self.account["lastScan"].pop(RIDER_TF, None)
             self._event("start")
             self.save()
 
@@ -868,7 +942,7 @@ class PaperBot:
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
                                               "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
                                               "reviewEnabled", "reviewAfter", "reviewEvery", "focus",
-                                              "coinPauseHours", "league")
+                                              "coinPauseHours", "league", "proven", "rider")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -1065,10 +1139,14 @@ class PaperBot:
         try:
             for tf in SCAN_ORDER:
                 mode = MODE_OF[tf]
-                settings = bot_settings(tf)
+                settings = self.active_settings(tf)
                 for symbol, base in coins:
                     now = self.now()
-                    chart_tf = f"{tf}#{STRATEGY_SET}"   # new strategies: every chart is rebuilt once
+                    if not settings:        # proven set: nothing is traded on this timeframe
+                        progress["done"] += 1
+                        continue
+                    # new strategies (or another set): every chart is rebuilt once
+                    chart_tf = f"{tf}#{STRATEGY_SET}{'p' if self.proven() else ''}"
                     if pretrain.due(memory.pretrain_time(symbol, chart_tf), now):
                         try:
                             rows = closed_only(await self.history(symbol, tf), tf, now)
@@ -1188,6 +1266,8 @@ class PaperBot:
 
     async def learn_only(self) -> None:
         """Bot switched off: keep scanning so the memory keeps learning, open nothing."""
+        if self.rider():
+            return   # Trend Rider has nothing to learn from signals; its round runs when the bot is on
         async with self.lock:
             account = self.account
             due = self._due_timeframes(self.now())
@@ -1206,8 +1286,10 @@ class PaperBot:
     def _due_timeframes(self, now: float) -> list[str]:
         due = []
         for tf in [t for t in SCAN_ORDER if t in self.profile.timeframes]:
-            if not BOT_STRATEGIES_BY_TF.get(tf, True):
-                continue   # no strategy of the bot's list on this timeframe: nothing to scan
+            if self.rider() and tf != RIDER_TF:
+                continue   # Trend Rider reads the 4h chart only
+            if not BOT_STRATEGIES_BY_TF.get(tf, True) or (self.proven() and not PROVEN_BY_TF.get(tf)):
+                continue   # no strategy of the bot's list (or of the proven set) on this timeframe: nothing to scan
             period = int((now - SCAN_DELAY) // config.TIMEFRAME_SECONDS[tf])
             if self.account["lastScan"].get(tf, {}).get("period") != period:
                 self.account["lastScan"][tf] = {"period": period, "time": now}
@@ -1300,7 +1382,7 @@ class PaperBot:
 
     async def _watch_one(self, p: dict, now: float) -> None:
         a = self.account
-        if a.get("lockEnabled"):   # the owner's profit lock, for open positions too (or this position's own)
+        if a.get("lockEnabled") and not p.get("rider"):   # the owner's profit lock (not for Trend Rider trades)
             p["lock"] = dict(p["lockOwn"]) if p.get("lockOwn") else \
                 {"trigger": a.get("lockTrigger", LOCK_TRIGGER * 100) / 100, "at": a.get("lockAt", LOCK_AT * 100) / 100}
         else:
@@ -1349,8 +1431,8 @@ class PaperBot:
 
     def _review_due(self, p: dict, now: float) -> bool:
         a = self.account
-        if not a.get("reviewEnabled", True):
-            return False
+        if not a.get("reviewEnabled", True) or p.get("rider"):
+            return False   # Trend Rider trades end by their own rule (the trend score)
         tf = p["timeframe"]
         after = (a.get("reviewAfter") or REVIEW_AFTER_CANDLES) * config.TIMEFRAME_SECONDS[tf]
         every = ({**REVIEW_EVERY, **(a.get("reviewEvery") or {})}.get(tf) or 15) * 60
@@ -1824,10 +1906,14 @@ class PaperBot:
         task.add_done_callback(self._tg_tasks.discard)
 
     async def _scan_and_open(self, tf: str, now: float, trade: bool = True) -> None:
+        if self.rider():
+            if tf == RIDER_TF:
+                await self._rider_round(now, self.account["status"] == "running")
+            return
         mode = MODE_OF[tf]
-        settings = bot_settings(tf)
+        settings = self.active_settings(tf)
         benched = {k for k, until in self.account["benched"].items() if until > now}
-        allowed = set(self.account["strategies"]) - benched
+        allowed = (set(settings) if self.proven() else set(self.account["strategies"])) - benched
         memory = self.memory
         gate = asyncio.Semaphore(8)
         candidates: list[dict] = []
@@ -1915,11 +2001,14 @@ class PaperBot:
                 self._skip(c, tf, "coinPause")
         fresh = [c for c in candidates if c["symbol"] not in open_coins and c["symbol"] not in paused]
         checked = []
-        for c in sorted(fresh, key=lambda c: c["stats"]["trades"], reverse=True)[:max(room * 3, 6)]:
+        by_priority = (lambda c: self.priority(c, tf)) if self.proven() else None
+        first = sorted(fresh, key=by_priority) if by_priority else \
+            sorted(fresh, key=lambda c: c["stats"]["trades"], reverse=True)
+        for c in first[:max(room * 3, 6)]:
             if await self._direction_ok(c, tf, now):
                 checked.append(c)
         chosen = pick(checked, open_coins, min(room, free_slots(positions, tf, self.profile.slots)),
-                      side_room(positions, self.profile.max_same_side))
+                      side_room(positions, self.profile.max_same_side), by_priority)
         for c in chosen:
             if self._ai_on(tf):
                 await self._ai_review(c, tf, now, settings[c["strategy"]])
@@ -2072,9 +2161,12 @@ class PaperBot:
         c["trend"] = trend
         if trend is None:
             return True   # not enough candles to tell: as before
-        if trend == "range":
+        soft = self.proven()   # proven set: a range is where breakouts start; only "against" is refused
+        if trend == "range" and not soft:
             self._skip(c, tf, "range")
             return False
+        if trend == "range":
+            return True
         if trend != want:
             self._skip(c, tf, "against")
             return False
@@ -2083,10 +2175,10 @@ class PaperBot:
         if link is not None and link >= BTC_FOLLOWER and c["symbol"] != BTC_SYMBOL:
             btc = await self._trend(BTC_SYMBOL, tf, now)
             c["btcTrend"] = btc
-            if btc == "range":
+            if btc == "range" and not soft:
                 self._skip(c, tf, "btcFlat")
                 return False
-            if btc is not None and btc != want:
+            if btc is not None and btc != want and btc != "range":
                 self._skip(c, tf, "btcAgainst")
                 return False
         return True
@@ -2142,7 +2234,7 @@ class PaperBot:
         if self.account.get("limitEntry"):
             return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip, price_step(recent))
         size = position_size(s["side"], entry, stop, equity, equity - self.used_margin(), self.fees,
-                             self.slots())
+                             self.slots(), self.risk_per_trade())
         if size is None or size.notional <= 0:
             return skip("full")   # no free money left for another position
         self._new_position(c, tf, now, params, entry, recent[-1]["time"], size, self.fees.taker, "market")
@@ -2173,6 +2265,7 @@ class PaperBot:
             "trend": c.get("trend"), "btcLink": c.get("btcLink"), "btcTrend": c.get("btcTrend"),
             "focus": bool(a.get("focus")),
             "league": bool(a.get("league")),
+            "proven": bool(a.get("proven")),
             # Why the bot entered (the owner's "explanation" button, 2026-11-07).
             "why": {"signalPrice": s.get("entry"), "signalTime": s["time"], "marketState": c.get("marketState"),
                     "higherTf": HIGHER_TF.get(tf), "feeShare": 2 * self.fees.taker / 100 * entry / abs(entry - stop)
@@ -2202,11 +2295,11 @@ class PaperBot:
 
     def max_open(self) -> int:
         """Owner's setting (2026-11-10): how many trades may be open at once (waiting limit orders count)."""
-        return int(self.account.get("maxOpen") or MAX_POSITIONS)
+        return int(self.account.get("maxOpen") or (PROVEN_MAX_POSITIONS if self.proven() else MAX_POSITIONS))
 
     def slots(self) -> int:
         """Margin of one position at most equity / this (follows the owner's maximum, as with 6)."""
-        return self.max_open() if self.account.get("maxOpen") else self.profile.size_slots
+        return self.max_open() if self.account.get("maxOpen") or self.proven() else self.profile.size_slots
 
     def set_max_open(self, n: int) -> None:
         self.account["maxOpen"] = max(1, min(20, int(n)))
@@ -2257,6 +2350,144 @@ class PaperBot:
         paused = {k: v for k, v in (self.account.get("coinPaused") or {}).items() if v > now}
         self.account["coinPaused"] = paused
         return paused
+
+    # ---- Trend Rider (the bot's own engine, see RIDER_* at the top)
+
+    def rider(self) -> bool:
+        return bool(self.account.get("rider"))
+
+    def set_rider(self, on: bool) -> None:
+        if self.rider() != bool(on):
+            self.account["rider"] = bool(on)
+            self._cancel_orders("limit_cancelled", "rider")
+            self._event("rider", on=bool(on))
+            self.save()
+
+    async def _rider_round(self, now: float, trade: bool) -> None:
+        """One round after a 4h candle closed: read every coin, close the trades whose trend is over, open
+        new ones where the trend score is strong. Positions of the other strategies are left alone."""
+        self.scanning = RIDER_TF
+        views: dict[str, tuple[str, dict]] = {}
+        gate = asyncio.Semaphore(8)
+
+        async def one(symbol: str, base: str) -> None:
+            async with gate:
+                try:
+                    rows = closed_only(await self.history(symbol, RIDER_TF), RIDER_TF, now)
+                    view = await asyncio.to_thread(rider_view, rows)
+                except Exception:
+                    return
+                if view is not None:
+                    views[symbol] = (base, view)
+
+        try:
+            coins = list(await self.coins())
+            listed = {s for s, _ in coins}
+            held = [(p["symbol"], p["base"]) for p in self.account["positions"]
+                    if p.get("rider") and p["symbol"] not in listed]      # a coin that left the list is still read
+            await asyncio.gather(*(one(s, b) for s, b in coins + held))
+        finally:
+            self.scanning = None
+        closed = 0
+        for p in list(self.account["positions"]):
+            view = views.get(p["symbol"], (None, None))[1]
+            if not p.get("rider") or view is None:
+                continue
+            direction = 1 if p["side"] == LONG else -1
+            p["riderScore"] = view["score"]
+            if view["score"] * direction <= RIDER_OUT + 1e-9:
+                try:
+                    recent = await self.recent(p["symbol"], RIDER_TF)
+                    price = recent[-1]["close"] if recent else view["close"]
+                except Exception:
+                    price = self.prices.get(p["id"], view["close"])
+                self._close(p, price, "trend", now)
+                closed += 1
+        strong = sorted(((abs(v["score"]), s, b, v) for s, (b, v) in views.items() if abs(v["score"]) >= RIDER_IN - 1e-9),
+                        key=lambda x: -x[0])
+        opened = 0
+        if trade:
+            order = {s: i for i, (s, _) in enumerate(coins)}    # equal scores: the coin with more volume first
+            for _, symbol, base, view in sorted(strong, key=lambda x: (-x[0], order.get(x[1], 1e9))):
+                if len(self.account["positions"]) >= RIDER_MAX_POSITIONS:
+                    break
+                if any(p["symbol"] == symbol for p in self.account["positions"]):
+                    continue
+                if await self._rider_open(symbol, base, view, now):
+                    opened += 1
+        self.rider_state = {"time": now, "coins": len(views), "opened": opened, "closed": closed,
+                            "long": sum(1 for x in strong if x[3]["score"] > 0),
+                            "short": sum(1 for x in strong if x[3]["score"] < 0)}
+        self._event("riderRound", coins=len(views), opened=opened, closed=closed)
+
+    async def _rider_open(self, symbol: str, base: str, view: dict, now: float) -> bool:
+        side = LONG if view["score"] > 0 else "short"
+        direction = 1 if side == LONG else -1
+        try:
+            recent = await self.recent(symbol, RIDER_TF)
+        except Exception:
+            return False
+        if not recent or view["flat"]:
+            return False
+        entry = recent[-1]["close"]
+        distance = RIDER_STOP_ATR * view["atr"]
+        if entry <= 0 or not RIDER_MIN_STOP <= distance / entry <= RIDER_MAX_STOP:
+            return False
+        stop = entry - direction * distance
+        # No real target: the trade ends when the trend score falls back. The screen needs a price, far away.
+        target = entry + RIDER_TARGET_R * distance if side == LONG else entry * 0.02
+        equity = self.equity()
+        size = position_size(side, entry, stop, equity, equity - self.used_margin(), self.fees, RIDER_MAX_POSITIONS)
+        if size is None or size.notional <= 0:
+            return False
+        c = {"symbol": symbol, "base": base, "strategy": RIDER, "marketState": None,
+             "stats": {"trades": 0, "winRate": None, "profitFactor": None},
+             "signal": {"side": side, "time": view["time"], "entry": view["close"], "stopLoss": stop, "takeProfit": target}}
+        p = self._new_position(c, RIDER_TF, now, {}, entry, recent[-1]["time"], size, self.fees.taker, "market")
+        p["rider"] = True
+        p["riderScore"] = view["score"]
+        return True
+
+    def proven(self) -> bool:
+        return bool(self.account.get("proven"))
+
+    def set_proven(self, on: bool) -> None:
+        """The proven-set switch: on = only the tested strategies on 1h / 4h (PROVEN_BY_TF). Turning it on
+        ticks those timeframes (the others stay as they are but have nothing to trade) and ends focus mode."""
+        a = self.account
+        if bool(a.get("proven")) == bool(on):
+            return
+        if on:
+            if a.get("focus"):
+                self.set_focus(False)
+            chosen = a.get("chosenTimeframes")
+            if chosen:
+                a["chosenTimeframes"] = [tf for tf in self.profile.timeframes if tf in chosen or tf in PROVEN_BY_TF]
+        a["proven"] = bool(on)
+        self._event("proven", on=bool(on))
+        self.save()
+
+    def active_settings(self, tf: str) -> dict[str, dict]:
+        """Settings of the strategies scanned on this timeframe: the bot's list, or only the proven set."""
+        settings = bot_settings(tf)
+        if self.proven():
+            keep = PROVEN_BY_TF.get(tf, ())
+            tuned = PROVEN_TUNING.get(tf, {})
+            settings = {k: parse_params(k, {**{n: v for n, v in settings[k].items()}, **tuned.get(k, {})}, MODE_OF[tf])
+                        for k in keep if k in settings}
+        return settings
+
+    def priority(self, c: dict, tf: str) -> tuple:
+        """Proven set: the strategy's place in the timeframe's list first (lower = better), then the coins as
+        they come (by volume)."""
+        kinds = PROVEN_BY_TF.get(tf, ())
+        return (kinds.index(c["strategy"]) if c["strategy"] in kinds else len(kinds),)
+
+    def risk_per_trade(self) -> float:
+        """Share of the money lost at the stop. Proven set: the risk budget spread over the open places."""
+        if self.proven():
+            return min(RISK, PROVEN_RISK_BUDGET / self.max_open())
+        return RISK
 
     def set_league(self, on: bool) -> None:
         if bool(self.account.get("league")) != bool(on):
@@ -2342,7 +2573,7 @@ class PaperBot:
         if (stop < rounded < price_now) if long_ else (price_now < rounded < stop):
             price = rounded
         size = position_size(s["side"], price, stop, equity, equity - self.used_margin(), self.fees,
-                             self.slots())
+                             self.slots(), self.risk_per_trade())
         if size is None or size.notional <= 0:
             return skip("full")
         a = self.account
@@ -2461,7 +2692,7 @@ class PaperBot:
             return refuse("reward")
         equity = self.equity()
         size = position_size(o["side"], price, stop, equity, equity - self.used_margin(), self.fees,
-                             self.slots())
+                             self.slots(), self.risk_per_trade())
         if size is None or size.notional <= 0:
             return refuse("full")
         self.account["limitStats"]["filled"] += 1

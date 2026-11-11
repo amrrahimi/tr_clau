@@ -1,6 +1,7 @@
 import asyncio
 import json
 import tempfile
+import math
 import unittest
 from pathlib import Path
 
@@ -2047,3 +2048,182 @@ class LeagueSwitchTest(unittest.TestCase):
         self.assertTrue(bot.account["league"])                        # the switch survives a reset
         bot.set_league(False)
         self.assertTrue(bot.league_allows("donchian", "5m"))
+
+
+class ProvenSetTest(unittest.IsolatedAsyncioTestCase):
+    """The proven-set switch (2026-11-11): only the tested strategies on 1h / 4h are scanned and traded."""
+    def bot(self):
+        async def empty(*a):
+            return []
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.clock = [1_000_000.0]
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), empty, empty, empty, now=lambda: self.clock[0], fees=FEES)
+        bot.reset(100)
+        return bot
+
+    def test_sets_are_real_strategies_of_real_timeframes(self):
+        for tf, kinds in pp.PROVEN_BY_TF.items():
+            self.assertIn(tf, pp.TIMEFRAMES)
+            self.assertTrue(kinds and all(k in pp.STRATEGIES for k in kinds), tf)
+
+    def test_switch_limits_what_is_scanned(self):
+        bot = self.bot()
+        self.assertEqual(set(bot.active_settings("5m")), set(pp.STRATEGIES))      # off: everything, as before
+        bot.set_timeframes(["5m", "15m"])
+        bot.set_focus(True)
+        bot.set_proven(True)
+        self.assertFalse(bot.account.get("focus"))                                # focus mode ends
+        self.assertEqual(bot.chosen_timeframes(), ["5m", "15m", "1h", "4h"])      # its timeframes get ticked
+        self.assertEqual(set(bot.active_settings("1h")), set(pp.PROVEN_1H))
+        self.assertEqual(set(bot.active_settings("4h")), set(pp.PROVEN_4H))
+        self.assertEqual(bot.active_settings("5m"), {})
+        self.assertEqual(bot._due_timeframes(self.clock[0]), ["4h", "1h"])        # nothing else is scanned
+        shown = bot.public()["proven"]
+        self.assertTrue(shown["on"])
+        self.assertEqual(shown["sets"]["1h"], list(pp.PROVEN_1H))
+        bot.reset(100)
+        self.assertTrue(bot.account["proven"])                                    # the switch survives a reset
+        bot.set_proven(False)
+        self.assertEqual(set(bot.active_settings("5m")), set(pp.STRATEGIES))
+
+    def test_tuning_priority_and_smaller_trades(self):
+        bot = self.bot()
+        self.assertEqual((bot.max_open(), bot.risk_per_trade()), (6, pp.RISK))    # off: as before
+        bot.set_proven(True)
+        one_hour = bot.active_settings("1h")
+        self.assertEqual(one_hour["bb_breakout"]["mult"], 3.0)                    # tuned for this timeframe
+        self.assertEqual(one_hour["volume_breakout"]["reward"], 3.0)
+        self.assertEqual(one_hour["turtle"], pp.bot_settings("1h")["turtle"])     # the others: unchanged
+        self.assertEqual(bot.active_settings("4h")["wide_bar"]["size"], 3.5)
+        for tf, tuned in pp.PROVEN_TUNING.items():                                # every tuned setting is a real one
+            for kind, over in tuned.items():
+                self.assertIn(kind, pp.PROVEN_BY_TF[tf])
+                pp.parse_params(kind, over, pp.MODE_OF[tf])
+        # priority: the strategy's place in the timeframe's list decides, not the coin's profit factor
+        weak = {"symbol": "A", "strategy": "structure_break", "signal": {"side": "long"},
+                "stats": {"profitFactor": 9.0, "trades": 50}}
+        strong = {"symbol": "B", "strategy": "bb_breakout", "signal": {"side": "long"},
+                  "stats": {"profitFactor": 1.1, "trades": 12}}
+        both = {"symbol": "A", "strategy": "volume_breakout", "signal": {"side": "short"},
+                "stats": {"profitFactor": 1.0, "trades": 10}}
+        order = lambda c: bot.priority(c, "1h")
+        self.assertEqual([c["symbol"] for c in pp.pick([weak, strong], set(), 1, order=order)], ["B"])
+        self.assertEqual([c["strategy"] for c in pp.pick([weak, both], set(), 2, order=order)], ["volume_breakout"])
+        self.assertEqual([c["symbol"] for c in pp.pick([weak, strong], set(), 1)], ["A"])       # without it: as before
+        # more, smaller trades: the same 6% in total
+        self.assertEqual(bot.max_open(), pp.PROVEN_MAX_POSITIONS)
+        self.assertAlmostEqual(bot.risk_per_trade(), 0.005)
+        bot.set_max_open(20)
+        self.assertAlmostEqual(bot.risk_per_trade(), 0.003)
+        bot.set_max_open(3)
+        self.assertEqual(bot.risk_per_trade(), pp.RISK)                           # never more than 1% a trade
+        size = pp.position_size("long", 100, 95, 1000, 1000, FEES, 12, 0.005)
+        self.assertAlmostEqual(size.risk, 5.0, places=6)
+
+    async def test_direction_filter_only_refuses_against(self):
+        bot = self.bot()
+        trends = {"X": "range", "BTC": "range"}
+
+        async def trend(symbol, tf, now):
+            return trends["BTC" if symbol == pp.BTC_SYMBOL else "X"]
+
+        async def link(symbol, now):
+            return 0.9
+        bot._trend, bot._btc_link = trend, link
+        c = {"symbol": "X/USDT:USDT", "base": "X", "signal": {"side": "long"}}
+        self.assertFalse(await bot._direction_ok(dict(c), "1h", 0))               # off: a range is refused
+        bot.set_proven(True)
+        self.assertTrue(await bot._direction_ok(dict(c), "1h", 0))                # on: a range is fine
+        trends["X"] = "up"
+        self.assertTrue(await bot._direction_ok(dict(c), "1h", 0))                # Bitcoin flat: fine too
+        trends["BTC"] = "down"
+        self.assertFalse(await bot._direction_ok(dict(c), "1h", 0))               # Bitcoin against: refused
+        trends.update(X="down", BTC="up")
+        self.assertFalse(await bot._direction_ok(dict(c), "1h", 0))               # against the coin's trend
+
+
+class TrendRiderTest(unittest.IsolatedAsyncioTestCase):
+    """Trend Rider (2026-11-11): the bot's own 4h engine. Long while the trend score is strong, out when it
+    falls back to zero or at the stop; no target."""
+    H4 = 14400
+
+    def chart(self, drift, n=600, start=100.0):
+        rows, price = [], start
+        for i in range(n):
+            o, price = price, price * (1 + drift + (0.004 if i % 2 else -0.004))
+            rows.append({"time": i * self.H4, "open": o, "high": max(o, price) * 1.003, "low": min(o, price) * 0.997,
+                         "close": price, "volume": 10.0})
+        return rows
+
+    def bot(self, charts):
+        self.charts = charts
+        self.clock = [600 * self.H4 + 5.0]
+
+        async def coins():
+            return [(f"{b}/USDT:USDT", b) for b in self.charts]
+
+        async def history(symbol, tf):
+            return self.charts[symbol.split("/")[0]]
+
+        async def recent(symbol, tf):
+            return self.charts[symbol.split("/")[0]][-60:]
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), coins, history, recent, now=lambda: self.clock[0], fees=FEES)
+        bot.reset(1000)
+        bot.set_rider(True)
+        bot.start()
+        return bot
+
+    def test_score_reads_the_trend(self):
+        from app.strategies import trend_score
+        up = trend_score([c["close"] for c in self.chart(0.004)], pp.RIDER_BASE)
+        down = trend_score([c["close"] for c in self.chart(-0.004)], pp.RIDER_BASE)
+        self.assertIsNone(up[pp.RIDER_BASE * 16 - 2])               # the longest window is not full yet
+        self.assertEqual((up[-1], down[-1]), (1.0, -1.0))
+        self.assertIsNone(pp.rider_view(self.chart(0.004, n=200)))   # too little history: not traded
+
+    async def test_round_opens_with_the_trend_and_leaves_when_it_ends(self):
+        flat = [dict(c, close=100 + 3 * math.sin(i / 9), open=100 + 3 * math.sin((i - 1) / 9),
+                     high=104, low=96) for i, c in enumerate(self.chart(0.0))]   # a range: no trend, no trade
+        flat[-1] = dict(flat[-1], close=100.0)
+        bot = self.bot({"UP": self.chart(0.004), "DOWN": self.chart(-0.004), "FLAT": flat})
+        self.assertEqual(bot._due_timeframes(self.clock[0]), ["4h"])            # only the 4h chart is read
+        await bot._scan_and_open("4h", self.clock[0])
+        got = {p["base"]: p for p in bot.account["positions"]}
+        self.assertEqual({k: v["side"] for k, v in got.items()}, {"UP": "long", "DOWN": "short"})
+        up = got["UP"]
+        self.assertTrue(up["rider"] and up["strategy"] == pp.RIDER and up["breakevenPart"] == 0)
+        atr_stop = (up["entryPrice"] - up["stop"]) / up["entryPrice"]
+        self.assertTrue(pp.RIDER_MIN_STOP <= atr_stop <= pp.RIDER_MAX_STOP)
+        self.assertAlmostEqual(up["risk"], 10.0, delta=0.6)                     # 1% of 1000 at the stop
+        self.assertGreater(up["takeProfit"], up["entryPrice"] * 1.5)            # no real target
+        self.assertFalse(bot._review_due(up, self.clock[0] + 99 * self.H4))     # not closed by the timed look
+        # the same round again: nothing new (one trade per coin)
+        await bot._scan_and_open("4h", self.clock[0])
+        self.assertEqual(len(bot.account["positions"]), 2)
+        # one of the five windows turns (a close under the 5-day low): score 0.6, the trade stays
+        last = self.charts["UP"][-1]
+        dip = dict(last, time=last["time"] + self.H4, open=last["close"], high=last["close"],
+                   low=last["close"] * 0.875, close=last["close"] * 0.875)
+        self.charts["UP"] = self.charts["UP"] + [dip]
+        self.clock[0] += self.H4
+        self.assertAlmostEqual(pp.rider_view(self.charts["UP"])["score"], 0.6)
+        await bot._scan_and_open("4h", self.clock[0])
+        self.assertIn("UP", {p["base"] for p in bot.account["positions"]})
+        # the trend is over (the chart now reads as a downtrend): closed with the reason "trend", then shorted
+        self.charts["UP"] = self.chart(-0.004, n=601)
+        await bot._scan_and_open("4h", self.clock[0])
+        closed = [t for t in bot.account["closed"] if t["base"] == "UP"]
+        self.assertEqual([t["exitReason"] for t in closed], ["trend"])
+        self.assertEqual({p["base"]: p["side"] for p in bot.account["positions"]}["UP"], "short")
+        self.assertEqual(bot.rider_state["closed"], 1)
+        self.assertEqual(bot.public()["rider"]["on"], True)
+
+    async def test_switch_off_brings_the_signal_scan_back(self):
+        bot = self.bot({"UP": self.chart(0.004)})
+        bot.set_rider(False)
+        self.assertGreater(len(bot._due_timeframes(self.clock[0])), 1)
+        bot.reset(1000)
+        self.assertFalse(bot.account["rider"])                                  # the choice survives a reset

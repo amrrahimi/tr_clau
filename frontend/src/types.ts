@@ -254,7 +254,8 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice" | "reviewAsk" | "reviewAnswer" | "timeBeAsk"
-    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult" | "focus" | "coinPause" | "league";
+    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult" | "focus" | "coinPause" | "league" | "proven" | "rider" | "riderRound";
+  coins?: number; opened?: number; closed?: number;   // riderRound: coins read, trades opened / closed
   on?: boolean;     // focus: switched on / off
   hours?: number;   // coinPause: how long (the coin waits until `until`)
   start?: number; // blind: from when the bot did not see the prices (seconds)
@@ -407,6 +408,13 @@ export interface PaperState {
   /** Owner 2026-11-11: the strategy league (last `days` days of live signals per strategy x timeframe). */
   league?: { on: boolean; days: number; min: number;
     table: Record<string, Record<string, { count: number; avgR: number; on: boolean }>>;
+    stats: Record<"on" | "other", { trades: number; wins: number; losses: number; pnl: number }> };
+  /** 2026-11-11: Trend Rider, the bot's own 4h trend engine (used instead of the signal scan while on). */
+  rider?: { on: boolean; timeframe: string; maxPositions: number; enter: number; exit: number; stopAtr: number;
+    last: { time?: number; coins?: number; opened?: number; closed?: number; long?: number; short?: number };
+    stats: Record<"on" | "other", { trades: number; wins: number; losses: number; pnl: number }> };
+  /** 2026-11-11: the proven set (only the tested strategies on 1h / 4h; sets: timeframe -> strategies). */
+  proven?: { on: boolean; sets: Record<string, string[]>;
     stats: Record<"on" | "other", { trades: number; wins: number; losses: number; pnl: number }> };
   /** Owner 2026-11-11: hours a coin waits after a stop-loss (0 = off); coins waiting now (base -> until, seconds). */
   coinPause?: { hours: number; paused: Record<string, number> };

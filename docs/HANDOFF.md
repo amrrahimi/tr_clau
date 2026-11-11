@@ -424,6 +424,40 @@ avg R per trade (half 1 / half 2); bot's 18 strategies same candles: vol 5m +0.0
 - RTM FTR/FL negative almost everywhere; CAPS too few trades. YTC BOF mixed / negative on 1h.
 Decision point: add the consistent ones as strategies per timeframe; the league then judges them live.
 
+## Big test + proven set (2026-11-11, full write-up: docs/RESEARCH-2026-11-11.md)
+- Data: Binance futures 5m candles 2024-07..2026-10 for Toobit's top / volatile coins (Toobit keeps only 3500
+  candles per timeframe). Scripts: backend/scripts/research (numba simulator with the bot's rules).
+- 28 new strategies (46 in all) + 12 indicators. Result after fees: everything on 5m-30m negative; only the
+  breakout / momentum family is positive, on 1h-1d (+0.03..+0.13 R per trade, both halves, t 1-2.3). Exits and
+  filters do not change the average. Portfolio (1% risk, 6 open): old 18 on 15m-4h 1.00 -> 0.29; proven set
+  1h + 4h -> about 2.5 with falls of up to 39%.
+- BUILT: proven-set switch (paper.PROVEN_BY_TF, account["proven"], POST /api/paper/proven, on by default from
+  server.py when the key is missing; panel: timeframes section). On: only those strategies are scanned (1h, 4h),
+  the manual list is ignored, the direction filter refuses only "against" / "btcAgainst". Tests: ProvenSetTest,
+  EveryStrategyTest (sane signals, both sides, no look into the future), SecondSetIndicatorsTest.
+- Real account: links paper <-> real kept in real-links.json (lost on restart before).
+- Not built (no gain in the test): trailing exits, 2h / 1d timeframes for the bot (1d family +0.13 R, few trades:
+  a candidate), filters on ADX / volume / Bitcoin.
+- Toobit's top-volume list now holds many stock tokens (NVDA, SNDK, ...): they move together; four momentum
+  longs opened at once in the live check. A cap per group is a candidate.
+
+## Trend Rider (2026-11-11 evening; RESEARCH-2026-11-11.md part 2)
+- Owner asked for a free search, a strategy of the author's own and 2-3% a day. Maker-limit scalping on 5m (24
+  settings) and cross-sectional momentum / reversal fail; a trend portfolio on 4h holds (Sharpe about 1.2-1.3, both
+  halves, about +0.2% a day, falls to 45%, 26% wins, all profit from a few huge trades). 2-3% a day: not reachable.
+- BUILT, on by default: account["rider"], paper.RIDER_* constants, _rider_round after each 4h candle (and at
+  start): score >= 0.6 long / <= -0.6 short, stop 4 x ATR(84), no target, exit at score <= 0 (reason "trend"),
+  1% risk, 15 trades. Replaces the signal scan while on (proven set and manual list unused). Card trend_rider.
+- Watch on paper: it opens up to 15 trades at once at the first start (trends already running), often mostly one
+  direction. The 30% total stop can end a run that the test would have survived (falls of 40%+ happened).
+
+## Proven set tuned + priority order (2026-11-11 night; RESEARCH part 3)
+- Owner asked: tune per timeframe, give the bot an order of choice, then a download. BUILT: PROVEN_BY_TF lists
+  are in priority order (pick(order=), PaperBot.priority), PROVEN_TUNING (only settings better in both halves),
+  risk budget 6% / max open trades (default 12 places x 0.5% with the proven set). Account test: 1.35 (fall 58%)
+  -> 3.77 (fall 27%); second half 0.90 -> 1.33. Optimistic end (chosen with both halves in view).
+- Default now: proven set ON, Trend Rider OFF (switch in the panel).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
