@@ -2005,3 +2005,45 @@ class CoinPauseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.coins_paused(), {})
         bot.reset(100)
         self.assertEqual(bot.coin_pause_hours(), 0)          # the owner's number survives a reset
+
+
+class LeagueSwitchTest(unittest.TestCase):
+    def test_league_keeps_strategies_with_enough_good_signals(self):
+        async def empty(*a):
+            return []
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        clock = [1_000_000]
+        bot = pp.PaperBot(pp.Store(Path(d.name) / "p.json"), empty, empty, empty, now=lambda: clock[0], fees=FEES)
+        bot.reset(100)
+        asked = []
+
+        class FakeMemory:
+            def league(self, since):
+                asked.append(since)
+                return {("volume_breakout", "5m"): (60, 12.0), ("donchian", "5m"): (80, -4.0),
+                        ("inside_bar", "5m"): (10, 5.0)}
+        bot.memory = FakeMemory()
+        self.assertTrue(bot.league_allows("donchian", "5m"))          # off: everything as before
+        bot.set_league(True)
+        self.assertTrue(bot.league_allows("volume_breakout", "5m"))
+        self.assertFalse(bot.league_allows("donchian", "5m"))         # lost lately
+        self.assertFalse(bot.league_allows("inside_bar", "5m"))       # too few signals to judge
+        self.assertFalse(bot.league_allows("ema_cross", "5m"))        # no signals at all
+        self.assertEqual(asked[-1], 1_000_000 - pp.LEAGUE_DAYS * 86400)
+        n = len(asked)
+        clock[0] += 3600
+        bot.league_allows("donchian", "5m")
+        self.assertEqual(len(asked), n)                               # reused within 6 hours
+        clock[0] += pp.LEAGUE_REFRESH
+        bot.league_allows("donchian", "5m")
+        self.assertEqual(len(asked), n + 1)
+        bot.set_timeframes(["5m"])
+        bot.memory = None                                             # the cached table is shown
+        shown = bot.public()["league"]
+        self.assertTrue(shown["on"])
+        self.assertTrue(shown["table"]["5m"]["volume_breakout"]["on"])
+        bot.reset(100)
+        self.assertTrue(bot.account["league"])                        # the switch survives a reset
+        bot.set_league(False)
+        self.assertTrue(bot.league_allows("donchian", "5m"))

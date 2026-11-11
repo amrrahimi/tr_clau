@@ -41,6 +41,7 @@ export type PaperAction =
   | { kind: "max-open"; value: number }
   | { kind: "focus"; on: boolean }
   | { kind: "coin-pause"; hours: number }
+  | { kind: "league"; on: boolean }
   | { kind: "close-all" }
   | { kind: "cap"; usd: number }
   | { kind: "pause"; losses: number; fall: number }

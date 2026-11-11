@@ -128,3 +128,19 @@ class StrategyPerformanceTest(unittest.TestCase):
         self.assertAlmostEqual(d["brain"]["avgR"], 0.5)
         self.assertEqual((d["bot"]["count"], d["bot"]["winRate"], d["bot"]["netPnl"]), (2, 50.0, 1.0))
         self.assertNotIn("squeeze", perf)
+
+
+class LeagueTest(unittest.TestCase):
+    def test_league_counts_live_signals_that_ended_lately(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        m = Memory(Path(d.name) / "memory.db")
+        self.addCleanup(m.close)
+        rows = [("a", "ema_cross", "5m", "live", "win", 1.0, 100), ("b", "ema_cross", "5m", "live", "loss", -1.0, 200),
+                ("c", "ema_cross", "5m", "live", "win", 2.0, 300), ("d", "ema_cross", "5m", "history", "win", 5.0, 300),
+                ("e", "ema_cross", "15m", "live", "open", None, None), ("f", "donchian", "5m", "live", "win", 1.0, 10)]
+        for key, kind, tf, source, status, r, exit_time in rows:
+            m.db.execute("INSERT INTO signals (key, symbol, base, timeframe, strategy, side, signal_time, status,"
+                         " r, exit_time, source) VALUES (?, 'A/USDT:USDT', 'A', ?, ?, 'long', 0, ?, ?, ?, ?)",
+                         (key, tf, kind, status, r, exit_time, source))
+        self.assertEqual(m.league(50), {("ema_cross", "5m"): (3, 2.0)})

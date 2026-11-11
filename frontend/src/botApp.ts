@@ -1086,7 +1086,40 @@ export class BotApp {
         focusParts.push(row, el("div", "bot-hint", t(f.on ? "bot.focus.onHint" : "bot.focus.offHint")),
           el("div", "bot-hint", line("focus")), el("div", "bot-hint", line("other")));
       }
-      parts.push(heading("timeframes", t("bot.timeframes")), ...focusParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
+      // Owner 2026-11-11: the strategy league switch and its table for the ticked timeframes.
+      const leagueParts: HTMLElement[] = [];
+      if (s.league) {
+        const lg = s.league;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", lg.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (lg.on !== on) void this.act({ kind: "league", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.league"));
+        row.append(onOff);
+        leagueParts.push(row, el("div", "bot-hint", t("bot.leagueHint", { days: String(lg.days), min: String(lg.min) })));
+        for (const [tf, kinds] of Object.entries(lg.table)) {
+          const ranked = Object.entries(kinds).sort((a, b) => b[1].avgR - a[1].avgR);
+          const on = ranked.filter(([, v]) => v.on)
+            .map(([k, v]) => `${t(`strat.${k}` as MessageKey)} (${v.avgR >= 0 ? "+" : ""}${v.avgR.toFixed(2)}R، ${v.count})`);
+          leagueParts.push(el("div", "bot-hint", t("bot.league.tf", {
+            tf, on: on.length ? on.join("، ") : t("bot.league.none"), off: String(ranked.length - on.length),
+          })));
+        }
+        const line = (name: "on" | "other") => {
+          const x = lg.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "on" ? "bot.league.statOn" : "bot.league.statOther", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        leagueParts.push(el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
+      }
+      parts.push(heading("timeframes", t("bot.timeframes")), ...focusParts, ...leagueParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
         maxRow, el("div", "bot-hint", t("bot.maxOpenHint")), ...pauseParts);
     }
 

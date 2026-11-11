@@ -254,7 +254,7 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice" | "reviewAsk" | "reviewAnswer" | "timeBeAsk"
-    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult" | "focus" | "coinPause";
+    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult" | "focus" | "coinPause" | "league";
   on?: boolean;     // focus: switched on / off
   hours?: number;   // coinPause: how long (the coin waits until `until`)
   start?: number; // blind: from when the bot did not see the prices (seconds)
@@ -404,6 +404,10 @@ export interface PaperState {
   /** What happened to the signals in the last minutes (skipped: reason -> count). */
   flow?: { minutes: number; seen: number; opened: number; placed?: number; skipped: Record<string, number> };
   limitEntry?: boolean;                 // the owner's switch: enter with limit orders (paper only)
+  /** Owner 2026-11-11: the strategy league (last `days` days of live signals per strategy x timeframe). */
+  league?: { on: boolean; days: number; min: number;
+    table: Record<string, Record<string, { count: number; avgR: number; on: boolean }>>;
+    stats: Record<"on" | "other", { trades: number; wins: number; losses: number; pnl: number }> };
   /** Owner 2026-11-11: hours a coin waits after a stop-loss (0 = off); coins waiting now (base -> until, seconds). */
   coinPause?: { hours: number; paused: Record<string, number> };
   /** Owner's focus switch (5m + 15m on the volatile coins; off = the earlier settings back). */

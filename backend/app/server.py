@@ -275,6 +275,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
             b.set_max_open(value)
             return b.public()
 
+        @app.post(f"/api/{prefix}/league")
+        async def paper_league(on: bool = Body(..., embed=True)):
+            """The strategy league switch (last 3 days of live signals per strategy x timeframe)."""
+            b.set_league(on)
+            return b.public()
+
         @app.post(f"/api/{prefix}/coin-pause")
         async def paper_coin_pause(hours: float = Body(..., embed=True)):
             """Hours a coin waits after a stop-loss (0 = off)."""

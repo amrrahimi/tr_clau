@@ -59,6 +59,12 @@ FOCUS_KEYS = ("chosenTimeframes", "coinMode", "coins")
 # (one trade per coin like the bot, volatile coins 5m + 15m: -0.044R per trade without, +0.065R with 6 hours).
 COIN_PAUSE_HOURS = 6.0
 COIN_PAUSE_MAX = 168.0
+# Owner 2026-11-11 (memory.db test): the strategy league. Per strategy x timeframe, live signals of all coins that
+# ended in the last LEAGUE_DAYS; a strategy trades on that timeframe only with >= LEAGUE_MIN of them and an average
+# R above 0. Worked out again every LEAGUE_REFRESH seconds. A switch, off by default.
+LEAGUE_DAYS = 3
+LEAGUE_MIN = 50
+LEAGUE_REFRESH = 6 * 3600
 OLD_TIMEFRAMES = ["1m", "3m", "5m", "15m", "1h"]   # the bot's list before 30m and 4h were added
 SCAN_ORDER = list(reversed(TIMEFRAMES))  # biggest first
 STALE_PART = 0.10             # of the stop distance: further than this toward the target = too late
@@ -708,6 +714,7 @@ class PaperBot:
         self.scanning: Optional[str] = None   # timeframe being scanned
         self.lock = asyncio.Lock()
         self._performance: Optional[tuple[float, dict]] = None   # (time, per-strategy results) cache
+        self._league: Optional[tuple[float, dict]] = None        # (time, strategy league table) cache
         self.ai_ask = advisor.ask            # replaced in tests
         self.ai_consult = advisor.consult    # the owner's "stay or exit?" button (replaced in tests)
         self.btc_links: dict[str, tuple[float, Optional[float]]] = {}   # symbol -> (when, correlation with BTC)
@@ -773,6 +780,9 @@ class PaperBot:
             "btc": self.btc_state,
             "telegram": {**telegram.public(), "lastError": self.tg_error},
             "limitEntry": a.get("limitEntry", False),
+            "league": {"on": bool(a.get("league")), "days": LEAGUE_DAYS, "min": LEAGUE_MIN,
+                       "table": {tf: self.league_table().get(tf, {}) for tf in self.chosen_timeframes()},
+                       "stats": self.tagged_stats("league")},
             "coinPause": {"hours": self.coin_pause_hours(),
                           "paused": {k.split("/")[0]: v for k, v in self.coins_paused().items()}},
             "focus": {"on": bool(a.get("focus")), "since": (a.get("focus") or {}).get("since"),
@@ -858,7 +868,7 @@ class PaperBot:
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
                                               "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
                                               "reviewEnabled", "reviewAfter", "reviewEvery", "focus",
-                                              "coinPauseHours")
+                                              "coinPauseHours", "league")
                 if k in self.account}
         chosen = self.account.get("chosenTimeframes")
         self.account = new_account(capital, self.now())
@@ -1853,10 +1863,13 @@ class PaperBot:
                         self._count("unreliable")
                     elif row["strategy"] not in allowed:
                         self._count("benched" if row["strategy"] in benched else "notChosen")
+                    elif not self.league_allows(row["strategy"], tf):
+                        self._count("league")
                     elif not trade:
                         self._count("paused" if self._paused(now) else "full")
                 # On the slow charts only very sure ones (strict_ok); the "reliable" rule only if switched on.
-                if passed and row["strategy"] in allowed and strict_ok(entry, tf):
+                if passed and row["strategy"] in allowed and strict_ok(entry, tf) \
+                        and self.league_allows(row["strategy"], tf):
                     candidates.append(entry)
 
         async def one(symbol: str, base: str) -> None:
@@ -2159,6 +2172,7 @@ class PaperBot:
                         "profitFactor": c["stats"]["profitFactor"]},
             "trend": c.get("trend"), "btcLink": c.get("btcLink"), "btcTrend": c.get("btcTrend"),
             "focus": bool(a.get("focus")),
+            "league": bool(a.get("league")),
             # Why the bot entered (the owner's "explanation" button, 2026-11-07).
             "why": {"signalPrice": s.get("entry"), "signalTime": s["time"], "marketState": c.get("marketState"),
                     "higherTf": HIGHER_TF.get(tf), "feeShare": 2 * self.fees.taker / 100 * entry / abs(entry - stop)
@@ -2243,6 +2257,43 @@ class PaperBot:
         paused = {k: v for k, v in (self.account.get("coinPaused") or {}).items() if v > now}
         self.account["coinPaused"] = paused
         return paused
+
+    def set_league(self, on: bool) -> None:
+        if bool(self.account.get("league")) != bool(on):
+            self.account["league"] = bool(on)
+            self._league = None
+            self._event("league", on=bool(on))
+            self.save()
+
+    def league_table(self) -> dict[str, dict[str, dict]]:
+        """timeframe -> strategy -> {count, avgR, on} (reused for LEAGUE_REFRESH seconds)."""
+        now = self.now()
+        cached = getattr(self, "_league", None)
+        if cached is not None and now - cached[0] < LEAGUE_REFRESH:
+            return cached[1]
+        table: dict[str, dict[str, dict]] = {}
+        if self.memory is not None:
+            for (kind, tf), (n, total) in self.memory.league(now - LEAGUE_DAYS * 86400).items():
+                avg = total / n if n else 0.0
+                table.setdefault(tf, {})[kind] = {"count": n, "avgR": avg, "on": n >= LEAGUE_MIN and avg > 0}
+        self._league = (now, table)
+        return table
+
+    def league_allows(self, kind: str, tf: str) -> bool:
+        if not self.account.get("league"):
+            return True
+        return bool(self.league_table().get(tf, {}).get(kind, {}).get("on"))
+
+    def tagged_stats(self, key: str) -> dict:
+        """Closed trades opened with a switch on (key) against the others: count, wins, losses, net USDT."""
+        out = {}
+        for name, want in (("on", True), ("other", False)):
+            trades = [t for t in self.account["closed"] if bool(t.get(key)) == want]
+            out[name] = {"trades": len(trades),
+                         "wins": sum(1 for t in trades if trade_outcome(t) == "win"),
+                         "losses": sum(1 for t in trades if trade_outcome(t) == "loss"),
+                         "pnl": sum(t["pnl"] for t in trades)}
+        return out
 
     def focus_stats(self) -> dict:
         """Closed trades opened in focus mode against the others (count, wins, losses, net USDT)."""

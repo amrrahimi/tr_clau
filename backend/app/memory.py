@@ -306,6 +306,16 @@ class Memory:
         return out
 
     @_locked
+    def league(self, since_exit_time: float) -> dict[tuple[str, str], tuple[int, float]]:
+        """Owner's strategy league: live signals (all coins, traded or not) that ended after a time,
+        per (strategy, timeframe): count and sum of R."""
+        rows = self.db.execute(
+            "SELECT strategy, timeframe, COUNT(*), SUM(r) FROM signals WHERE source = 'live'"
+            " AND status IN ('win','loss','breakeven') AND r IS NOT NULL AND exit_time >= ?"
+            " GROUP BY strategy, timeframe", (since_exit_time,)).fetchall()
+        return {(k, tf): (n, total or 0.0) for k, tf, n, total in rows}
+
+    @_locked
     def strategy_results(self, since_exit_time: float) -> dict[str, float]:
         """Sum of results (percent) per strategy for signals that ended after a time."""
         rows = self.db.execute(

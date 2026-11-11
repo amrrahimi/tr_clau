@@ -124,6 +124,10 @@ export class MockBackend implements Backend {
     } else if (action.kind === "ai") {
       state.ai = { ...(state.ai ?? { model: "gemini-2.5-flash", keys: [], lastError: null, results: {} }),
         enabled: action.enabled, timeframes: action.timeframes };
+    } else if (action.kind === "league") {
+      const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+      state.league = { on: action.on, days: 3, min: 50, table: state.league?.table ?? {},
+        stats: state.league?.stats ?? { on: { ...empty }, other: { ...empty } } };
     } else if (action.kind === "coin-pause") {
       state.coinPause = { hours: Math.max(0, Math.min(168, action.hours)), paused: state.coinPause?.paused ?? {} };
     } else if (action.kind === "focus") {

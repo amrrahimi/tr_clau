@@ -405,6 +405,14 @@ evaluated on the next 6 hours' signals, walk-forward.
 - Exchange-candle study (study_more.py): picks helped 5m/15m/1h, failed on 4h.
 Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged results, default off.
 
+## Strategy league switch (owner approved 2026-11-11 "بساز")
+- account["league"] bool (default off, kept on reset). PaperBot.league_table(): Memory.league(now - 3 days) ->
+  per (strategy, tf) live signals of all coins that ended (count, sum R); on = count >= 50 and avg R > 0; cached
+  6 h. In _scan_and_open a strategy not "on" for that tf is not a candidate (counted "league"). Only filters the
+  owner's ticked strategies. Positions carry league=True; panel shows league vs other trades (tagged_stats).
+- POST /api/paper/league {on}; panel: switch + per ticked timeframe the strategies on (avg R, count) and how many
+  off; diary events. Tests: LeagueTest (memory), LeagueSwitchTest.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
