@@ -64,8 +64,10 @@ FOCUS_KEYS = ("chosenTimeframes", "coinMode", "coins")
 COIN_PAUSE_HOURS = 6.0
 COIN_PAUSE_MAX = 168.0
 # Owner 2026-11-11 (memory.db test): the strategy league. Per strategy x timeframe, live signals of all coins that
-# ended in the last LEAGUE_DAYS; a strategy trades on that timeframe only with >= LEAGUE_MIN of them and an average
-# R above 0. Worked out again every LEAGUE_REFRESH seconds. A switch, off by default.
+# ended in the last LEAGUE_DAYS. Changed the same day (owner agreed): a strategy is left out only when it has
+# >= LEAGUE_MIN of them AND an average R at or below 0 (a proven loser lately). Fewer signals (the slow timeframes,
+# new strategies) = not judged = it trades: the first rule (trade only with 50+ good signals) blocked every 1h
+# strategy (at most 13 signals in 3 days) and the bot opened nothing. Worked out every LEAGUE_REFRESH seconds.
 LEAGUE_DAYS = 3
 LEAGUE_MIN = 50
 LEAGUE_REFRESH = 6 * 3600
@@ -2506,14 +2508,15 @@ class PaperBot:
         if self.memory is not None:
             for (kind, tf), (n, total) in self.memory.league(now - LEAGUE_DAYS * 86400).items():
                 avg = total / n if n else 0.0
-                table.setdefault(tf, {})[kind] = {"count": n, "avgR": avg, "on": n >= LEAGUE_MIN and avg > 0}
+                table.setdefault(tf, {})[kind] = {"count": n, "avgR": avg,
+                                                   "on": not (n >= LEAGUE_MIN and avg <= 0)}
         self._league = (now, table)
         return table
 
     def league_allows(self, kind: str, tf: str) -> bool:
         if not self.account.get("league"):
             return True
-        return bool(self.league_table().get(tf, {}).get(kind, {}).get("on"))
+        return bool(self.league_table().get(tf, {}).get(kind, {}).get("on", True))
 
     def tagged_stats(self, key: str) -> dict:
         """Closed trades opened with a switch on (key) against the others: count, wins, losses, net USDT."""

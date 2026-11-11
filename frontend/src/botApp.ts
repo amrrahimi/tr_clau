@@ -1161,10 +1161,11 @@ export class BotApp {
         leagueParts.push(row, el("div", "bot-hint", t("bot.leagueHint", { days: String(lg.days), min: String(lg.min) })));
         for (const [tf, kinds] of Object.entries(lg.table)) {
           const ranked = Object.entries(kinds).sort((a, b) => b[1].avgR - a[1].avgR);
-          const on = ranked.filter(([, v]) => v.on)
+          // Only the left-out ones are listed (every other strategy trades).
+          const off = ranked.filter(([, v]) => !v.on)
             .map(([k, v]) => `${t(`strat.${k}` as MessageKey)} (${v.avgR >= 0 ? "+" : ""}${v.avgR.toFixed(2)}R، ${v.count})`);
           leagueParts.push(el("div", "bot-hint", t("bot.league.tf", {
-            tf, on: on.length ? on.join("، ") : t("bot.league.none"), off: String(ranked.length - on.length),
+            tf, off: off.length ? off.join("، ") : t("bot.league.none"),
           })));
         }
         const line = (name: "on" | "other") => {

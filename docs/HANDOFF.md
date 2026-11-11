@@ -405,7 +405,10 @@ evaluated on the next 6 hours' signals, walk-forward.
 - Exchange-candle study (study_more.py): picks helped 5m/15m/1h, failed on 4h.
 Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged results, default off.
 
-## Strategy league switch (owner approved 2026-11-11 "بساز")
+## Strategy league switch (owner approved 2026-11-11 "بساز"; rule changed the same day, see below)
+- CHANGED (owner agreed, 2026-11-11 evening): left out only with >= 50 signals AND avg R <= 0; fewer signals or
+  none = trades. The first rule blocked every 1h strategy (<= 13 signals in 3 days) with the proven set (1h/4h):
+  the live app opened nothing ("league" skips). Strategies missing from the table trade.
 - account["league"] bool (default off, kept on reset). PaperBot.league_table(): Memory.league(now - 3 days) ->
   per (strategy, tf) live signals of all coins that ended (count, sum R); on = count >= 50 and avg R > 0; cached
   6 h. In _scan_and_open a strategy not "on" for that tf is not a candidate (counted "league"). Only filters the

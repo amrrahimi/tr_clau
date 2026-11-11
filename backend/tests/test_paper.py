@@ -2028,9 +2028,9 @@ class LeagueSwitchTest(unittest.TestCase):
         self.assertTrue(bot.league_allows("donchian", "5m"))          # off: everything as before
         bot.set_league(True)
         self.assertTrue(bot.league_allows("volume_breakout", "5m"))
-        self.assertFalse(bot.league_allows("donchian", "5m"))         # lost lately
-        self.assertFalse(bot.league_allows("inside_bar", "5m"))       # too few signals to judge
-        self.assertFalse(bot.league_allows("ema_cross", "5m"))        # no signals at all
+        self.assertFalse(bot.league_allows("donchian", "5m"))         # 50+ signals and lost lately
+        self.assertTrue(bot.league_allows("inside_bar", "5m"))        # too few signals to judge: trades
+        self.assertTrue(bot.league_allows("ema_cross", "5m"))         # no signals at all (new): trades
         self.assertEqual(asked[-1], 1_000_000 - pp.LEAGUE_DAYS * 86400)
         n = len(asked)
         clock[0] += 3600
