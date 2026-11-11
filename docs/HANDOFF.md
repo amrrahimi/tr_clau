@@ -430,6 +430,16 @@ Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged res
 - Toobit's top-volume list now holds many stock tokens (NVDA, SNDK, ...): they move together; four momentum
   longs opened at once in the live check. A cap per group is a candidate.
 
+## Trend Rider (2026-11-11 evening; RESEARCH-2026-11-11.md part 2)
+- Owner asked for a free search, a strategy of the author's own and 2-3% a day. Maker-limit scalping on 5m (24
+  settings) and cross-sectional momentum / reversal fail; a trend portfolio on 4h holds (Sharpe about 1.2-1.3, both
+  halves, about +0.2% a day, falls to 45%, 26% wins, all profit from a few huge trades). 2-3% a day: not reachable.
+- BUILT, on by default: account["rider"], paper.RIDER_* constants, _rider_round after each 4h candle (and at
+  start): score >= 0.6 long / <= -0.6 short, stop 4 x ATR(84), no target, exit at score <= 0 (reason "trend"),
+  1% risk, 15 trades. Replaces the signal scan while on (proven set and manual list unused). Card trend_rider.
+- Watch on paper: it opens up to 15 trades at once at the first start (trends already running), often mostly one
+  direction. The 30% total stop can end a run that the test would have survived (falls of 40%+ happened).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

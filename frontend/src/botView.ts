@@ -282,6 +282,10 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t("bot.evStop");
     case "league":
       return t(e.on ? "bot.evLeagueOn" : "bot.evLeagueOff");
+    case "rider":
+      return t(e.on ? "bot.evRiderOn" : "bot.evRiderOff");
+    case "riderRound":
+      return t("bot.evRiderRound", { coins: String(e.coins ?? ""), opened: String(e.opened ?? 0), closed: String(e.closed ?? 0) });
     case "proven":
       return t(e.on ? "bot.evProvenOn" : "bot.evProvenOff");
     case "coinPause":

@@ -128,6 +128,10 @@ export class MockBackend implements Backend {
       const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
       state.league = { on: action.on, days: 3, min: 50, table: state.league?.table ?? {},
         stats: state.league?.stats ?? { on: { ...empty }, other: { ...empty } } };
+    } else if (action.kind === "rider") {
+      const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+      state.rider = { on: action.on, timeframe: "4h", maxPositions: 15, enter: 0.6, exit: 0, stopAtr: 4, last: {},
+        stats: state.rider?.stats ?? { on: { ...empty }, other: { ...empty } } };
     } else if (action.kind === "proven") {
       const empty = { trades: 0, wins: 0, losses: 0, pnl: 0 };
       state.proven = { on: action.on, sets: state.proven?.sets ?? {},

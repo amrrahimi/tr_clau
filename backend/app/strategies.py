@@ -1066,6 +1066,47 @@ def _wide_bar(c: Candles, p: dict) -> list[Signal]:
     return out
 
 
+# 47. Trend Rider (2026-11-11, the bot's own engine: docs/RESEARCH-2026-11-11.md, part 2). The trend score is
+#     the average of five channel states: for the last N, 2N, 4N, 8N and 16N candles, +1 after a close at the
+#     highest close of that window, -1 after a close at the lowest, until the other happens. +1 = every window
+#     says up. As a card (history table, other modes) it enters when the score rises to `enter` and uses a fixed
+#     target; in the bot's rider mode there is no target: the trade ends when the score falls to zero.
+TREND_STEPS = (1, 2, 4, 8, 16)
+
+
+def trend_score(closes: list[float], base: int) -> list[Optional[float]]:
+    n = len(closes)
+    total = [0.0] * n
+    for step in TREND_STEPS:
+        high, low = ind.highest(closes, base * step), ind.lowest(closes, base * step)
+        state = 0
+        for i in range(n):
+            if high[i] is not None:
+                if closes[i] >= high[i]:
+                    state = 1
+                elif closes[i] <= low[i]:
+                    state = -1
+            total[i] += state / len(TREND_STEPS)
+    first = base * TREND_STEPS[-1] - 1     # the longest window must be full
+    return [None if i < first else total[i] for i in range(n)]
+
+
+def _trend_rider(c: Candles, p: dict) -> list[Signal]:
+    score = trend_score(c.closes, p["length"])
+    atr = ind.atr(c.highs, c.lows, c.closes, p["atr_length"])
+    out = []
+    for i in range(1, len(c.closes)):
+        if not _ready(score[i - 1], score[i], atr[i]):
+            continue
+        stop = atr[i] * p["atr_mult"]
+        edge = p["enter"] - 1e-9
+        if score[i] >= edge > score[i - 1]:
+            out.append(Signal(i, LONG, stop_distance=stop, reward=p["reward"]))
+        elif score[i] <= -edge < score[i - 1]:
+            out.append(Signal(i, SHORT, stop_distance=stop, reward=p["reward"]))
+    return out
+
+
 def _ema_line(n, iid="trend") -> dict:
     return {"id": f"s-{iid}", "type": "ema", "params": {"length": n}}
 
@@ -1234,6 +1275,10 @@ _STRATEGIES = [
     Strategy("wide_bar", "Wide-Range Bar", ("trend_up", "trend_down", "range", "volatile"), ("Price action", "Volume", "ATR"),
              (Param("length", 20, 2, 500), Param("size", 2.5, 1, 10, 0.1), _reward(2)),
              _wide_bar),
+    Strategy("trend_rider", "Trend Rider", ("trend_up", "trend_down", "range", "volatile"), ("Donchian", "ATR"),
+             (Param("length", 30, 2, 200), Param("enter", 0.6, 0.2, 1, 0.2), Param("atr_length", 84, 1, 500),
+              _atr_mult(4), _reward(4)),
+             _trend_rider),
 ]
 
 STRATEGIES: dict[str, Strategy] = {s.type: s for s in _STRATEGIES}

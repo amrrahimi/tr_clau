@@ -368,7 +368,7 @@ SECOND_SET = ["turtle", "keltner_breakout", "bb_breakout", "ema_ribbon", "moment
               "psar_flip", "cci_trend", "aroon_cross", "vortex_cross", "adx_breakout", "obv_breakout", "kama_cross",
               "structure_break", "nr7_breakout", "heikin_ashi", "engulfing", "pin_bar", "rsi2_dip",
               "williams_pullback", "zscore_reversion", "mfi_turn", "three_soldiers", "contraction", "box_breakout",
-              "trix_cross", "wide_bar"]
+              "trix_cross", "wide_bar", "trend_rider"]
 
 
 def wavy(n, seed=7):

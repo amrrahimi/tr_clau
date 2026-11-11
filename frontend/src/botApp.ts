@@ -1086,6 +1086,37 @@ export class BotApp {
         focusParts.push(row, el("div", "bot-hint", t(f.on ? "bot.focus.onHint" : "bot.focus.offHint")),
           el("div", "bot-hint", line("focus")), el("div", "bot-hint", line("other")));
       }
+      // 2026-11-11: Trend Rider, the bot's own 4h trend engine.
+      const riderParts: HTMLElement[] = [];
+      if (s.rider) {
+        const rd = s.rider;
+        const onOff = el("div", "segmented small");
+        for (const on of [true, false]) {
+          const b = el("button", rd.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+          b.addEventListener("click", () => {
+            if (rd.on !== on) void this.act({ kind: "rider", on });
+          });
+          onOff.append(b);
+        }
+        const row = el("div", "bot-review-row", t("bot.rider"));
+        row.append(onOff);
+        const line = (name: "on" | "other") => {
+          const x = rd.stats[name];
+          const decided = x.wins + x.losses;
+          return t(name === "on" ? "bot.rider.statOn" : "bot.rider.statOther", {
+            n: String(x.trades), rate: decided ? String(Math.round((x.wins / decided) * 100)) : "–",
+            pnl: formatMoney(x.pnl),
+          });
+        };
+        riderParts.push(row, el("div", "bot-hint", t("bot.riderHint", {
+          tf: rd.timeframe, stop: String(rd.stopAtr), max: String(rd.maxPositions) })));
+        if (rd.last.time) {
+          riderParts.push(el("div", "bot-hint", t("bot.rider.last", {
+            coins: String(rd.last.coins ?? 0), long: String(rd.last.long ?? 0), short: String(rd.last.short ?? 0),
+            opened: String(rd.last.opened ?? 0), closed: String(rd.last.closed ?? 0) })));
+        }
+        riderParts.push(el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
+      }
       // 2026-11-11: the proven set (only the strategies that passed the 28-month test, on 1h and 4h).
       const provenParts: HTMLElement[] = [];
       if (s.proven) {
@@ -1146,7 +1177,7 @@ export class BotApp {
         };
         leagueParts.push(el("div", "bot-hint", line("on")), el("div", "bot-hint", line("other")));
       }
-      parts.push(heading("timeframes", t("bot.timeframes")), ...provenParts, ...focusParts, ...leagueParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
+      parts.push(heading("timeframes", t("bot.timeframes")), ...riderParts, ...provenParts, ...focusParts, ...leagueParts, list, el("div", "bot-hint", t("bot.timeframesHint")),
         maxRow, el("div", "bot-hint", t("bot.maxOpenHint")), ...pauseParts);
     }
 

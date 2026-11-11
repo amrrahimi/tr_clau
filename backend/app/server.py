@@ -109,6 +109,10 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         # 2026-11-11: the proven set starts switched on (every other choice lost in the 28-month test);
         # the owner can switch it off in the panel, and that choice is kept.
         bot.set_proven(True)
+    if "rider" not in bot.account:
+        # 2026-11-11 (part 2): Trend Rider did best in the free test; it starts switched on. The owner's
+        # choice in the panel is kept afterwards.
+        bot.set_rider(True)
     real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons))
     bot.real = real
 
@@ -283,6 +287,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         async def paper_league(on: bool = Body(..., embed=True)):
             """The strategy league switch (last 3 days of live signals per strategy x timeframe)."""
             b.set_league(on)
+            return b.public()
+
+        @app.post(f"/api/{prefix}/rider")
+        async def paper_rider(on: bool = Body(..., embed=True)):
+            """The Trend Rider switch (the bot's own 4h trend engine instead of the signal scan)."""
+            b.set_rider(on)
             return b.public()
 
         @app.post(f"/api/{prefix}/proven")

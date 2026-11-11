@@ -3545,5 +3545,85 @@ export const MOCK_STRATEGIES: StrategyCard[] = [
       }
     ],
     "modeDefaults": {}
+  },
+  {
+    "type": "trend_rider",
+    "name": "Trend Rider",
+    "states": [
+      "trend_up",
+      "trend_down",
+      "range",
+      "volatile"
+    ],
+    "uses": [
+      "Donchian",
+      "ATR"
+    ],
+    "params": [
+      {
+        "name": "length",
+        "default": 30,
+        "min": 2,
+        "max": 200,
+        "step": 1
+      },
+      {
+        "name": "enter",
+        "default": 0.6,
+        "min": 0.2,
+        "max": 1,
+        "step": 0.2
+      },
+      {
+        "name": "atr_length",
+        "default": 84,
+        "min": 1,
+        "max": 500,
+        "step": 1
+      },
+      {
+        "name": "atr_mult",
+        "default": 4,
+        "min": 0.1,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "reward",
+        "default": 4,
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1
+      },
+      {
+        "name": "state_filter",
+        "default": 1,
+        "min": 0,
+        "max": 1,
+        "step": 1
+      },
+      {
+        "name": "breakeven",
+        "default": 0.5,
+        "min": 0,
+        "max": 0.95,
+        "step": 0.05
+      },
+      {
+        "name": "max_candles",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1
+      },
+      {
+        "name": "fee_ratio",
+        "default": 0.33,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    ],
+    "modeDefaults": {}
   }
 ];
