@@ -367,6 +367,11 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
   volatile 5m (-0.06 to -0.17R) and 15m (-0.01 to -0.21R); positive only on top40 5m (+0.15 to +0.25, small n).
   Adds -0.5 to +1.0R per 100 signals. Not built.
 
+- Scale-in (study_scale.py, 2026-11-11): half at the usual limit + half 0.25/0.5/0.75 x risk lower (same or moved
+  levels): about half of today's result wherever today is positive (volatile 5m +2.4 -> +0.1..+1.4; 15m +2.4 ->
+  +0.7..+1.6; top40 15m +3.9 -> +1.6..+2.4 R per 100 signals); 1h less negative only because less is traded.
+  Not built.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
