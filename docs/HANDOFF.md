@@ -372,6 +372,12 @@ Nothing added to the bot yet; decision point sent (A as a paper strategy needs a
   +0.7..+1.6; top40 15m +3.9 -> +1.6..+2.4 R per 100 signals); 1h less negative only because less is traded.
   Not built.
 
+## Funding extremes with stops (study_funding.py, 2026-11-11, top 40 + volatile 30, 1h prices)
+- The earlier +1.18% did not hold up: all coins, beyond 0.05%, 24h, no stop -0.22% per trade (n=1209); volatile
+  coins negative in almost every setting (-0.2 to -2.3%).
+- Only top coins, funding beyond 0.1%, hold 24h stay positive in both halves: stop 5% +1.17% (+0.09 / +2.29),
+  R +0.23, n=307; stop 3% +0.46% (+0.13 / +0.81). Best of 120 settings -> data-snooping risk. Not built.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
