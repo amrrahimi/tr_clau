@@ -440,6 +440,13 @@ Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged res
 - Watch on paper: it opens up to 15 trades at once at the first start (trends already running), often mostly one
   direction. The 30% total stop can end a run that the test would have survived (falls of 40%+ happened).
 
+## Proven set tuned + priority order (2026-11-11 night; RESEARCH part 3)
+- Owner asked: tune per timeframe, give the bot an order of choice, then a download. BUILT: PROVEN_BY_TF lists
+  are in priority order (pick(order=), PaperBot.priority), PROVEN_TUNING (only settings better in both halves),
+  risk budget 6% / max open trades (default 12 places x 0.5% with the proven set). Account test: 1.35 (fall 58%)
+  -> 3.77 (fall 27%); second half 0.90 -> 1.33. Optimistic end (chosen with both halves in view).
+- Default now: proven set ON, Trend Rider OFF (switch in the panel).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

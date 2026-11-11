@@ -74,10 +74,28 @@ LEAGUE_REFRESH = 6 * 3600
 # 1h and 4h stayed positive in both halves; everything on 5m-30m and every other family lost on average. With the
 # switch on (account["proven"]) the bot scans and trades only these, whatever the manual list says, and the
 # direction filter only refuses trades AGAINST the higher trend (a range is where breakouts start).
-PROVEN_4H = ("donchian", "turtle", "volume_breakout", "momentum", "box_breakout", "wide_bar", "bb_breakout",
-             "keltner_breakout", "adx_breakout", "three_soldiers", "structure_break", "obv_breakout")
-PROVEN_1H = ("volume_breakout", "three_soldiers", "bb_breakout", "turtle", "keltner_breakout", "momentum",
+# Order = priority (tuning run of 2026-11-11, scripts/research/tune.py and prio.py): when several signals
+# compete for a place, or two strategies signal on one coin, the earlier one in the list is taken. The order is
+# the result of each strategy on that timeframe over both halves of the 28 months, not the coin's own short
+# history (which did not predict anything in the bot's memory).
+PROVEN_4H = ("wide_bar", "box_breakout", "donchian", "three_soldiers", "obv_breakout", "adx_breakout",
+             "structure_break", "turtle", "momentum", "keltner_breakout", "volume_breakout", "bb_breakout")
+PROVEN_1H = ("bb_breakout", "three_soldiers", "volume_breakout", "momentum", "keltner_breakout", "turtle",
              "adx_breakout", "structure_break")
+# Settings per timeframe that were better than the defaults in BOTH halves (the others stay at their defaults:
+# most "best on the first half" settings were worse on the second). Larger, rarer breakouts and a further
+# target did better; nothing that raised the win rate raised the result.
+PROVEN_TUNING: dict[str, dict[str, dict]] = {
+    "1h": {"bb_breakout": {"mult": 3.0}, "volume_breakout": {"reward": 3.0}, "momentum": {"reward": 3.0},
+           "keltner_breakout": {"reward": 3.0}},
+    "4h": {"wide_bar": {"size": 3.5}, "box_breakout": {"box": 6.0}, "donchian": {"reward": 3.0},
+           "keltner_breakout": {"kc_mult": 2.5}},
+}
+# More, smaller trades (prio2.py): with the same total risk open (PROVEN_RISK_BUDGET), 12 places instead of 6
+# gave the same result with a smaller fall (38% against 54%) and much less luck (1.2-2.8 against 0.7-4.8 over
+# five runs). The risk of one trade is the budget divided by the owner's maximum of open trades.
+PROVEN_RISK_BUDGET = 0.06
+PROVEN_MAX_POSITIONS = 12
 PROVEN_BY_TF: dict[str, tuple[str, ...]] = {"1h": PROVEN_1H, "4h": PROVEN_4H}
 # Trend Rider (2026-11-11, part 2 of the research): the bot's own engine, used instead of the signal scan while
 # account["rider"] is on. Every new 4h candle each coin gets a trend score (strategies.trend_score: five channel
@@ -246,7 +264,7 @@ def liquidation_price(side: str, entry: float, leverage: int) -> float:
 
 
 def position_size(side: str, entry: float, stop: float, equity: float, free_margin: float,
-                  fees: Fees, max_open: int = MAX_OPEN) -> Optional[Size]:
+                  fees: Fees, max_open: int = MAX_OPEN, risk: float = RISK) -> Optional[Size]:
     """Size so that the loss at the stop (with both taker fees) is RISK of the account.
 
     Leverage: the lowest that fits the slot (a third of the account), at most
@@ -258,7 +276,7 @@ def position_size(side: str, entry: float, stop: float, equity: float, free_marg
     if stop_frac <= 0:
         return None
     loss_frac = stop_frac + 2 * fees.taker / 100           # price move + fees in and out
-    notional = equity * RISK / loss_frac
+    notional = equity * risk / loss_frac
     slot = min(equity / max_open, free_margin)
     if slot <= 0:
         return None
@@ -488,7 +506,7 @@ def is_stale(signal_price: float, price: float, stop: float) -> bool:
 # ---------------------------------------------------------------- choosing
 
 def pick(candidates: list[dict], open_coins: set[str], slots: int,
-         side_room: Optional[dict[str, int]] = None) -> list[dict]:
+         side_room: Optional[dict[str, int]] = None, order: Optional[Callable[[dict], tuple]] = None) -> list[dict]:
     """Best reliable signals first (profit factor, then number of trades), one per
     coin, at most `slots`, and no more per direction than `side_room` allows."""
     def score(c):
@@ -496,7 +514,8 @@ def pick(candidates: list[dict], open_coins: set[str], slots: int,
         return (pf if pf is not None else float("inf"), c["stats"]["trades"])
     room = dict(side_room) if side_room is not None else None
     chosen, coins = [], set(open_coins)
-    for c in sorted(candidates, key=score, reverse=True):
+    ranked = sorted(candidates, key=order) if order is not None else sorted(candidates, key=score, reverse=True)
+    for c in ranked:
         if len(chosen) >= slots:
             break
         side = c["signal"]["side"]
@@ -834,6 +853,7 @@ class PaperBot:
                       "enter": RIDER_IN, "exit": RIDER_OUT, "stopAtr": RIDER_STOP_ATR, "last": self.rider_state,
                       "stats": self.tagged_stats("rider")},
             "proven": {"on": self.proven(), "sets": {tf: list(k) for tf, k in PROVEN_BY_TF.items()},
+                       "tuning": PROVEN_TUNING, "riskBudget": PROVEN_RISK_BUDGET * 100,
                        "stats": self.tagged_stats("proven")},
             "coinPause": {"hours": self.coin_pause_hours(),
                           "paused": {k.split("/")[0]: v for k, v in self.coins_paused().items()}},
@@ -873,7 +893,7 @@ class PaperBot:
             "profile": self.profile.name,
             "flow": self.flow_summary(),
             "scanSeconds": self.scan_seconds,
-            "rules": {"risk": RISK * 100,
+            "rules": {"risk": self.risk_per_trade() * 100,
                       "maxOpen": self.max_open(), "timeBeCandles": TIME_BE_CANDLES, "staleTolerance": STALE_PART * 100,
                       "maxSameSide": None if self.profile.max_same_side >= UNLIMITED else self.profile.max_same_side,
                       "brainThreshold": a.get("brainThreshold"),
@@ -1981,11 +2001,14 @@ class PaperBot:
                 self._skip(c, tf, "coinPause")
         fresh = [c for c in candidates if c["symbol"] not in open_coins and c["symbol"] not in paused]
         checked = []
-        for c in sorted(fresh, key=lambda c: c["stats"]["trades"], reverse=True)[:max(room * 3, 6)]:
+        by_priority = (lambda c: self.priority(c, tf)) if self.proven() else None
+        first = sorted(fresh, key=by_priority) if by_priority else \
+            sorted(fresh, key=lambda c: c["stats"]["trades"], reverse=True)
+        for c in first[:max(room * 3, 6)]:
             if await self._direction_ok(c, tf, now):
                 checked.append(c)
         chosen = pick(checked, open_coins, min(room, free_slots(positions, tf, self.profile.slots)),
-                      side_room(positions, self.profile.max_same_side))
+                      side_room(positions, self.profile.max_same_side), by_priority)
         for c in chosen:
             if self._ai_on(tf):
                 await self._ai_review(c, tf, now, settings[c["strategy"]])
@@ -2211,7 +2234,7 @@ class PaperBot:
         if self.account.get("limitEntry"):
             return self._place_order(c, tf, now, params, entry, recent[-1]["time"], equity, skip, price_step(recent))
         size = position_size(s["side"], entry, stop, equity, equity - self.used_margin(), self.fees,
-                             self.slots())
+                             self.slots(), self.risk_per_trade())
         if size is None or size.notional <= 0:
             return skip("full")   # no free money left for another position
         self._new_position(c, tf, now, params, entry, recent[-1]["time"], size, self.fees.taker, "market")
@@ -2272,11 +2295,11 @@ class PaperBot:
 
     def max_open(self) -> int:
         """Owner's setting (2026-11-10): how many trades may be open at once (waiting limit orders count)."""
-        return int(self.account.get("maxOpen") or MAX_POSITIONS)
+        return int(self.account.get("maxOpen") or (PROVEN_MAX_POSITIONS if self.proven() else MAX_POSITIONS))
 
     def slots(self) -> int:
         """Margin of one position at most equity / this (follows the owner's maximum, as with 6)."""
-        return self.max_open() if self.account.get("maxOpen") else self.profile.size_slots
+        return self.max_open() if self.account.get("maxOpen") or self.proven() else self.profile.size_slots
 
     def set_max_open(self, n: int) -> None:
         self.account["maxOpen"] = max(1, min(20, int(n)))
@@ -2449,8 +2472,22 @@ class PaperBot:
         settings = bot_settings(tf)
         if self.proven():
             keep = PROVEN_BY_TF.get(tf, ())
-            settings = {k: v for k, v in settings.items() if k in keep}
+            tuned = PROVEN_TUNING.get(tf, {})
+            settings = {k: parse_params(k, {**{n: v for n, v in settings[k].items()}, **tuned.get(k, {})}, MODE_OF[tf])
+                        for k in keep if k in settings}
         return settings
+
+    def priority(self, c: dict, tf: str) -> tuple:
+        """Proven set: the strategy's place in the timeframe's list first (lower = better), then the coins as
+        they come (by volume)."""
+        kinds = PROVEN_BY_TF.get(tf, ())
+        return (kinds.index(c["strategy"]) if c["strategy"] in kinds else len(kinds),)
+
+    def risk_per_trade(self) -> float:
+        """Share of the money lost at the stop. Proven set: the risk budget spread over the open places."""
+        if self.proven():
+            return min(RISK, PROVEN_RISK_BUDGET / self.max_open())
+        return RISK
 
     def set_league(self, on: bool) -> None:
         if bool(self.account.get("league")) != bool(on):
@@ -2536,7 +2573,7 @@ class PaperBot:
         if (stop < rounded < price_now) if long_ else (price_now < rounded < stop):
             price = rounded
         size = position_size(s["side"], price, stop, equity, equity - self.used_margin(), self.fees,
-                             self.slots())
+                             self.slots(), self.risk_per_trade())
         if size is None or size.notional <= 0:
             return skip("full")
         a = self.account
@@ -2655,7 +2692,7 @@ class PaperBot:
             return refuse("reward")
         equity = self.equity()
         size = position_size(o["side"], price, stop, equity, equity - self.used_margin(), self.fees,
-                             self.slots())
+                             self.slots(), self.risk_per_trade())
         if size is None or size.notional <= 0:
             return refuse("full")
         self.account["limitStats"]["filled"] += 1

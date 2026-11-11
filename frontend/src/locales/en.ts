@@ -756,7 +756,7 @@ export const en = {
   "bot.evLeagueOff": "Strategy league off; all ticked strategies are back",
   "bot.skip.league": "strategy not in the 3-day league",
   "bot.proven": "Proven set (recommended)",
-  "bot.provenHint": "On: the bot scans and trades only the strategies that stayed profitable after fees in the 28-month test (breakout / momentum family) and only on 1h and 4h: {sets}. Your manual list is ignored while it is on. Expect about 35-40% winning trades: the profit comes from winners being larger than losers.",
+  "bot.provenHint": "On: the bot scans and trades only the strategies that stayed profitable after fees in the 28-month test (breakout / momentum family) and only on 1h and 4h: {sets}. Your manual list is ignored while it is on. Expect about 35-40% winning trades: the profit comes from winners being larger than losers. The list of each timeframe is in priority order: when signals compete, the earlier strategy wins. Trades are smaller and more numerous: the risk of one trade is 6% divided by your maximum of open trades (12 open: 0.5% each).",
   "bot.proven.statOn": "Proven-set trades: {n}, won {rate}%, result {pnl}$",
   "bot.proven.statOther": "Other trades: {n}, won {rate}%, result {pnl}$",
   "bot.evProvenOn": "Proven set on: only the tested strategies on 1h and 4h",

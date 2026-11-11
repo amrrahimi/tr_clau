@@ -106,13 +106,10 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
     memory = Memory(store_path.with_name("memory.db"))  # never cleared by "start again"
     bot = PaperBot(Store(store_path), bot_coins, bot_history_of, bot_recent, memory=memory, brain=Brain(memory))
     if "proven" not in bot.account:
+        # Trend Rider (the other engine) stays off until the owner switches it on in the panel.
         # 2026-11-11: the proven set starts switched on (every other choice lost in the 28-month test);
         # the owner can switch it off in the panel, and that choice is kept.
         bot.set_proven(True)
-    if "rider" not in bot.account:
-        # 2026-11-11 (part 2): Trend Rider did best in the free test; it starts switched on. The owner's
-        # choice in the panel is kept afterwards.
-        bot.set_rider(True)
     real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons))
     bot.real = real
 

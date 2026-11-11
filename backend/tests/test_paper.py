@@ -2087,6 +2087,40 @@ class ProvenSetTest(unittest.IsolatedAsyncioTestCase):
         bot.set_proven(False)
         self.assertEqual(set(bot.active_settings("5m")), set(pp.STRATEGIES))
 
+    def test_tuning_priority_and_smaller_trades(self):
+        bot = self.bot()
+        self.assertEqual((bot.max_open(), bot.risk_per_trade()), (6, pp.RISK))    # off: as before
+        bot.set_proven(True)
+        one_hour = bot.active_settings("1h")
+        self.assertEqual(one_hour["bb_breakout"]["mult"], 3.0)                    # tuned for this timeframe
+        self.assertEqual(one_hour["volume_breakout"]["reward"], 3.0)
+        self.assertEqual(one_hour["turtle"], pp.bot_settings("1h")["turtle"])     # the others: unchanged
+        self.assertEqual(bot.active_settings("4h")["wide_bar"]["size"], 3.5)
+        for tf, tuned in pp.PROVEN_TUNING.items():                                # every tuned setting is a real one
+            for kind, over in tuned.items():
+                self.assertIn(kind, pp.PROVEN_BY_TF[tf])
+                pp.parse_params(kind, over, pp.MODE_OF[tf])
+        # priority: the strategy's place in the timeframe's list decides, not the coin's profit factor
+        weak = {"symbol": "A", "strategy": "structure_break", "signal": {"side": "long"},
+                "stats": {"profitFactor": 9.0, "trades": 50}}
+        strong = {"symbol": "B", "strategy": "bb_breakout", "signal": {"side": "long"},
+                  "stats": {"profitFactor": 1.1, "trades": 12}}
+        both = {"symbol": "A", "strategy": "volume_breakout", "signal": {"side": "short"},
+                "stats": {"profitFactor": 1.0, "trades": 10}}
+        order = lambda c: bot.priority(c, "1h")
+        self.assertEqual([c["symbol"] for c in pp.pick([weak, strong], set(), 1, order=order)], ["B"])
+        self.assertEqual([c["strategy"] for c in pp.pick([weak, both], set(), 2, order=order)], ["volume_breakout"])
+        self.assertEqual([c["symbol"] for c in pp.pick([weak, strong], set(), 1)], ["A"])       # without it: as before
+        # more, smaller trades: the same 6% in total
+        self.assertEqual(bot.max_open(), pp.PROVEN_MAX_POSITIONS)
+        self.assertAlmostEqual(bot.risk_per_trade(), 0.005)
+        bot.set_max_open(20)
+        self.assertAlmostEqual(bot.risk_per_trade(), 0.003)
+        bot.set_max_open(3)
+        self.assertEqual(bot.risk_per_trade(), pp.RISK)                           # never more than 1% a trade
+        size = pp.position_size("long", 100, 95, 1000, 1000, FEES, 12, 0.005)
+        self.assertAlmostEqual(size.risk, 5.0, places=6)
+
     async def test_direction_filter_only_refuses_against(self):
         bot = self.bot()
         trends = {"X": "range", "BTC": "range"}
