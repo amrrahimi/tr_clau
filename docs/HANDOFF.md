@@ -413,6 +413,17 @@ Mixed evidence. Decision point sent: optional switch (N=3, X=50) with tagged res
 - POST /api/paper/league {on}; panel: switch + per ticked timeframe the strategies on (avg R, count) and how many
   off; diary events. Tests: LeagueTest (memory), LeagueSwitchTest.
 
+## Four schools study (study_schools.py, 2026-11-11; owner named the authors: Hosoda, Huddleston, iFmyante, Beggs)
+avg R per trade (half 1 / half 2); bot's 18 strategies same candles: vol 5m +0.039, 15m +0.064; top 5m +0.039, 15m +0.055.
+- Ichimoku TK cross + cloud + Chikou: 5m top +0.131 (+0.12/+0.14, n=105), 5m vol +0.113 (+0.18/+0.08, n=272);
+  15m half 1 negative. TK cross only: weak.
+- YTC TST: 15m top +0.264 (+0.34/+0.23, n=238), 15m vol +0.072 (+0.23/+0.01); 1h/30m negative.
+- YTC BPB: 15m vol +0.148 (+0.06/+0.19, n=311), 15m top +0.053; 30m both groups positive both halves.
+- ICT BOS 5m top +0.094 (both), vol +0.035 (both); CHoCH 15m top +0.037, vol +0.053 (both halves).
+- RTM QM: 30m top +0.133 (both), 1h top +0.096, 1h vol +0.111 (both); 5m negative.
+- RTM FTR/FL negative almost everywhere; CAPS too few trades. YTC BOF mixed / negative on 1h.
+Decision point: add the consistent ones as strategies per timeframe; the league then judges them live.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
