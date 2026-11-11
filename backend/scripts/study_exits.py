@@ -42,7 +42,7 @@ def sim(c, i, side, entry, stop, target, lock=(0.8, 0.6), be_at=None, partial=No
     fin = FEES.taker
 
     def r_of(px, fee_out):
-        return (k * (px - entry) - entry * fin - px * fee_out) / risk
+        return (k * (px - entry) - (entry * fin + px * fee_out) / 100) / risk
 
     end = min(len(c), i + limit)
     for j in range(i, end):
