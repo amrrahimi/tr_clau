@@ -471,6 +471,16 @@ full -0.060 on 15m ...). Positive in both halves:
 Decision point: add Ichimoku full + CHoCH to the 4h proven list, QM to the 1h list (after a portfolio test).
 Also merged branch claude/proven-set-research into main (2026-11-11) and changed the league rule (above).
 
+## Account test: schools' setups + same-side cap (research/port_schools.py on the study branch, 2026-11-13)
+0.5% risk, 12 places, one per coin, 6 h pause, 5 orders; bot rules (BE 50% on 1h/4h). NOTE: the same test run
+twice gave x1.78 and x1.84 for the proven set: differences below ~0.2 are noise.
+- Per trade (bot rules): Ichimoku full 4h +0.110 (+0.139 / +0.089, n=2228); CHoCH 4h +0.064 (h2 +0.004);
+  QM 1h +0.021 (weak). Weak proven 4h members: momentum +0.001, structure_break +0.006, keltner +0.005.
+- Account: proven as built x1.78-1.84 (2nd half 0.98-1.04, flat); + Ichimoku full x1.77 (2nd half 1.16, avgR
+  +0.066 vs +0.043, worst month -17% vs -27%); + CHoCH (+QM) x1.34-1.46 (worse); dropping the weak 4h five: no gain.
+- Same-side cap: 4 -> x1.15 (worst month -8%), 6 -> x1.42, 8 -> x1.67: less risk, less profit. Not proposed.
+Decision point: Ichimoku full into the 4h list (small, uncertain gain); CHoCH / QM not.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
