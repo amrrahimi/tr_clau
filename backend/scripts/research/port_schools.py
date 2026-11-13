@@ -121,6 +121,17 @@ if __name__ == "__main__":
     base = [x for x in rows if x[0] == "proven"]
     plus4 = base + [x for x in rows if x[0] == "new" and x[2] == "4h"]
     plus_all = base + [x for x in rows if x[0] == "new"]
+    WEAK4 = {"momentum", "structure_break", "keltner_breakout", "volume_breakout", "turtle"}
+    lean = [x for x in base if not (x[2] == "4h" and x[1] in WEAK4)]
+    lean_ichi = lean + [x for x in rows if x[0] == "new" and x[1] == "ichimoku_full"]
+    base_ichi = base + [x for x in rows if x[0] == "new" and x[1] == "ichimoku_full"]
+    print("\n== swap: the five weakest 4h strategies out, Ichimoku full in (in-sample choice) ==")
+    for start, label in ((None, "whole"), (mid, "2nd half")):
+        report(f"[{label}] proven set as built", base, start=start)
+        report(f"[{label}] + Ichimoku full only", base_ichi, start=start)
+        report(f"[{label}] without the 5 weakest on 4h", lean, start=start)
+        report(f"[{label}] without the 5 weakest on 4h + Ichimoku full", lean_ichi, start=start)
+    sys.exit(0)
     print("\n== account: 0.5% risk, 12 places, one per coin, 6 h pause ==")
     for start, label in ((None, "whole"), (mid, "2nd half")):
         report(f"[{label}] proven set as built", base, start=start)
