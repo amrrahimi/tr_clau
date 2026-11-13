@@ -480,6 +480,7 @@ twice gave x1.78 and x1.84 for the proven set: differences below ~0.2 are noise.
   +0.066 vs +0.043, worst month -17% vs -27%); + CHoCH (+QM) x1.34-1.46 (worse); dropping the weak 4h five: no gain.
 - Same-side cap: 4 -> x1.15 (worst month -8%), 6 -> x1.42, 8 -> x1.67: less risk, less profit. Not proposed.
 Decision point: Ichimoku full into the 4h list (small, uncertain gain); CHoCH / QM not.
+OWNER DECIDED (2026-11-13): not needed, declined. Nothing from the four schools is added; no same-side cap.
 
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
