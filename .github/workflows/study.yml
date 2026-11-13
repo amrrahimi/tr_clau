@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt numpy requests
+      - run: pip install -r requirements.txt numpy requests numba
       - uses: actions/cache@v4
         with:
           path: backend/research-data
@@ -24,7 +24,7 @@ jobs:
       - run: python scripts/research/dl.py
         env:
           RESEARCH_DATA: ${{ github.workspace }}/backend/research-data
-      - run: python scripts/study_schools28.py
+      - run: python scripts/research/port_schools.py | tee study-report.md
         env:
           RESEARCH_DATA: ${{ github.workspace }}/backend/research-data
       - uses: actions/upload-artifact@v4
