@@ -280,6 +280,8 @@ export function eventText(e: PaperEvent, t: (key: MessageKey, p?: Record<string,
       return t("bot.evStart");
     case "stop":
       return t("bot.evStop");
+    case "breakevenSwitch":
+      return t(e.on ? "bot.evBeOn" : "bot.evBeOff");
     case "league":
       return t(e.on ? "bot.evLeagueOn" : "bot.evLeagueOff");
     case "rider":
@@ -455,7 +457,7 @@ export function saveLines(lines: Record<LineGroup, LineLook>): void {
 }
 
 /** Sections of the bot's settings panel that open and close. */
-export type PanelSection = "timeframes" | "limit" | "ai" | "tg" | "coins" | "strategies" | "lock" | "review" | "memory"
+export type PanelSection = "timeframes" | "limit" | "ai" | "tg" | "coins" | "strategies" | "lock" | "breakeven" | "review" | "memory"
   | "brain" | "connection" | "history" | "diary";
 const FOLDS_KEY = "bot.sections";
 /** Open at first (owner 2026-11-09): the timeframes; a section with a switch while it is on. */

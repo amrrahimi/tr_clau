@@ -181,6 +181,12 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
                 raise HTTPException(404, "no open position with this id")
             return answer
 
+        @app.post(f"/api/{prefix}/breakeven")
+        async def paper_breakeven(on: bool = Body(..., embed=True)):
+            """The owner's break-even switch (off: no stop moves to break-even, open trades included)."""
+            b.set_breakeven(on)
+            return b.public()
+
         @app.post(f"/api/{prefix}/lock")
         async def paper_lock(enabled: bool = Body(...), trigger: float = Body(80.0), at: float = Body(40.0)):
             """The owner's profit lock: at `trigger` % of the way to the target the stop moves to `at` %."""

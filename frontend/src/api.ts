@@ -37,6 +37,7 @@ export type PaperAction =
   | { kind: "levels"; position_id: number; stop?: number; take_profit?: number; lock_point?: number }
   | { kind: "limit"; enabled: boolean }
   | { kind: "lock"; enabled: boolean; trigger: number; at: number }
+  | { kind: "breakeven"; on: boolean }
   | { kind: "review"; enabled?: boolean; after?: number; every?: Record<string, number> }
   | { kind: "max-open"; value: number }
   | { kind: "focus"; on: boolean }

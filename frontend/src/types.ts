@@ -254,7 +254,7 @@ export interface PaperTrade extends PaperPosition {
 export interface PaperEvent {
   time: number;
   kind: "start" | "stop" | "reset" | "open" | "close" | "halted" | "error" | "skip" | "pause" | "resume" | "brain" | "pretrain" | "advice" | "reviewAsk" | "reviewAnswer" | "timeBeAsk"
-    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult" | "focus" | "coinPause" | "league" | "proven" | "rider" | "riderRound";
+    | "ai" | "ask" | "askAnswer" | "levels" | "order" | "orderCancel" | "blind" | "consult" | "focus" | "coinPause" | "league" | "proven" | "rider" | "riderRound" | "breakevenSwitch";
   coins?: number; opened?: number; closed?: number;   // riderRound: coins read, trades opened / closed
   on?: boolean;     // focus: switched on / off
   hours?: number;   // coinPause: how long (the coin waits until `until`)
@@ -475,6 +475,8 @@ export interface PaperState {
     smartPause?: boolean; allSignals?: boolean; strictTrades?: number; strictProfitFactor?: number;
     limitOffset?: number; limitExpireCandles?: number;   // limit entry: % of the stop distance, candles
     lock?: { enabled: boolean; trigger: number; at: number };
+    /** Owner's break-even switch (2026-11-16); byTf: share of the way to the target per timeframe (0 = never). */
+    breakeven?: { on: boolean; byTf: Record<string, number> };
     timeBeCandles?: Record<string, number>; staleTolerance?: number;   // profit lock: % of the way to the target
     fees: { maker: number; taker: number } };
 }

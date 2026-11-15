@@ -908,6 +908,7 @@ class PaperBot:
                       "pauseLosses": a.get("pauseLosses", PAUSE_LOSSES), "pauseFall": a.get("pauseFall", PAUSE_FALL * 100),
                       "pauseHours": PAUSE_SECONDS / 3600, "recoverWins": RECOVER_WINS, "profitCap": self.account.get("profitCap", 0.0), "totalStop": TOTAL_STOP * 100,
                       "limitOffset": LIMIT_OFFSET * 100, "limitExpireCandles": LIMIT_EXPIRE_CANDLES,
+                      "breakeven": {"on": self.breakeven_on(), "byTf": BREAKEVEN_BY_TF},
                       "lock": {"enabled": a.get("lockEnabled", False), "trigger": a.get("lockTrigger", LOCK_TRIGGER * 100),
                                "at": a.get("lockAt", LOCK_AT * 100)},
                       "fees": {"maker": self.fees.maker, "taker": self.fees.taker}},
@@ -942,7 +943,7 @@ class PaperBot:
         self._cancel_orders("limit_cancelled", "reset")
         kept = {k: self.account[k] for k in ("profitCap", "pauseLosses", "pauseFall", "brainThreshold",
                                               "mode", "strategies", "coinMode", "coins", "aiEnabled", "aiTimeframes",
-                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen",
+                                              "limitEntry", "lockEnabled", "lockTrigger", "lockAt", "maxOpen", "breakevenEnabled",
                                               "reviewEnabled", "reviewAfter", "reviewEvery", "focus",
                                               "coinPauseHours", "league", "proven", "rider")
                 if k in self.account}
@@ -2260,7 +2261,8 @@ class PaperBot:
             "quantity": size.quantity, "notional": size.notional, "leverage": size.leverage,
             "margin": size.margin, "risk": size.risk, "openRisk": size.risk, "liquidation": size.liquidation,
             "entryFee": size.notional * entry_fee / 100, "entryType": entry_type,
-            "breakevenPart": params.get("breakeven", 0),
+            "breakevenPart": params.get("breakeven", 0) if self.breakeven_on() else 0,
+            **({} if self.breakeven_on() else {"breakevenPlan": params.get("breakeven", 0)}),
             "breakevenPrice": breakeven_price(s["side"], entry, self.fees, entry_fee), "breakevenAt": None,
             "history": {"trades": c["stats"]["trades"], "winRate": c["stats"].get("winRate"),
                         "profitFactor": c["stats"]["profitFactor"]},
@@ -2287,6 +2289,27 @@ class PaperBot:
         return position
 
     # ---- limit entry (owner's switch; paper only)
+
+    def breakeven_on(self) -> bool:
+        return self.account.get("breakevenEnabled", True) is not False
+
+    def set_breakeven(self, on: bool) -> None:
+        """Owner's switch (2026-11-16): break-even on / off. Off = no trade moves its stop to break-even, the
+        open ones included (their planned share is kept and comes back when it is turned on again). Moves
+        already made stay. On = BREAKEVEN_BY_TF as before."""
+        on = bool(on)
+        if self.breakeven_on() == on:
+            return
+        self.account["breakevenEnabled"] = on
+        for p in self.account["positions"]:
+            if on:
+                if "breakevenPlan" in p:
+                    p["breakevenPart"] = p.pop("breakevenPlan")
+            elif not p.get("breakevenAt"):
+                p["breakevenPlan"] = p.get("breakevenPart", 0)
+                p["breakevenPart"] = 0
+        self._event("breakevenSwitch", on=on)
+        self.save()
 
     def set_lock(self, enabled: bool, trigger: float, at: float) -> None:
         """Owner's profit lock: on/off, and the two shares of the way to the target in percent."""

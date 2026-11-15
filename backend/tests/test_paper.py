@@ -2227,3 +2227,43 @@ class TrendRiderTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(bot._due_timeframes(self.clock[0])), 1)
         bot.reset(1000)
         self.assertFalse(bot.account["rider"])                                  # the choice survives a reset
+
+
+class BreakevenSwitchTest(unittest.IsolatedAsyncioTestCase):
+    """Owner 2026-11-16: break-even on / off, the open trades included."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+        async def recent(symbol, tf):
+            return [bar(999_960, 100, 100, 100, 100)]
+
+        async def empty(*a):
+            return []
+        self.bot = pp.PaperBot(pp.Store(Path(self.dir.name) / "p.json"), empty, empty, recent,
+                               now=lambda: 1_000_000, fees=FEES)
+        self.bot.reset(100)
+        tg.save(token="", chatId=None, enabled=False)
+        self.addCleanup(lambda: tg.save(token="", chatId=None, enabled=True))
+
+    async def test_switch(self):
+        bot = self.bot
+        self.assertTrue(bot.public()["rules"]["breakeven"]["on"])
+        await bot._open(cand("A", 2.0, 20), "1h", 1_000_000, {"fee_ratio": 0.33, "breakeven": 0.5})
+        p = bot.account["positions"][-1]
+        self.assertEqual(p["breakevenPart"], 0.5)
+        bot.set_breakeven(False)
+        self.assertEqual((p["breakevenPart"], p["breakevenPlan"]), (0, 0.5))
+        pp._maybe_breakeven(p, p["takeProfit"], 1_000_100)       # all the way: still no break-even
+        self.assertIsNone(p["breakevenAt"])
+        await bot._open(cand("B", 2.0, 20), "1h", 1_000_000, {"fee_ratio": 0.33, "breakeven": 0.5})
+        q = bot.account["positions"][-1]
+        self.assertEqual(q["breakevenPart"], 0)                  # new trades too
+        self.assertIn("breakevenSwitch", [e["kind"] for e in bot.account["events"]])
+        bot.reset(100)
+        self.assertFalse(bot.breakeven_on())                     # the switch survives a reset
+        bot.account["positions"] = [p]
+        bot.set_breakeven(True)
+        self.assertEqual(p["breakevenPart"], 0.5)
+        self.assertNotIn("breakevenPlan", p)

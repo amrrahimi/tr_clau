@@ -1515,6 +1515,23 @@ export class BotApp {
     capBox.append(el("label", "", t("bot.cap")), capInput, capSave);
     parts.push(capBox, el("div", "bot-hint", t("bot.capHint")));
 
+    // Break-even (owner's switch, 2026-11-16): off = no stop moves to break-even, open trades included.
+    if (s.rules.breakeven) {
+      const be = s.rules.breakeven;
+      const onOff = el("div", "segmented small");
+      for (const on of [true, false]) {
+        const b = el("button", be.on === on ? "active" : "", t(on ? "bot.ai.on" : "bot.ai.off"));
+        b.addEventListener("click", () => {
+          if (be.on !== on) void this.act({ kind: "breakeven", on });
+        });
+        onOff.append(b);
+      }
+      const where = Object.entries(be.byTf).filter(([, part]) => part > 0)
+        .map(([tf, part]) => t("bot.be.at", { tf, part: String(Math.round(part * 100)) })).join("، ");
+      parts.push(heading("breakeven", t("bot.be.title")), onOff,
+        el("div", "bot-hint", be.on ? t("bot.be.onHint", { where: where || "–" }) : t("bot.be.offHint")));
+    }
+
     // Profit lock (owner's option): at `trigger` % of the way to the target the stop moves to `at` %.
     {
       const lock = s.rules.lock ?? { enabled: false, trigger: 80, at: 40 };

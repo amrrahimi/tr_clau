@@ -150,6 +150,8 @@ export class MockBackend implements Backend {
     } else if (action.kind === "review") {
       const r = state.review ?? { enabled: true, after: 20, every: { "1m": 10, "3m": 10, "5m": 15, "15m": 15, "30m": 15, "1h": 15, "4h": 60 } };
       state.review = { enabled: action.enabled ?? r.enabled, after: action.after ?? r.after, every: { ...r.every, ...(action.every ?? {}) } };
+    } else if (action.kind === "breakeven") {
+      state.rules.breakeven = { on: action.on, byTf: state.rules.breakeven?.byTf ?? { "1h": 0.5, "4h": 0.5 } };
     } else if (action.kind === "lock") {
       state.rules.lock = { enabled: action.enabled, trigger: action.trigger, at: action.at };
     } else if (action.kind === "limit") {

@@ -482,6 +482,14 @@ twice gave x1.78 and x1.84 for the proven set: differences below ~0.2 are noise.
 Decision point: Ichimoku full into the 4h list (small, uncertain gain); CHoCH / QM not.
 OWNER DECIDED (2026-11-13): not needed, declined. Nothing from the four schools is added; no same-side cap.
 
+## Break-even switch (owner 2026-11-16 "برای سر به سر خاموش روشن بساز")
+- account["breakevenEnabled"] (default on, kept on reset). Off: new positions get breakevenPart 0 (planned share in
+  breakevenPlan); open positions not yet at break-even too; moves already made stay. On: the plans come back.
+  BREAKEVEN_BY_TF unchanged (1h / 4h 50%). POST /api/paper/breakeven {on}; rules.breakeven {on, byTf}; panel
+  section "سربه‌سر" above the profit lock; event breakevenSwitch. Test: BreakevenSwitchTest.
+- Context: owner's question 11-16: 57 proven trades on 5m candles: actual +4.01$; no lock/cap (BE kept) +7.02;
+  stop+target only +14.37 (4 trending days only; the 28-month study says exits change the shape, not the average).
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).
