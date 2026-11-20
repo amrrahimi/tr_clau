@@ -132,6 +132,7 @@ GROUP_SLOTS = {"fast": UNLIMITED, "slow": UNLIMITED}
 MAX_SAME_SIDE = UNLIMITED
 MAX_OPEN = 6                  # sizing: one position may lock at most a sixth of the money as margin
 MAX_POSITIONS = 6             # owner 2026-11-07: at most 6 open trades (waiting limit orders count too)
+MAX_OPEN_LIMIT = 50           # owner 2026-11-20: the highest maximum the owner may set (was 20)
 
 # The owner's design of 2026-11-07 (steps 2-3): the trend of a coin is read on a higher timeframe and a trade
 # goes only with it; in a range nothing opens. Efficiency ratio over TREND_CANDLES closed candles: the straight
@@ -2327,7 +2328,7 @@ class PaperBot:
         return self.max_open() if self.account.get("maxOpen") or self.proven() else self.profile.size_slots
 
     def set_max_open(self, n: int) -> None:
-        self.account["maxOpen"] = max(1, min(20, int(n)))
+        self.account["maxOpen"] = max(1, min(MAX_OPEN_LIMIT, int(n)))
         self.save()
 
     def set_focus(self, on: bool) -> None:

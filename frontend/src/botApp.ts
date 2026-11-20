@@ -1022,12 +1022,12 @@ export class BotApp {
       const maxInput = document.createElement("input");
       maxInput.type = "number";
       maxInput.min = "1";
-      maxInput.max = "20";
+      maxInput.max = "50";
       maxInput.dir = "ltr";
       maxInput.value = String(s.rules.maxOpen ?? 6);
       maxInput.addEventListener("change", () => {
         const n = Math.round(Number(maxInput.value));
-        if (!(n >= 1 && n <= 20)) {
+        if (!(n >= 1 && n <= 50)) {
           maxInput.classList.add("invalid");
           return;
         }

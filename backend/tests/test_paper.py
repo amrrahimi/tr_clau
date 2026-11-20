@@ -1914,8 +1914,10 @@ class MaxOpenTest(unittest.TestCase):
         self.assertEqual((bot.max_open(), bot.public()["rules"]["maxOpen"]), (6, 6))
         bot.set_max_open(10)
         self.assertEqual((bot.max_open(), bot.slots(), bot.public()["rules"]["maxOpen"]), (10, 10, 10))
+        bot.set_max_open(50)
+        self.assertEqual(bot.max_open(), 50)
         bot.set_max_open(99)
-        self.assertEqual(bot.max_open(), 20)
+        self.assertEqual(bot.max_open(), pp.MAX_OPEN_LIMIT)
 
 
 class FocusTest(unittest.TestCase):
@@ -2116,6 +2118,8 @@ class ProvenSetTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(bot.risk_per_trade(), 0.005)
         bot.set_max_open(20)
         self.assertAlmostEqual(bot.risk_per_trade(), 0.003)
+        bot.set_max_open(50)
+        self.assertAlmostEqual(bot.risk_per_trade(), 0.0012)   # 50 places: smaller trades
         bot.set_max_open(3)
         self.assertEqual(bot.risk_per_trade(), pp.RISK)                           # never more than 1% a trade
         size = pp.position_size("long", 100, 95, 1000, 1000, FEES, 12, 0.005)
