@@ -129,8 +129,10 @@ export function accountPanel(backend: Backend, t: T): HTMLElement {
     // safety caps (they matter in real mode; set them before)
     box.append(el("div", "list-heading", t("acc.limits")));
     const caps = el("div", "bot-review");
-    for (const [name, label, max] of [["maxMargin", "acc.maxMargin", 100000], ["maxLeverage", "acc.maxLeverage", 20],
-      ["dailyLoss", "acc.dailyLoss", 100000]] as const) {
+    // Owner 2026-11-21: shares of the balance, so they grow and shrink with it; the bot sizes each trade itself.
+    box.append(el("div", "bot-hint", t("acc.limitsHint", { risk: s.riskPct.toFixed(2) })));
+    for (const [name, label, max] of [["marginPct", "acc.marginPct", 100], ["leverageCap", "acc.leverageCap", 20],
+      ["dailyLossPct", "acc.dailyLossPct", 50]] as const) {
       const row = el("label", "bot-review-row", t(label));
       const input = el("input");
       input.type = "number";
@@ -145,6 +147,8 @@ export function accountPanel(backend: Backend, t: T): HTMLElement {
         void run(() => backend.setAccount({ limits: { [name]: n } }));
       });
       row.append(input);
+      const usd = name === "marginPct" ? s.maxMarginUsd : name === "dailyLossPct" ? s.dailyLossUsd : null;
+      if (usd !== null) row.append(el("span", "bot-hint", t("acc.nowUsd", { usd: money(usd) })));
       caps.append(row);
     }
     const confirmRow = el("label", "bot-check");

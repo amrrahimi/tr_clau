@@ -32,10 +32,14 @@ log = logging.getLogger("trading_bot")
 MODES = ("off", "read", "shadow", "real")
 REFRESH_SECONDS = 15.0
 CONFIRM_SECONDS = 60.0
-RISK = 0.01                  # of the real balance per trade, like the paper bot
+RISK = 0.01                  # of the real balance per trade when no paper bot tells (tests)
 KEEP_PLANS = 50
-DEFAULTS = {"mode": "off", "maxMargin": 10.0, "maxLeverage": 5, "dailyLoss": 5.0, "confirm": True}
-LIMITS = {"maxMargin": (1.0, 100000.0), "maxLeverage": (1, 20), "dailyLoss": (0.5, 100000.0)}
+# Owner 2026-11-21: the safety caps follow the balance (they were fixed dollars: $10 margin, $5 a day, 5x).
+# marginPct: one trade's margin at most this % of the balance; dailyLossPct: % of the day's starting balance;
+# leverageCap: only a brake (the bot's own sizing rarely needs more than 1x). Each trade risks what the paper
+# bot risks (risk_per_trade: 6% over the open places with the proven set), so the two can be compared.
+DEFAULTS = {"mode": "off", "marginPct": 20.0, "leverageCap": 10, "dailyLossPct": 5.0, "confirm": True}
+LIMITS = {"marginPct": (1.0, 100.0), "leverageCap": (1, 20), "dailyLossPct": (0.5, 50.0)}
 
 Factory = Callable[[str, str], Any]   # (api key, secret) -> ccxt async exchange
 
@@ -87,8 +91,9 @@ def _num(x) -> Optional[float]:
 
 class ExchangeAccount:
     def __init__(self, factory: Factory = default_factory, clock: Callable[[], float] = time.time,
-                 notify: Optional[Callable[..., None]] = None):
+                 notify: Optional[Callable[..., None]] = None, risk: Optional[Callable[[], float]] = None):
         self.factory = factory
+        self.risk = risk or (lambda: RISK)    # share of the balance lost at the stop (the paper bot's rule)
         self.now = clock
         self.notify = notify or (lambda *a, **k: None)
         self._exchange = None
@@ -158,7 +163,7 @@ class ExchangeAccount:
                 value = float(value)
                 if not low <= value <= high:
                     raise AccountError(f"bad {name}")
-                changes[name] = int(value) if name == "maxLeverage" else value
+                changes[name] = int(value) if name == "leverageCap" else value
         if confirm is not None:
             changes["confirm"] = bool(confirm)
         if changes:
@@ -167,8 +172,13 @@ class ExchangeAccount:
     def public(self) -> dict:
         s = load()
         key = s["apiKey"]
+        equity = self.equity()
+        base = self.day_start if self.day_start is not None else equity
         return {"mode": s["mode"], "key": bool(key and s["secret"]), "keyHint": f"…{key[-4:]}" if key else "",
-                "maxMargin": s["maxMargin"], "maxLeverage": s["maxLeverage"], "dailyLoss": s["dailyLoss"],
+                "marginPct": s["marginPct"], "leverageCap": s["leverageCap"], "dailyLossPct": s["dailyLossPct"],
+                "riskPct": self.risk() * 100,
+                "maxMarginUsd": equity * s["marginPct"] / 100 if equity is not None else None,
+                "dailyLossUsd": base * s["dailyLossPct"] / 100 if base is not None else None,
                 "confirm": s["confirm"], "snapshot": self.snapshot, "error": self.error, "refreshed": self.refreshed,
                 "capabilities": self.capabilities, "plans": self.plans[-20:], "halted": self.halted,
                 "waiting": len(self.waiting), "dayStart": self.day_start,
@@ -237,10 +247,12 @@ class ExchangeAccount:
             self.day, self.day_start = day, equity
             if self.halted and self.halted.startswith("daily"):
                 self.halted = None   # a new day
-        limit = load()["dailyLoss"]
-        if self.day_start is not None and equity <= self.day_start - limit and not self.halted:
+        pct = load()["dailyLossPct"]
+        limit = (self.day_start or 0.0) * pct / 100
+        if self.day_start is not None and limit > 0 and equity <= self.day_start - limit and not self.halted:
             self.halted = f"daily loss {self.day_start - equity:.2f}$"
-            self.notify(f"🛑 حساب واقعی: ضرر امروز به سقف {limit}$ رسید؛ ربات واقعی تا فردا معامله‌ی تازه باز نمی‌کند.")
+            self.notify(f"🛑 حساب واقعی: ضرر امروز به سقف {pct:g}٪ ({limit:.2f}$) رسید؛ ربات واقعی تا فردا "
+                        "معامله‌ی تازه باز نمی‌کند.")
 
     async def test(self) -> dict:
         """Owner's "test": one read, and what this exchange lets the bot do."""
@@ -270,7 +282,7 @@ class ExchangeAccount:
     # ------------------------------------------------------------ following the paper bot
 
     def plan(self, p: dict, price: Optional[float] = None) -> dict:
-        """The real order for a paper position: risk 1% of the real balance, inside the owner's caps."""
+        """The real order for a paper position: the paper bot's risk share of the real balance, inside the caps."""
         s = load()
         price = price or p["entryPrice"]
         plan = {"time": self.now(), "paperId": p["id"], "symbol": p["symbol"], "base": p.get("base"),
@@ -282,12 +294,13 @@ class ExchangeAccount:
             return {**plan, "status": "skip: no balance read"}
         if distance <= 0 or ((p["takeProfit"] - price) if long_ else (price - p["takeProfit"])) <= 0:
             return {**plan, "status": "skip: price already past the stop or target"}
-        amount = equity * RISK / distance
-        leverage = max(1, min(int(p.get("leverage") or 1), int(s["maxLeverage"])))
+        amount = equity * self.risk() / distance
+        leverage = max(1, min(int(p.get("leverage") or 1), int(s["leverageCap"])))
         margin = amount * price / leverage
-        if margin > s["maxMargin"]:
-            amount *= s["maxMargin"] / margin
-            margin = s["maxMargin"]
+        cap = equity * s["marginPct"] / 100
+        if margin > cap:
+            amount *= cap / margin
+            margin = cap
         free = self.snapshot.get("free")
         if free is not None and margin > free:
             return {**plan, "status": "skip: not enough free margin", "margin": margin}

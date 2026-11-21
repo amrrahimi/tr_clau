@@ -490,6 +490,15 @@ OWNER DECIDED (2026-11-13): not needed, declined. Nothing from the four schools 
 - Context: owner's question 11-16: 57 proven trades on 5m candles: actual +4.01$; no lock/cap (BE kept) +7.02;
   stop+target only +14.37 (4 trending days only; the 28-month study says exits change the shape, not the average).
 
+## Real account caps follow the balance (owner 2026-11-21 "پیاده سازی")
+- settings exchangeAccount: marginPct (default 20% of the balance per trade), leverageCap (default 10, a brake),
+  dailyLossPct (default 5% of the day's starting balance). The old fixed $ caps (maxMargin, maxLeverage,
+  dailyLoss) are no longer read. ExchangeAccount(risk=...) = PaperBot.risk_per_trade (proven set: 6% / places),
+  so real trades risk what the paper ones do. public(): riskPct, maxMarginUsd, dailyLossUsd. Panel shows % inputs
+  with the dollar value now. Test: FollowsBalanceTest.
+- New Toobit key (…gUTU) works in read mode (no error); balance 0 (account empty, 11-21). ccxt toobit has no
+  fetchPositions: real position list may stay empty; check with one small trade before real mode.
+
 ## Owner's ideas to remember (2026-11-09, not built; owner will say when)
 0. Known bug (owner 13:44): texts inside the green / red boxes overlap candles and each other on a narrow box;
    RTL with numbers garbled. Fix in the next update (pill background, bidi-safe, stacked, hide when too narrow).

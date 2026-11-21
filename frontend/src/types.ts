@@ -488,7 +488,10 @@ export interface AccountPlan {
   stop: number; target: number; status: string; amount?: number; leverage?: number; margin?: number; risk?: number;
 }
 export interface AccountState {
-  mode: AccountMode; key: boolean; keyHint: string; maxMargin: number; maxLeverage: number; dailyLoss: number;
+  mode: AccountMode; key: boolean; keyHint: string;
+  /** Owner 2026-11-21: caps as shares of the balance; riskPct = the paper bot's risk per trade. */
+  marginPct: number; leverageCap: number; dailyLossPct: number; riskPct: number;
+  maxMarginUsd: number | null; dailyLossUsd: number | null;
   confirm: boolean; error: string | null; refreshed: number | null; halted: string | null; waiting: number;
   capabilities: Record<string, boolean>; plans: AccountPlan[]; dayStart: number | null;
   snapshot: {

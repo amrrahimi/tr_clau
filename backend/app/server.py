@@ -110,7 +110,8 @@ def create_app(service_factory: Callable[[str], MarketService] | None = None,
         # 2026-11-11: the proven set starts switched on (every other choice lost in the 28-month test);
         # the owner can switch it off in the panel, and that choice is kept.
         bot.set_proven(True)
-    real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons))
+    real = real_account.ExchangeAccount(notify=lambda text, buttons=None: bot.notify(text, buttons),
+                                        risk=lambda: bot.risk_per_trade())
     bot.real = real
 
     @asynccontextmanager

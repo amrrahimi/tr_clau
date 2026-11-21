@@ -99,12 +99,12 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(acc.AccountError):
             self.a.set(mode="real")
         with self.assertRaises(acc.AccountError):
-            self.a.set(limits={"maxLeverage": 50})
+            self.a.set(limits={"leverageCap": 50})
         self.a.set(mode="real", agree_real=True)
         self.assertEqual(self.a.public()["mode"], "real")
 
     async def test_real_positions_are_remembered_after_a_restart(self):
-        self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 1000, "maxLeverage": 10})
+        self.a.set(mode="real", agree_real=True, confirm=False, limits={"marginPct": 100, "leverageCap": 10})
         await self.a.on_open(position())
         again = acc.ExchangeAccount(factory=lambda k, s: self.ex, clock=lambda: 1_000_000.0)   # the app restarted
         self.assertEqual(again.links[position()["id"]]["status"], "open")
@@ -122,16 +122,17 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.a.public()["snapshot"]["total"], 1000.0)
 
     async def test_shadow_plans_inside_caps(self):
-        self.a.set(mode="shadow", limits={"maxMargin": 10, "maxLeverage": 5})
+        self.a.set(mode="shadow", limits={"marginPct": 1, "leverageCap": 5})
+        await self.a.refresh()
         await self.a.on_open(position())
         plan = self.a.plans[-1]
         self.assertEqual(plan["status"], "shadow")
         self.assertEqual(plan["leverage"], 5)                      # capped
-        self.assertAlmostEqual(plan["margin"], 10.0)                # 1% of 1000 / 2 = 5 units = $500 / 5x -> capped at $10
+        self.assertAlmostEqual(plan["margin"], 10.0)                # 1% of 1000 / 2 = 5 units = $500 / 5x -> capped at 1% = $10
         self.assertEqual(self.ex.orders, [])
 
     async def test_real_opens_with_exchange_side_stop_and_target(self):
-        self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 1000, "maxLeverage": 10})
+        self.a.set(mode="real", agree_real=True, confirm=False, limits={"marginPct": 100, "leverageCap": 10})
         await self.a.on_open(position())
         (k1, entry), (k2, stops) = self.ex.orders[:2]
         self.assertEqual((k1, entry["side"], entry["priceType"], entry["symbol"]), ("order", "BUY_OPEN", "MARKET", "SOL-SWAP-USDT"))
@@ -148,7 +149,7 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_protection_closes_at_once_and_stops(self):
         self.ex.fail_protect = True
-        self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 1000, "maxLeverage": 10})
+        self.a.set(mode="real", agree_real=True, confirm=False, limits={"marginPct": 100, "leverageCap": 10})
         await self.a.on_open(position())
         self.assertEqual(self.ex.orders[-1][0], "close")             # closed at once
         self.assertEqual(self.a.halted, "protection failed")
@@ -156,7 +157,7 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.a.plans[-1]["status"].startswith("skip: stopped"))
 
     async def test_confirmation_on_telegram(self):
-        self.a.set(mode="real", agree_real=True, confirm=True, limits={"maxMargin": 1000})
+        self.a.set(mode="real", agree_real=True, confirm=True, limits={"marginPct": 100})
         await self.a.on_open(position())
         self.assertEqual(self.ex.orders, [])
         self.assertEqual(self.sent[-1][1], [("باز کن", "rok:7"), ("نه", "rno:7")])
@@ -166,7 +167,7 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([o[0] for o in self.ex.orders], ["order", "stops"])
 
     async def test_daily_loss_and_panic(self):
-        self.a.set(mode="real", agree_real=True, confirm=False, limits={"dailyLoss": 5})
+        self.a.set(mode="real", agree_real=True, confirm=False, limits={"dailyLossPct": 0.5})   # 0.5% of $1000 = $5
         await self.a.refresh()
         self.ex.positions = [{"symbol": "X/USDT:USDT", "side": "long", "contracts": 2, "unrealizedPnl": -6}]
         await self.a.refresh()
@@ -178,10 +179,38 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_not_enough_margin_skips(self):
         self.ex.free = 1.0
-        self.a.set(mode="real", agree_real=True, confirm=False, limits={"maxMargin": 50})
+        self.a.set(mode="real", agree_real=True, confirm=False, limits={"marginPct": 5})
         await self.a.on_open(position())
         self.assertEqual(self.a.plans[-1]["status"], "skip: not enough free margin")
         self.assertEqual(self.ex.orders, [])
+
+
+class FollowsBalanceTest(unittest.IsolatedAsyncioTestCase):
+    """Owner 2026-11-21: the caps are shares of the balance and the risk is the paper bot's."""
+
+    def setUp(self):
+        path = connection.settings_path()
+        settings = connection.load_settings(path)
+        settings.pop("exchangeAccount", None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        acc.ExchangeAccount._links_path().unlink(missing_ok=True)
+        self.ex = FakeExchange()
+        self.a = acc.ExchangeAccount(factory=lambda k, s: self.ex, clock=lambda: 1_000_000.0, risk=lambda: 0.006)
+        self.a.set(key="K", secret="S")
+
+    async def test_defaults_follow_the_balance(self):
+        self.a.set(mode="shadow")
+        await self.a.refresh()
+        shown = self.a.public()
+        self.assertEqual((shown["marginPct"], shown["leverageCap"], shown["dailyLossPct"]), (20.0, 10, 5.0))
+        self.assertAlmostEqual(shown["maxMarginUsd"], 200.0)       # 20% of $1000
+        self.assertAlmostEqual(shown["dailyLossUsd"], 50.0)        # 5% of the day's $1000
+        self.assertAlmostEqual(shown["riskPct"], 0.6)
+        await self.a.on_open(position())
+        plan = self.a.plans[-1]
+        self.assertAlmostEqual(plan["risk"], 6.0)                  # 0.6% of $1000, like the paper bot
+        self.assertAlmostEqual(plan["amount"], 3.0)                # $6 / $2 stop distance
 
 
 if __name__ == "__main__":

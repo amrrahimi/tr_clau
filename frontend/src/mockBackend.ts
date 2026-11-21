@@ -239,7 +239,7 @@ export class MockBackend implements Backend {
     return state;
   }
 
-  private account: AccountState = { mode: "off", key: false, keyHint: "", maxMargin: 10, maxLeverage: 5, dailyLoss: 5,
+  private account: AccountState = { mode: "off", key: false, keyHint: "", marginPct: 20, leverageCap: 10, dailyLossPct: 5, riskPct: 0.6, maxMarginUsd: null, dailyLossUsd: null,
     confirm: true, error: null, refreshed: null, halted: null, waiting: 0, capabilities: {}, plans: [], dayStart: null,
     snapshot: {} };
 
